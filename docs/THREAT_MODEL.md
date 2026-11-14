@@ -54,7 +54,7 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 | T11 | TUI crash locks user out | Session wrapper restarts it; ttys 2–6; previous generations in boot menu | Implemented (vm-boot-offline crash test) |
 | T12 | Malformed catalog/config breaks the interface | Strict parsing, defaults on failure, built-ins keep working | Implemented (unit tests) |
 | T13 | Path traversal via note names | Strict name validation, no `/`, no leading `.`, no `..` | Implemented (unit tests) |
-| T14 | Secrets in logs, store, process lists | No secrets handled yet; rules in SECURITY.md; future crypto must pass secrets via stdin/fd, never argv | Design rule |
+| T14 | Secrets in logs, store, process lists | Backup passphrases are read by age itself from the terminal; rules in SECURITY.md; future crypto must pass secrets via stdin/fd, never argv | Design rule |
 | T15 | Malicious resource pack or offline update | minisign signature verification against pinned keys before extraction; extraction in a private staging dir; no symlinks/absolute paths | Planned (Phase 3/8) |
 | T16 | Kernel info leaks / ptrace abuse | sysctls: kptr_restrict, dmesg_restrict, ptrace_scope=1, unprivileged BPF off, kexec off | Implemented (config) |
 | T17 | Physical access bypass | Out of scope without FDE; installer will offer LUKS | Documented |
@@ -63,6 +63,9 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 | T20 | Unaudited security-sensitive changes | Append-only logfmt audit log (root:wheel 0640) + journal (authpriv) for every set-mode/apply-state outcome; polkit logs denied authorisations | Implemented (vm-admin) |
 | T21 | Fake password prompt captures an administrator's password in another user's session | Inherent to "over-the-shoulder" authorisation; Ultra-Stable sessions cannot run arbitrary programs; handbook tells administrators to authorise only on a trusted screen | Accepted risk, documented |
 | T22 | Mode overrides silently reverted or stale | Recorded overrides re-applied after every activation; overrides older than a changed Nix declaration are dropped and audited | Implemented (vm-admin reboot test; staleness: unit tests) |
+| T23 | Malicious or damaged removable media (USB stick) | Only removable/hot-plugged drives offered; mounted only on user request (no automount), by udisks2, `nosuid,nodev`, per user under /run/media; internal disks need an administrator (udisks polkit, `--no-user-interaction`); common file systems only. Kernel file-system drivers still parse the stick | Implemented (vm-backup); kernel parsing: accepted risk |
+| T24 | Lost or stolen backup stick exposes user files | Backups encrypted with age (passphrase, scrypt); passphrase typed into age on the terminal, never in our argv, env or logs; no plaintext written to the stick (vm-backup scans the raw device) | Implemented (vm-backup, unit tests) |
+| T25 | Restoring a backup destroys newer files, or a bad backup goes unnoticed | Restore only into a new 0700 folder under ~/Restored; checksum checked first, damaged copies refused; age authenticates every chunk; partial backups never listed (`.partial` + rename); failed restores marked `-incomplete` | Implemented (vm-backup, unit tests) |
 
 ## 5. Known gaps (honest list)
 
@@ -77,4 +80,10 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
   is acceptable only because accounts have no privileges (T2).
 - `kernel.unprivileged_userns_clone` is not restricted (needed by the Nix
   sandbox for Stable users); reconsider for Ultra-Stable-only machines.
+- Backup checksums are not signatures: someone who can rewrite a stick can
+  replace both files. age's authentication still detects tampering at restore
+  time, but cannot tell an attacker's validly encrypted archive (made with a
+  known passphrase) from yours.
+- Backups have no rotation or retention policy; old backups stay until the
+  user deletes them from the stick.
 - Not reviewed by an independent security auditor.

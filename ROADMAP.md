@@ -32,8 +32,8 @@ test in docs/TESTING.md actually ran and passed (VM only so far).
   emergency guide
 - ✅ PAM faillock (login, su, sudo, polkit)
 - ⬜ Further helper operations: Wi-Fi, time, make a generation the default
-- ⬜ Backup/restore of user data (age-encrypted, external media; needs
-  removable-media mounting via udisks2)
+- ✅ Removable media for every account (udisks2, removable drives only) and
+  encrypted backup/check/restore of the home folder (age, ADR 0008)
 - ⬜ Review `unprivileged_userns_clone` for Ultra-Stable-only machines
 
 ## Phase 3 — Productivity and knowledge 🟡

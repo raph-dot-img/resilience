@@ -3,6 +3,7 @@
 YOUR FILES ARE SEPARATE FROM THE SYSTEM
   Your documents live in your home folder. Rolling the system back never
   touches them, and restoring files never changes the system.
+  To keep a copy of your files elsewhere, see "Backups and USB sticks".
 
 START HERE: SYSTEM MANAGEMENT > Recovery & diagnostics
   System health      what is running, what failed, recent error messages

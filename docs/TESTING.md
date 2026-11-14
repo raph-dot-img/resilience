@@ -15,7 +15,7 @@ Last full run: 2026-11-14 on the Phase 2 commits (: privileged helper, Users & m
 | Screen dump for review | `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` | ~2 s |
 | Evaluate everything | `nix flake check --no-build` | ~30 s |
 | Everything incl. VM tests | `nix flake check -L --max-jobs 1` | ~5 min cold |
-| One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-boot-offline`) | ~1–2 min |
+| One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-backup`, `vm-boot-offline`) | ~1–2 min |
 | ISO boot smoke test | `nix build .#iso -o result-iso && python3 -I tests/iso/smoke.py result-iso/iso/*.iso /tmp/shots [--uefi OVMF.fd]` | ~2 min |
 
 Always pass `--max-jobs 1` to `nix flake check` on the 12 GB development
@@ -31,8 +31,8 @@ which corrupts text next to box-drawing characters with our console font.
 
 | Suite | Tests | Result |
 |---|---|---|
-| resilience-core: mode, status, network, catalog, config, handbook, notes, launch (incl. env overrides, polkit agent ordering), proc, admin (names, modes, config, refusals, overrides/staleness, group ops, audit lines, timestamps), recovery (generations, report files) | 57 | PASS |
-| resilience-tui: navigation, rendering 80×24…200×60, modes, restricted commands, missing programs, confirmations, Ctrl-C, handbook, search, notes, themes, shell gating, wrapping, console glyphs; Users & modes (consequences, Cancel default, fixed pkexec argv + SHELL + agent, refusals, no administrator, corrupt config); Recovery (health, generations, guide, report 0600 / no overwrite) | 26 | PASS |
+| resilience-core: mode, status, network, catalog, config, handbook, notes, launch (incl. env overrides, polkit agent ordering), proc, admin (names, modes, config, refusals, overrides/staleness, group ops, audit lines, timestamps), recovery (generations, report files), media (lsblk parsing/escapes, removable-only selection, device validation, udisks errors), backup (names, checksums, listing, size estimate, pipeline failure cause, **real age round trip**: encrypt, check, restore, no overwrite, wrong key, damaged with/without checksum) | 68 | PASS (round trip needs age in PATH: runs in the Nix build; SKIPPED on a host without age) |
+| resilience-tui: navigation, rendering 80×24…200×60, modes, restricted commands, missing programs, confirmations, Ctrl-C, handbook, search, notes, themes, shell gating, wrapping, console glyphs; Users & modes (consequences, Cancel default, fixed pkexec argv + SHELL + agent, refusals, no administrator, corrupt config); Recovery (health, generations, guide, report 0600 / no overwrite); Backups & USB sticks (internal disk never listed, unusable devices, mount via `--no-user-interaction`, Cancel default, backup/check/restore argv, eject busy / safe, lsblk failure) | 31 | PASS |
 | `cargo clippy --all-targets` | — | PASS (0 warnings) |
 
 ### Nix
@@ -41,10 +41,11 @@ which corrupts text next to box-drawing characters with our console font.
 |---|---|
 | Flake evaluation (`nix flake check --no-build`) | PASS |
 | `eval-live-iso`: live-standard, live-minimal, dev-vm evaluate | PASS |
-| `security-invariants`: 16 invariants × 3 configurations | PASS |
+| `security-invariants`: 19 invariants × 3 configurations | PASS |
 | Invariant checker rejects a deliberately broken configuration (ssh on, root password) | PASS (manual, once) |
 | Invariant checker rejects a privileged autologin account and an extra polkit admin identity | PASS (manual, once; this found that the autologin invariant had been vacuous) |
 | Build-time catalog check (every app command executable) | PASS (part of every system build) |
+| Build-time tool check (`[tools]` in system.toml executable) | PASS (part of every system build) |
 | ISO derivation builds (standard) | PASS — 1.48 GB |
 | ISO derivation builds (minimal) | NOT TESTED (evaluates only) |
 
@@ -97,6 +98,26 @@ which corrupts text next to box-drawing characters with our console font.
 | pam_faillock: 5 wrong sudo passwords lock the account (correct password refused); `faillock --reset` unlocks | PASS |
 | Override dropped when the Nix declaration changes | unit tests only (needs a second system configuration in the VM) |
 
+### VM: `vm-backup` — removable media and backups (ADR 0008), driven through the TUI
+
+Ultra-Stable account on tty1; a 128 MiB raw image hot-plugged as a QEMU
+`usb-storage` device on an xHCI controller; a 64 MiB virtio disk as the
+"internal" disk.
+
+| Check | Result |
+|---|---|
+| udisks2 installed but not running at boot (D-Bus activated) | PASS |
+| polkit for the TUI's session: `filesystem-mount` authorised; `filesystem-mount-system` not (`auth_admin_keep`) | PASS |
+| Hot-plugged stick listed; internal disk (ext4, label INTERNAL) not listed | PASS |
+| Opening the stick mounts it without a password, `nosuid,nodev`, owned by the user | PASS |
+| Backup: confirmation, age asks and confirms the passphrase on the console, archive + `.sha256` (no partial file), `sha256sum -c` passes, age header present, marker text absent from the raw stick device | PASS |
+| Eject → SAFE TO UNPLUG, unmounted; unplug + replug (QEMU monitor), refresh, reopen | PASS |
+| Check after replug: intact | PASS |
+| Restore with a wrong passphrase: "Nothing was restored", `~/Restored` empty | PASS |
+| Restore with the right passphrase: new `~/Restored/backup-<stamp>` (alice, 0700), files identical (sha256), originals unchanged, `.cache` not saved | PASS |
+| Damaged copy (16 bytes overwritten): check says DAMAGED; restore refused before asking for a passphrase; nothing new restored | PASS |
+| Physical USB sticks, SD card readers, exFAT/NTFS sticks, a stick removed during a backup | NOT TESTED |
+
 ### ISO boot (`tests/iso/smoke.py`, screenshots reviewed by a human/agent)
 
 | Firmware | Result |
@@ -115,7 +136,8 @@ which corrupts text next to box-drawing characters with our console font.
 | Boot to multi-user (kernel + initrd + userspace) | 0.9 + 3.6 + 4.3 = 8.8 s | vm-boot-offline |
 | Running services | journald, udevd, logind, dbus-broker, NetworkManager, nscd, oomd (+ transient) | vm-boot-offline |
 | System closure (live-standard) | 2.2 GiB, of which linux-firmware 825 MiB, nixpkgs source 197 MiB | `nix path-info -S` |
-| ISO size (standard) | 1.48 GB | build |
+| ISO size (standard) | 1.48 GB | build (Phase 2 helper build; not rebuilt with udisks2) |
+| Closure growth from removable media + backups | +62 MiB (2231.6 → 2293.9 MiB; age 23 MiB, udisks2 + libblockdev deps ≈ 30 MiB) | `nix path-info -S`, main vs branch |
 | TUI binary | 1.5 MiB (stripped, LTO) | build |
 
 ## Specification scenarios not yet covered
@@ -132,4 +154,4 @@ which corrupts text next to box-drawing characters with our console font.
 | 13 | Communicate across a local network | BLOCKED — Phase 6 |
 | — | Installer, rollback to previous generation | BLOCKED — no installer yet |
 | — | Recovery section with real generations; diagnostic report on a real system | NOT TESTED in VM (unit/TUI tests with fake profiles only) |
-| — | Backup / restore of user data | BLOCKED — not implemented |
+| — | Backup / restore with a physical USB stick | NOT TESTED (QEMU usb-storage only) |

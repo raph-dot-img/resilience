@@ -91,7 +91,6 @@ only, bounded by timeouts, skipped without a route (ADR 0004).
 | Component | Phase | Sketch |
 |---|---|---|
 | More `resilience-admin` operations | 2–8 | ConnectWifi, SetTime, ImportPack, ApplyUpdate, SetDefaultGeneration: one polkit action each, same validation/audit pattern |
-| User-data backup | 2/4 | age-encrypted archives of the home directory on external media, verify, restore into a new folder |
 | `resilience-resource-manager` | 3 | discover/verify (minisign)/install/remove TAR+zstd packs with manifests on external media |
 | Kiwix integration | 3 | `kiwix-serve` on 127.0.0.1 + text browser, or a native ZIM reader |
 | Crypto workflows | 4 | guided age/minisign/GnuPG operations, secrets via stdin/fd |

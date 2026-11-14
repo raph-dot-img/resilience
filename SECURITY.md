@@ -33,7 +33,7 @@ safety-critical use.
 |---|---|
 | Passwords | Set interactively (`passwd`) or via `hashedPasswordFile` outside the Nix store. Never in Nix expressions, Git or logs. |
 | Private keys (age, GnuPG, minisign) | Stored in the user's home with mode 0600 (future tools enforce it); never logged; never passed in argv. |
-| Passphrases | Read from the terminal or passed through stdin/fd to the tool, never as command-line arguments. |
+| Passphrases | Read from the terminal or passed through stdin/fd to the tool, never as command-line arguments. Backup passphrases are read by age itself from `/dev/tty`; Resilience code never sees them. |
 | Temporary files | Created with `O_EXCL` and mode 0600 in a private directory; removed after use. |
 | Logs | `~/.local/state/resilience/tui.log` contains navigation events and program names only. |
 

@@ -29,6 +29,7 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │            admin.nix       privileged helper: /etc/resilience/admin.toml, polkit
    │                            action org.resilience.admin.set-mode (auth_admin),
    │                            tmpfiles for state/audit, activation `apply-state`
+   │            media.nix       udisks2 (removable media; its polkit defaults, no overrides)
    │            users.nix       resilience.users.<n>.mode -> groups, login shell,
    │                            nix allowed-users
    │            interface.nix   getty branding, console font ter-i16n, tty1-only
@@ -39,13 +40,17 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
    ├─ packages: resilience, resilience-session, resilience-handbook, iso, iso-minimal, vm
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
-              security-invariants, eval-live-iso
+              vm-backup, security-invariants, eval-live-iso
 
 crates/resilience-core  library: status, network (passive + on-demand probe),
                         mode detection, catalog, config, handbook, notes, launch, proc,
-                        admin (pure mode-change rules), recovery (generations, report)
+                        admin (pure mode-change rules), recovery (generations, report),
+                        media (lsblk parsing, udisksctl mount/eject), backup (tar|zstd|age
+                        pipeline, checksum, restore into ~/Restored)
 crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR 0007):
                         list | set-mode USER MODE | apply-state
+crates/resilience-backup binary `resilience-backup` (UNPRIVILEGED, ADR 0008):
+                        create MOUNT | check FILE | restore FILE
 crates/resilience-tui   binary `resilience`: app.rs (state machine, returns Effects),
                         ui.rs (rendering), theme.rs, help.rs, tests.rs
 nix/packages/resilience-session  login shell: runs TUI, restarts after crash, refuses -c
@@ -63,6 +68,13 @@ Mode change flow: TUI Users screen → consequences + confirm (Cancel default)
 helper validates, writes /var/lib/resilience/modes.toml, gpasswd, audit log,
 terminates sessions on demotion. Activation (`users` resets groups) →
 `resilienceModes` script → `apply-state` re-applies overrides.
+
+Backup flow: TUI Backups & USB sticks → lsblk lists removable drives only →
+`udisksctl mount --no-user-interaction` (internal disks need auth → refused)
+→ confirm → `resilience-backup create /run/media/U/X` in the foreground (age
+reads the passphrase from /dev/tty itself) → `*.partial` renamed when done +
+`.sha256`. Restore: checksum first, then into a NEW ~/Restored/backup-<stamp>.
+Tool paths: `[tools]` in /etc/resilience/system.toml (checked at build).
 
 ## 3. Directory structure
 
@@ -114,6 +126,10 @@ it concurrently with VM tests.
   Long TUI texts wrap: wait for short fragments.
 - pkexec in VM tests: run it under `setsid -w` when no agent is wanted,
   otherwise its text agent writes into the driver's terminal protocol.
+- USB sticks in VM tests: `-device qemu-xhci,id=xhci` + QEMU monitor
+  `drive_add`/`device_add usb-storage` (new ids per plug), see vm-backup.
+- The age round-trip unit test needs age in PATH (Nix build has it; on the
+  host prepend the store path of `nixpkgs#age`, otherwise it prints SKIPPED).
 - ISO: `python3 -I tests/iso/smoke.py ISO OUTDIR [--uefi OVMF.fd]` takes
   screenshots; look at them (the Read tool displays PNGs).
 - Rust: `cargo test` (unit + TUI behaviour via ratatui TestBackend) and
@@ -201,10 +217,11 @@ needlessly. Watch `free -h` during VM tests.
 
 ## 14. Current implementation status (2026-11-14)
 
-Phase 0 (foundation) and Phase 1 (core) done; Phase 2 mostly done (merged into
-`main`): privileged helper with set-mode, TUI Users &
-security modes, TUI Recovery & diagnostics, faillock, ADR 0007. Remaining in
-Phase 2: user-data backups, more helper operations. See ROADMAP.md.
+Phase 0 (foundation) and Phase 1 (core) done; Phase 2 mostly done:
+privileged helper with set-mode, TUI Users & security modes, TUI Recovery &
+diagnostics, faillock (ADR 0007); removable media + encrypted backups (ADR
+0008, branch feat/phase2-backup). Remaining in Phase 2: more helper
+operations (Wi-Fi, time, default generation). See ROADMAP.md.
 Done: flake, modules, editions (minimal/standard), live ISO config, dev VM,
 TUI (main menu, status panel, categories, search, help, settings/themes,
 notes, handbook, network diagnostics, system status, notifications, power and
@@ -221,7 +238,8 @@ See docs/TESTING.md for what has actually been executed and passed.
   socket-activated polkit helper ("No session for cookie"); always register
   `pkttyagent` first (launch::run_with_polkit_agent).
 - Making an older generation the permanent default is not implemented
-  (boot menu only). No user-data backup tool yet.
+  (boot menu only). Backups are full copies (no incremental), no rotation;
+  LUKS-encrypted sticks are not supported.
 - Ultra-Stable restrictions on launched programs rely on restricted modes of
   those programs; they are usability measures, not a sandbox.
 - Emergency/rescue shell requires root, which is locked, by design: layered
@@ -232,8 +250,8 @@ See docs/TESTING.md for what has actually been executed and passed.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Next: finish Phase 2 (encrypted user-data backups with
-removable media, Wi-Fi/time helper operations), then Phase 3 (Kiwix, resource packs).
+See ROADMAP.md. Next: finish Phase 2 (Wi-Fi/time/default-generation helper
+operations), then Phase 3 (Kiwix, resource packs; reuse media.rs for USB).
 
 ## 17. Important decisions (docs/decisions/)
 
@@ -244,6 +262,7 @@ removable media, Wi-Fi/time helper operations), then Phase 3 (Kiwix, resource pa
 - 0005 Application catalog generated by Nix, verified at build time
 - 0006 Session model: login shell wrapper, autologin only for ultra-stable
 - 0007 Privileged helper (pkexec + typed ops), persistent mode overrides, audit, recovery layers
+- 0008 Removable media via udisks2 (no overrides), unprivileged age-encrypted backups, restore into a new folder
 
 ## 18. How to continue safely
 

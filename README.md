@@ -38,6 +38,9 @@ works at 80×24, without colour, and on modest hardware.
   survives reboots.
 - Recovery section: system health, failed services, earlier system
   generations, exportable diagnostic report, emergency guide.
+- Backups & USB sticks: encrypted (age) backups of your home folder on a USB
+  stick, checked without the passphrase, restored into a new folder; safe
+  eject. Internal disks are never offered.
 - Offline handbook, private notes, network diagnostics with an opt-in,
   time-limited Internet probe, system status report, notification history.
 - Launcher for verified text-mode programs (editors, file manager,

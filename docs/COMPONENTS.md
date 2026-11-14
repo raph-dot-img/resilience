@@ -17,6 +17,10 @@ activity as known on 2026-11-14; re-check before each release.
 | sudo | (nixpkgs) | ISC | https://www.sudo.ws | yes | wheel only, password |
 | polkit (pkexec, pkttyagent) | 127 | LGPL-2.0+ | https://github.com/polkit-org/polkit | yes | authorises `resilience-admin set-mode` (auth_admin); text agent on the console |
 | Linux-PAM (pam_faillock, faillock) | 1.7.2 | BSD-3-Clause | https://github.com/linux-pam/linux-pam | yes | rate limiting on login, su, sudo, polkit-1 |
+| udisks2 (udisksctl) | 2.11.2 | GPL-2.0+ / LGPL-2.0+ | https://github.com/storaged-project/udisks | yes | mounts removable media for the console user (D-Bus activated, its polkit defaults) |
+| age | 1.3.2 | BSD-3-Clause | https://age-encryption.org | yes | backup encryption (passphrase, read from the terminal by age) |
+| zstd | 1.5.7 | BSD-3-Clause / GPL-2.0 | https://facebook.github.io/zstd | yes | backup compression |
+| GNU tar | 1.35 | GPL-3.0+ | https://www.gnu.org/software/tar | yes | backup archives |
 | shadow (gpasswd) | 4.19.4 | BSD-3-Clause | https://github.com/shadow-maint/shadow | yes | group changes by `resilience-admin` |
 | Terminus console font | (nixpkgs) | OFL-1.1 | https://terminus-font.sourceforge.net | yes | `ter-i16n` |
 | GNU nano | 9.3 | GPL-3.0+ | https://nano-editor.org | yes | editor (Stable+), notes editor (`--restricted` for Ultra-Stable) |
@@ -47,7 +51,6 @@ is to be run before each release (cargo-deny is in the dev shell).
 |---|---|---|---|---|
 | kiwix-tools | 3.8.2 | GPL-3.0+ | ZIM serving (Phase 3) | `kiwix-serve` on 127.0.0.1 + text browser |
 | w3m / lynx / links2 / elinks / chawan | 0.5.6 / 2.9.2 / 2.30 / 0.19.1 / 0.3.3 | MIT / GPL-2.0+ / GPL-2.0+ / GPL-2.0 / Unlicense | text browser for Kiwix | to compare (UTF-8, tables, link navigation) |
-| age | 1.3.2 | BSD-3-Clause | file encryption (Phase 4) | |
 | minisign | 0.12 | ISC | signatures for packs/updates (Phase 3/8) | |
 | GnuPG | 2.4.9 | GPL-3.0+ | OpenPGP (Phase 4) | |
 | cryptsetup | 2.8.6 | GPL-2.0+ | LUKS (installer) | |

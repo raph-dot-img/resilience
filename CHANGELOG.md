@@ -16,6 +16,15 @@ versions follow [Semantic Versioning](https://semver.org/).
   report export, emergency guide).
 - VM test `vm-admin`; security invariants for polkit admins, faillock and the
   helper configuration.
+- *Backups & USB sticks* (ADR 0008): USB sticks and memory cards for every
+  account through udisks2 (removable drives only, open/eject from the TUI);
+  `resilience-backup create|check|restore`: the home folder as an
+  age-encrypted `tar.zst` with a `sha256sum` file, checked without the
+  passphrase, restored into a new `~/Restored/backup-<date>` folder.
+  Handbook page "Backups and USB sticks"; VM test `vm-backup` (hot-plugged
+  virtual stick); invariants for udisks2 polkit and mount location.
+- `/etc/resilience/system.toml` gained `[tools]` (absolute paths, checked at
+  build time).
 
 ### Security
 - PAM faillock on login, su, sudo and polkit-1 (5 failures / 15 min → 5 min).
