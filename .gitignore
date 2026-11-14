@@ -1,0 +1,36 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Nix build outputs
+result
+result-*
+.direnv/
+
+# Images, VM disks and large artefacts — never commit
+*.iso
+*.img
+*.qcow2
+*.raw
+*.zim
+*.mbtiles
+*.gpkg
+*.pmtiles
+*.tar.zst
+*.tar.gz
+*.osm.pbf
+/build/
+/vm-state/
+/out/
+
+# Secrets — never commit
+*.key
+*.sec
+*.pem
+secrets/
+.env
+
+# Editors
+*.swp
+.idea/
+.vscode/
