@@ -29,6 +29,7 @@ use crate::theme::Theme;
 use resilience_core::admin::{AccountRow, Source};
 use resilience_core::backup::{self, BackupFile};
 use resilience_core::media::Volume;
+use resilience_core::wifi::{self, Network, Overview};
 
 const LOGO: [&str; 2] = [
     "█▀█ █▀▀ █▀ █ █   █ █▀▀ █▄ █ █▀▀ █▀▀",
@@ -175,6 +176,7 @@ fn footer_hints(view: &View) -> &'static str {
         View::ChooseMode { .. } => "Up/Down Choose  Enter Continue  Esc Cancel",
         View::Recovery { .. } => "1-4/Enter Open  Esc Back  F1 Help",
         View::Media { .. } => "Enter Open  e Eject  r Refresh  Esc Back  F1 Help",
+        View::Wifi { .. } => "Enter Join  d Disconnect  f Forget  r Scan  w Wi-Fi on  Esc Back",
         View::Backups { .. } => "Enter Back up/Restore  c Check  e Eject  Esc Back  F1 Help",
     }
 }
@@ -203,6 +205,18 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         None => Line::from(Span::styled("Ready.", t.dim)),
     };
     f.render_widget(Paragraph::new(line), status);
+    if let Some(j) = &app.wifi_job {
+        let s = format!(
+            "connecting to '{}' {}s {}",
+            j.ssid,
+            j.started.elapsed().as_secs(),
+            SPINNER[(app.tick as usize / 2) % SPINNER.len()]
+        );
+        f.render_widget(
+            Paragraph::new(Span::styled(s, t.warn)).alignment(Alignment::Right),
+            status,
+        );
+    }
     if app.probe.running.is_some() {
         let s = format!(
             "probing network {}",
@@ -296,6 +310,11 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         View::Users { rows, error, list } => draw_users(f, app, area, rows, error.as_deref(), list),
         View::ChooseMode { row, list } => draw_choose_mode(f, app, area, row, list),
         View::Recovery { list } => draw_recovery(f, app, area, list),
+        View::Wifi {
+            overview,
+            error,
+            list,
+        } => draw_wifi(f, app, area, overview.as_ref(), error.as_deref(), list),
         View::Media {
             volumes,
             error,
@@ -1210,6 +1229,121 @@ fn draw_media(
     details(f, &t, d, lines);
 }
 
+fn draw_wifi(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    overview: Option<&Overview>,
+    error: Option<&str>,
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    let message = match (overview, error) {
+        (_, Some(e)) => Some((
+            format!("Wi-Fi information could not be read.\n\n{e}\n\nPress r to try again."),
+            t.error,
+        )),
+        (Some(o), None) if o.devices == 0 => Some((
+            "No Wi-Fi adapter was found. If this computer has one, it may need \
+             firmware that is not included, or a hardware switch may be off.\n\n\
+             A network cable works without any setup."
+                .to_string(),
+            t.warn,
+        )),
+        (Some(o), None) if !o.radio_on => Some((
+            "Wi-Fi is switched off. Press w to switch it on.".to_string(),
+            t.warn,
+        )),
+        _ => None,
+    };
+    if let Some((text, style)) = message {
+        let p = Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .style(style)
+            .block(block("WI-FI NETWORKS", &t));
+        f.render_widget(p, area);
+        return;
+    }
+    let nets: &[Network] = overview.map_or(&[], |o| o.networks.as_slice());
+    let items: Vec<ListItem> = nets
+        .iter()
+        .map(|n| {
+            // Fits the 80-column list pane: "*Name            55% WPA2   saved".
+            ListItem::new(format!(
+                "{}{:<16.16} {:>3}% {:<6} {}",
+                if n.in_use { "*" } else { " " },
+                n.ssid,
+                n.signal,
+                n.security.label(),
+                if n.saved.is_some() { "saved" } else { "" },
+            ))
+        })
+        .collect();
+    let [l, d] = two_panes(area);
+    draw_list(
+        f,
+        &t,
+        l,
+        "WI-FI NETWORKS",
+        items,
+        list,
+        "No networks found yet. Scanning takes a few seconds; press r to look again.",
+    );
+    let lines = match list.selected().and_then(|i| nets.get(i)) {
+        Some(n) => {
+            let mut lines = vec![
+                kv(&t, "Network", n.ssid.clone()),
+                kv(
+                    &t,
+                    "Signal",
+                    format!("{}% {}", n.signal, wifi::bars(n.signal)),
+                ),
+                kv(&t, "Security", n.security.label().to_string()),
+                kv(
+                    &t,
+                    "State",
+                    if n.in_use {
+                        "connected"
+                    } else if n.saved.is_some() {
+                        "saved, not connected"
+                    } else {
+                        "not saved"
+                    },
+                ),
+                Line::from(""),
+            ];
+            let hint = if n.in_use {
+                "d disconnects. f forgets the network and its password.".to_string()
+            } else if n.saved.is_some() {
+                "Enter connects with the saved password. f forgets it.".to_string()
+            } else if let Some(p) = n.problem() {
+                return details(
+                    f,
+                    &t,
+                    d,
+                    [
+                        lines,
+                        vec![Line::from(Span::styled(format!("[!!] {p}."), t.warn))],
+                    ]
+                    .concat(),
+                );
+            } else if n.security == wifi::Security::Open {
+                "Enter joins it. Open network: anyone nearby can read unencrypted traffic."
+                    .to_string()
+            } else {
+                "Enter joins it. You will be asked for the network's password.".to_string()
+            };
+            lines.push(Line::from(hint));
+            lines
+        }
+        None => vec![Line::from(
+            "Networks you join are saved for your account only. Other accounts on \
+             this computer do not see them.",
+        )],
+    };
+    details(f, &t, d, lines);
+}
+
 fn draw_backups(
     f: &mut Frame,
     app: &App,
@@ -1380,6 +1514,26 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
                 ))),
             }
             ("NEW NOTE", l, t.base)
+        }
+        Modal::WifiPassword {
+            net, value, error, ..
+        } => {
+            let mut l = vec![
+                Line::from(format!("Password for the Wi-Fi network '{}':", net.ssid)),
+                Line::from(vec![
+                    Span::styled(format!("> {}", "*".repeat(value.chars().count())), t.accent),
+                    Span::styled("█", t.base),
+                ]),
+                Line::from(""),
+            ];
+            match error {
+                Some(e) => l.push(Line::from(Span::styled(format!("[!!] {e}"), t.error))),
+                None => l.push(Line::from(Span::styled(
+                    "Usually on a label on the router | Enter connect, Esc cancel",
+                    t.dim,
+                ))),
+            }
+            ("WI-FI PASSWORD", l, t.base)
         }
         Modal::SetTime { value, zone, error } => {
             let mut l = vec![

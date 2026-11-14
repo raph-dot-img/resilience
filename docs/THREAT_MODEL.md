@@ -67,12 +67,19 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 | T24 | Lost or stolen backup stick exposes user files | Backups encrypted with age (passphrase, scrypt); passphrase typed into age on the terminal, never in our argv, env or logs; no plaintext written to the stick (vm-backup scans the raw device) | Implemented (vm-backup, unit tests) |
 | T25 | Restoring a backup destroys newer files, or a bad backup goes unnoticed | Restore only into a new 0700 folder under ~/Restored; checksum checked first, damaged copies refused; age authenticates every chunk; partial backups never listed (`.partial` + rename); failed restores marked `-incomplete` | Implemented (vm-backup, unit tests) |
 | T26 | Clock moved to hide log entries, shorten faillock lock-outs or (later) accept expired signatures | Only via `resilience-admin set-time` with an administrator's password every time (own polkit action, auth_admin); strict UTC format and bounds 2025 ≤ t < 2100 checked in the helper; audited with the previous time; no polkit rule relaxes timedated; no NTP in the background | Implemented (vm-admin, unit tests, security-invariants). Root and Advanced users can still use `date`/`timedatectl` directly |
+| T27 | Ultra-Stable account disrupts or reconfigures networking (switches it off, hotspot, connectivity checks = background traffic) through NetworkManager's permissive polkit defaults for active sessions | polkit allowlist for accounts without the networkmanager group: only wifi.scan, network-control, settings.modify.own, enable-disable-wifi; everything else NO (ADR 0010) | Implemented (vm-wifi pkcheck on the TUI process, security-invariants). Before 2026-11-14 these defaults applied unnoticed |
+| T28 | Wi-Fi password exposed | Typed in the TUI (masked), passed to nmcli on stdin (`passwd-file /dev/stdin`), never argv/env/logs/files we write; stored by NetworkManager root 0600; profile private to the account | Implemented (vm-wifi, unit test with fake nmcli) |
 
 ## 5. Known gaps (honest list)
 
-- The privileged helper offers `set-mode` and `set-time` so far:
-  Ultra-Stable users cannot yet join Wi-Fi through the TUI. Stable users
-  use `nmtui`. The time zone can only be changed in the Nix configuration.
+- The privileged helper offers `set-mode` and `set-time` so far. The time
+  zone can only be changed in the Nix configuration.
+- Ultra-Stable accounts keep NetworkManager's `network-control` (they can
+  disconnect any connection, including an administrator's Ethernet) and
+  `settings.modify.own` (profiles for themselves with any settings, e.g. a
+  static address or cloned MAC). The TUI creates only plain Wi-Fi profiles.
+- The TUI holds a typed Wi-Fi password in memory until nmcli has read it;
+  wiping our copies is best effort.
 - The audit log is append-only by convention (root writes with O_APPEND);
   root can still edit it. No remote/WORM log copy.
 - pkexec is setuid and its generic action allows any program with an

@@ -13,7 +13,7 @@ activity as known on 2026-11-14; re-check before each release.
 | NixOS / nixpkgs | 26.05 | MIT (expressions) | https://github.com/NixOS/nixpkgs | yes | base system |
 | Linux kernel | 6.18.63 | GPL-2.0 | https://kernel.org | yes | default kernel of 26.05 |
 | systemd | 260.5 | LGPL-2.1+ | https://systemd.io | yes | init, logind, journald, timedated (`timedatectl set-time` from the helper) |
-| NetworkManager (nmtui) | 1.56.0 | GPL-2.0+ | https://networkmanager.dev | yes (LAN) | connectivity check disabled; app `nmtui` (Stable+) |
+| NetworkManager (nmtui) | 1.56.0 | GPL-2.0+ | https://networkmanager.dev | yes (LAN) | connectivity check disabled; app `nmtui` (Stable+); `nmcli` used by the TUI's Wi-Fi screen (every mode, polkit allowlist without the group, ADR 0010) |
 | sudo | (nixpkgs) | ISC | https://www.sudo.ws | yes | wheel only, password |
 | polkit (pkexec, pkttyagent) | 127 | LGPL-2.0+ | https://github.com/polkit-org/polkit | yes | authorises `resilience-admin set-mode` and `set-time` (auth_admin); text agent on the console |
 | Linux-PAM (pam_faillock, faillock) | 1.7.2 | BSD-3-Clause | https://github.com/linux-pam/linux-pam | yes | rate limiting on login, su, sudo, polkit-1 |

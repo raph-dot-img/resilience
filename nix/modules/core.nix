@@ -139,6 +139,7 @@ let
     age = lib.getExe pkgs.age;
     sha256sum = "${pkgs.coreutils}/bin/sha256sum";
     backup = "${cfg.package}/bin/resilience-backup";
+    nmcli = "${lib.getBin config.networking.networkmanager.package}/bin/nmcli";
   };
 
   systemConfigUnchecked = toml.generate "resilience-system.toml" {
@@ -160,7 +161,7 @@ let
       dns_name = cfg.probe.dnsName;
       timeout_ms = cfg.probe.timeoutMs;
     };
-    # Removable media and backups (media.nix, ADR 0008).
+    # Removable media and backups (media.nix, ADR 0008), Wi-Fi (ADR 0010).
     inherit tools;
   };
 

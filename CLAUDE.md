@@ -35,19 +35,21 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │            interface.nix   getty branding, console font ter-i16n, tty1-only
    │                            autologin via getty@tty1 drop-in (NOT services.getty.autologinUser)
    │            security.nix    sudo (wheel+password), pam_faillock, sysctls, no ssh
-   │            networking.nix  NetworkManager (no connectivity check), firewall, no NTP
+   │            networking.nix  NetworkManager (no connectivity check), polkit allowlist for
+   │                            accounts without its group (ADR 0010), firewall, no NTP
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
    ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
    ├─ packages: resilience, resilience-session, resilience-handbook, iso, iso-minimal, vm
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
-              vm-backup, security-invariants, eval-live-iso
+              vm-backup, vm-wifi, security-invariants, eval-live-iso
 
 crates/resilience-core  library: status, network (passive + on-demand probe),
                         mode detection, catalog, config, handbook, notes, launch, proc,
                         admin (pure mode-change rules), clock (time parsing/bounds),
                         recovery (generations, report),
                         media (lsblk parsing, udisksctl mount/eject), backup (tar|zstd|age
-                        pipeline, checksum, restore into ~/Restored)
+                        pipeline, checksum, restore into ~/Restored), wifi (nmcli parsing,
+                        private profiles, password via stdin)
 crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR 0007):
                         list | set-mode USER MODE | set-time UTC | apply-state
 crates/resilience-backup binary `resilience-backup` (UNPRIVILEGED, ADR 0008):
@@ -76,6 +78,11 @@ Backup flow: TUI Backups & USB sticks → lsblk lists removable drives only →
 reads the passphrase from /dev/tty itself) → `*.partial` renamed when done +
 `.sha256`. Restore: checksum first, then into a NEW ~/Restored/backup-<stamp>.
 Tool paths: `[tools]` in /etc/resilience/system.toml (checked at build).
+
+Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
+with `connection.permissions user:U`, no secret → thread: `nmcli connection
+up uuid X passwd-file /dev/stdin` (secret on a pipe) → failure deletes a
+new profile. Never `nmcli --ask` (wrong password = inescapable prompt loop).
 
 ## 3. Directory structure
 
@@ -125,6 +132,15 @@ it concurrently with VM tests.
 - VM tests read the screen through `/dev/vcsuN` (helper `tty_text`/`wait_tty`
   in each test): the driver's `get_tty_text()` mis-decodes CP437 glyphs.
   Long TUI texts wrap: wait for short fragments.
+- Wi-Fi in VM tests: `mac80211_hwsim radios=2`, hostapd+dnsmasq on wlan0
+  (NM unmanaged, firewall UDP 67 on wlan0), `networking.wireless.enable =
+  mkOverride 0 true` (qemu-vm.nix forces it off), `dmesg -n 1` (kernel
+  messages draw over the TUI). See vm-wifi.
+- polkit checks must use a process in a real (active) session, e.g. the
+  TUI's pid with `pkcheck --process`; `runuser` has no session and gets "no"
+  for unrelated reasons.
+- Never grep for a secret (or pgrep for a command) with a pattern that
+  appears literally in the grep's own command line: `grep 'secre[t]'`.
 - pkttyagent asks "Choose identity" when several Advanced accounts exist;
   VM tests must answer it (see `authenticate_as_carol` in vm-admin).
 - pkexec in VM tests: run it under `setsid -w` when no agent is wanted,
@@ -226,8 +242,9 @@ needlessly. Watch `free -h` during VM tests.
 Phase 0 (foundation) and Phase 1 (core) done; Phase 2 mostly done:
 privileged helper with set-mode, TUI Users & security modes, TUI Recovery &
 diagnostics, faillock (ADR 0007); removable media + encrypted backups (ADR
-0008); Date & time via `set-time` (ADR 0009). Remaining in Phase 2: more
-helper operations (Wi-Fi, default generation). See ROADMAP.md.
+0008); Date & time via `set-time` (ADR 0009); Wi-Fi for every account and
+the NetworkManager polkit allowlist (ADR 0010). Remaining in Phase 2: the
+default-generation helper operation, the unprivileged_userns review. See ROADMAP.md.
 Done: flake, modules, editions (minimal/standard), live ISO config, dev VM,
 TUI (main menu, status panel, categories, search, help, settings/themes,
 notes, handbook, network diagnostics, system status, notifications, power and
@@ -246,6 +263,8 @@ See docs/TESTING.md for what has actually been executed and passed.
 - Making an older generation the permanent default is not implemented
   (boot menu only). Backups are full copies (no incremental), no rotation;
   LUKS-encrypted sticks are not supported.
+- Wi-Fi: no hidden, 802.1X or WEP networks; a wrong password is reported
+  only after the 45 s timeout (NetworkManager keeps retrying with it).
 - Ultra-Stable restrictions on launched programs rely on restricted modes of
   those programs; they are usability measures, not a sandbox.
 - Emergency/rescue shell requires root, which is locked, by design: layered
@@ -256,8 +275,8 @@ See docs/TESTING.md for what has actually been executed and passed.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Next: finish Phase 2 (Wi-Fi/default-generation helper
-operations), then Phase 3 (Kiwix, resource packs; reuse media.rs for USB).
+See ROADMAP.md. Next: finish Phase 2 (default-generation helper
+operation), then Phase 3 (Kiwix, resource packs; reuse media.rs for USB).
 
 ## 17. Important decisions (docs/decisions/)
 
@@ -270,6 +289,7 @@ operations), then Phase 3 (Kiwix, resource packs; reuse media.rs for USB).
 - 0007 Privileged helper (pkexec + typed ops), persistent mode overrides, audit, recovery layers
 - 0008 Removable media via udisks2 (no overrides), unprivileged age-encrypted backups, restore into a new folder
 - 0009 Clock set via helper `set-time` (own auth_admin action, bounds, audit) → timedatectl
+- 0010 Wi-Fi as the user via nmcli (private profiles, password on stdin); NM polkit allowlist without its group
 
 ## 18. How to continue safely
 

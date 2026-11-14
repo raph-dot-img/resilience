@@ -33,10 +33,20 @@ versions follow [Semantic Versioning](https://semver.org/).
   2025–2099 checked in the helper, audited with the previous time; timedated
   updates the hardware clock. Handbook section "The clock"; vm-admin covers
   refusals, wrong and right passwords, two administrators, the RTC.
+- *Wi-Fi networks* (ADR 0010): list, join (password typed in the TUI and
+  passed to nmcli on stdin), reconnect, disconnect and forget Wi-Fi
+  networks in every mode; profiles private to the account; open-network
+  warning; WEP and 802.1X not offered. VM test `vm-wifi` (simulated radios).
 - `/etc/resilience/system.toml` gained `[tools]` (absolute paths, checked at
   build time).
 
 ### Security
+- NetworkManager's polkit defaults let any active console session switch
+  networking off, share a hotspot or enable connectivity checks without a
+  password, including Ultra-Stable accounts. An allowlist now limits accounts
+  without the networkmanager group to scanning, connecting, their own
+  profiles and the Wi-Fi radio (ADR 0010). The earlier vm-modes PASS for
+  "cannot change networking" had only been tested without a session.
 - PAM faillock on login, su, sudo and polkit-1 (5 failures / 15 min → 5 min).
 - Demoting an account terminates its sessions.
 

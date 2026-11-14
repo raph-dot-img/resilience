@@ -83,7 +83,7 @@ Mode = Unix group membership, computed at runtime (ADR 0003):
 | Shell in TUI | no | yes (bash, unprivileged) | yes |
 | sudo | no | no | yes, password |
 | Nix daemon | refused | yes | yes |
-| Network config | no | nmtui | nmtui, nmcli |
+| Network config | own Wi-Fi profiles from the TUI only (polkit allowlist, ADR 0010) | nmtui, nmcli (networkmanager group) | nmtui, nmcli |
 | Restricted variants (htop --readonly, ncdu -rr, nano --restricted) | yes | no | no |
 
 ## 5. Networking state model
@@ -91,6 +91,17 @@ Mode = Unix group membership, computed at runtime (ADR 0003):
 Passive: `/sys/class/net`, `getifaddrs`, `/proc/net/{route,ipv6_route,arp}`,
 `/etc/resolv.conf` → OFFLINE / LOCAL LINK / ROUTE UP. Active probe on request
 only, bounded by timeouts, skipped without a route (ADR 0004).
+
+Wi-Fi (ADR 0010), as the user:
+```
+TUI Wi-Fi networks ── nmcli -t device wifi list (cached; rescan in a thread)
+  Enter ──► password dialog (masked) ──► nmcli connection add … permissions user:U
+            (no secret) ──► thread: nmcli --wait 45 connection up uuid X
+            passwd-file /dev/stdin  ◄── "802-11-wireless-security.psk:…" (pipe)
+  failure of a new profile ──► nmcli connection delete uuid X
+polkit: no networkmanager/wheel group ⇒ only scan, network-control,
+        settings.modify.own, enable-disable-wifi; all else NO
+```
 
 ## 6. Planned components (not implemented)
 

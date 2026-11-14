@@ -4,7 +4,7 @@
 //! captured only after the child exits, so this is intended for commands with
 //! small output (well under the 64 KiB pipe buffer).
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -35,14 +35,34 @@ impl Output {
 /// Like [`run_capture`] but also returns the exit code and stderr.
 /// Returns `None` if the program could not be started or timed out.
 pub fn run_full(argv: &[&str], timeout: Duration) -> Option<Output> {
+    run_inner(argv, None, timeout)
+}
+
+/// Like [`run_full`], with `input` written to the child's stdin (then
+/// closed). Used to hand a secret to a program without putting it in argv
+/// or the environment; the caller should wipe its copy afterwards.
+pub fn run_with_input(argv: &[&str], input: &[u8], timeout: Duration) -> Option<Output> {
+    run_inner(argv, Some(input), timeout)
+}
+
+fn run_inner(argv: &[&str], input: Option<&[u8]>, timeout: Duration) -> Option<Output> {
     let (program, args) = argv.split_first()?;
     let mut child = Command::new(program)
         .args(args)
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .ok()?;
+    if let (Some(data), Some(mut stdin)) = (input, child.stdin.take()) {
+        // Small inputs fit in the pipe buffer; a child that never reads
+        // gets EPIPE, which is not an error here. Dropping closes it.
+        let _ = stdin.write_all(data);
+    }
     let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {

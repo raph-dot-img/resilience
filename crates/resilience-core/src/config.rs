@@ -67,6 +67,8 @@ pub struct ToolPaths {
     pub sha256sum: String,
     /// The unprivileged backup tool `resilience-backup`.
     pub backup: String,
+    /// NetworkManager's command-line client (Wi-Fi, ADR 0010).
+    pub nmcli: String,
 }
 
 impl Default for ToolPaths {
@@ -79,6 +81,7 @@ impl Default for ToolPaths {
             age: "age".into(),
             sha256sum: "sha256sum".into(),
             backup: "resilience-backup".into(),
+            nmcli: "nmcli".into(),
         }
     }
 }

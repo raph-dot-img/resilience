@@ -4,7 +4,7 @@ Every result below is **PASS**, **FAIL**, **BLOCKED** or **NOT TESTED**.
 A test is only PASS if it was actually executed. "VM" means QEMU/KVM on the
 development host — **no test has been run on physical hardware**.
 
-Last full run (`nix flake check -L --max-jobs 1`, all VM tests): 2026-11-14 on the Phase 2 commits (privileged helper, Users & modes, Recovery, backups, Date & time), nixpkgs `f1e5c356`. ISO not rebuilt since the helper build (SHA-256 `3d28aeb2…a9f591`) (bit-for-bit reproducibility not verified).
+Last full run (`nix flake check -L --max-jobs 1`, all VM tests): 2026-11-14 on the Phase 2 commits (privileged helper, Users & modes, Recovery, backups, Date & time, Wi-Fi), nixpkgs `f1e5c356`. ISO not rebuilt since the helper build (SHA-256 `3d28aeb2…a9f591`) (bit-for-bit reproducibility not verified).
 
 ## How to run
 
@@ -15,7 +15,7 @@ Last full run (`nix flake check -L --max-jobs 1`, all VM tests): 2026-11-14 on t
 | Screen dump for review | `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` | ~2 s |
 | Evaluate everything | `nix flake check --no-build` | ~30 s |
 | Everything incl. VM tests | `nix flake check -L --max-jobs 1` | ~5 min cold |
-| One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-backup`, `vm-boot-offline`) | ~1–2 min |
+| One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-backup`, `vm-wifi`, `vm-boot-offline`) | ~1–2 min |
 | ISO boot smoke test | `nix build .#iso -o result-iso && python3 -I tests/iso/smoke.py result-iso/iso/*.iso /tmp/shots [--uefi OVMF.fd]` | ~2 min |
 
 Always pass `--max-jobs 1` to `nix flake check` on the 12 GB development
@@ -31,8 +31,8 @@ which corrupts text next to box-drawing characters with our console font.
 
 | Suite | Tests | Result |
 |---|---|---|
-| resilience-core: mode, status, network, catalog, config, handbook, notes, launch (incl. env overrides, polkit agent ordering), proc, admin (names, modes, config, refusals, overrides/staleness, group ops, audit lines, timestamps), recovery (generations, report files), media (lsblk parsing/escapes, removable-only selection, device validation, udisks errors), backup (names, checksums, listing, size estimate, pipeline failure cause, **real age round trip**: encrypt, check, restore, no overwrite, wrong key, damaged with/without checksum), clock (local and strict UTC parsing, impossible dates, bounds, zone names) | 73 | PASS (round trip needs age in PATH: runs in the Nix build; SKIPPED on a host without age) |
-| resilience-tui: navigation, rendering 80×24…200×60, modes, restricted commands, missing programs, confirmations, Ctrl-C, handbook, search, notes, themes, shell gating, wrapping, console glyphs; Users & modes (consequences, Cancel default, fixed pkexec argv + SHELL + agent, refusals, no administrator, corrupt config); Recovery (health, generations, guide, report 0600 / no overwrite); Backups & USB sticks (internal disk never listed, unusable devices, mount via `--no-user-interaction`, Cancel default, backup/check/restore argv, eject busy / safe, lsblk failure); Date & time (prefilled, input filter, errors kept in the dialog, Cancel default, local→UTC argv, no administrator) | 35 | PASS |
+| resilience-core: mode, status, network, catalog, config, handbook, notes, launch (incl. env overrides, polkit agent ordering), proc, admin (names, modes, config, refusals, overrides/staleness, group ops, audit lines, timestamps), recovery (generations, report files), media (lsblk parsing/escapes, removable-only selection, device validation, udisks errors), backup (names, checksums, listing, size estimate, pipeline failure cause, **real age round trip**: encrypt, check, restore, no overwrite, wrong key, damaged with/without checksum), clock (local and strict UTC parsing, impossible dates, bounds, zone names), wifi (nmcli terse escapes, security kinds, scan dedupe/sort/saved match, profiles, private profile argv without secret, password only on stdin with a fake nmcli, password rules, failure hints) | 83 | PASS (round trip needs age in PATH: runs in the Nix build; SKIPPED on a host without age) |
+| resilience-tui: navigation, rendering 80×24…200×60, modes, restricted commands, missing programs, confirmations, Ctrl-C, handbook, search, notes, themes, shell gating, wrapping, console glyphs; Users & modes (consequences, Cancel default, fixed pkexec argv + SHELL + agent, refusals, no administrator, corrupt config); Recovery (health, generations, guide, report 0600 / no overwrite); Backups & USB sticks (internal disk never listed, unusable devices, mount via `--no-user-interaction`, Cancel default, backup/check/restore argv, eject busy / safe, lsblk failure); Date & time (prefilled, input filter, errors kept in the dialog, Cancel default, local→UTC argv, no administrator); Wi-Fi (list at 80×24, password dialog masked, nothing created before confirm / on Esc, private profile, secret on stdin only, wrong password → nothing saved, saved network without password, refused saved password → dialog, forget + Cancel default, admin profile not deletable, open warning, 802.1X/WEP refused, polkit refusal, radio off, no adapter, no nmcli) | 41 | PASS |
 | `cargo clippy --all-targets` | — | PASS (0 warnings) |
 
 ### Nix
@@ -41,7 +41,7 @@ which corrupts text next to box-drawing characters with our console font.
 |---|---|
 | Flake evaluation (`nix flake check --no-build`) | PASS |
 | `eval-live-iso`: live-standard, live-minimal, dev-vm evaluate | PASS |
-| `security-invariants`: 20 invariants × 3 configurations | PASS |
+| `security-invariants`: 21 invariants × 3 configurations | PASS |
 | Invariant checker rejects a deliberately broken configuration (ssh on, root password) | PASS (manual, once) |
 | Invariant checker rejects a privileged autologin account and an extra polkit admin identity | PASS (manual, once; this found that the autologin invariant had been vacuous) |
 | Build-time catalog check (every app command executable) | PASS (part of every system build) |
@@ -74,7 +74,8 @@ which corrupts text next to box-drawing characters with our console font.
 | Ultra-Stable: no privileged groups, `sudo` refused (with and without password) | PASS |
 | Ultra-Stable: Nix daemon refuses the connection | PASS |
 | Ultra-Stable: login shell refuses `su - alice -c id` | PASS |
-| Ultra-Stable: cannot write /etc or the store, stop units, change networking, read other homes | PASS |
+| Ultra-Stable: cannot write /etc or the store, stop units, read other homes | PASS |
+| Ultra-Stable: `nmcli networking off` refused — **only from a session-less `runuser`**; the console session is covered by vm-wifi (before ADR 0010 it was in fact allowed there) | PASS (scope corrected 2026-11-14) |
 | Stable: Nix daemon allowed; sudo refused; cannot write /etc or stop units | PASS |
 | Advanced: sudo works with the password, refuses a wrong one (`sudo -k`) | PASS |
 | 3 | Isolated LAN without gateway/DNS detected as LOCAL LINK, gateway none | PASS |
@@ -122,6 +123,24 @@ Ultra-Stable account on tty1; a 128 MiB raw image hot-plugged as a QEMU
 | Damaged copy (16 bytes overwritten): check says DAMAGED; restore refused before asking for a passphrase; nothing new restored | PASS |
 | Physical USB sticks, SD card readers, exFAT/NTFS sticks, a stick removed during a backup | NOT TESTED |
 
+### VM: `vm-wifi` — Wi-Fi for an Ultra-Stable account (ADR 0010), driven through the TUI
+
+Two simulated radios (`mac80211_hwsim`): `wlan0` is a WPA2 access point
+(hostapd + dnsmasq, test only), `wlan1` is managed by NetworkManager.
+
+| Check | Result |
+|---|---|
+| polkit, TUI process on tty1 (no networkmanager group): scan, network-control, settings.modify.own, enable-disable-wifi allowed; enable-disable-network, -connectivity-check, -statistics, -wwan, wifi.share.open/protected, settings.modify.system/hostname/global-dns, reload, checkpoint-rollback → `result=no` (not auth_admin) | PASS |
+| Stable account's TUI on tty2: enable-disable-network and settings.modify.system still allowed | PASS |
+| Network listed in the TUI (WPA2) | PASS |
+| Esc in the password dialog: no profile created | PASS |
+| Wrong password: "NOT CONNECTED … probably wrong … Nothing was", no profile left, NetworkManager stops trying (wlan1 disconnected) — takes ~46 s (timeout) | PASS |
+| Right password: connected, DHCP address, profile `permissions=user:alice:;`, root 0600 | PASS |
+| Password absent from the journal, every `/proc/*/cmdline`, alice's home; profile unreadable by alice; invisible to bob (positive control: found in the profile file) | PASS |
+| Disconnect (`d`), reconnect without a password dialog | PASS |
+| Forget: profile file removed, disconnected | PASS |
+| Physical Wi-Fi adapters, WPA3-only, open networks, hidden networks, roaming, weak signal | NOT TESTED |
+
 ### ISO boot (`tests/iso/smoke.py`, screenshots reviewed by a human/agent)
 
 | Firmware | Result |
@@ -148,7 +167,7 @@ Ultra-Stable account on tty1; a 128 MiB raw image hot-plugged as a QEMU
 
 | # | Scenario | Status |
 |---|---|---|
-| 2 | Boot with Wi-Fi unavailable | NOT TESTED (no Wi-Fi emulation; logic shared with #1) |
+| 2 | Boot with Wi-Fi unavailable | NOT TESTED as a boot scenario (vm-wifi uses simulated radios; logic shared with #1) |
 | 6 | Search locally installed resources (resource packs) | BLOCKED — resource packs not implemented |
 | 7 | Open installed maps | BLOCKED — maps not implemented |
 | 9 | Cryptographic operations | BLOCKED — Phase 4 |

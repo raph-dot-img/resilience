@@ -33,7 +33,10 @@ test in docs/TESTING.md actually ran and passed (VM only so far).
 - ✅ PAM faillock (login, su, sudo, polkit)
 - ✅ Setting the clock from the TUI: `resilience-admin set-time`, own polkit
   action (auth_admin), bounds, audit, hardware clock (ADR 0009)
-- ⬜ Further helper operations: Wi-Fi, make a generation the default
+- ✅ Wi-Fi for every account from the TUI (unprivileged nmcli, private
+  profiles, password via stdin); NetworkManager polkit allowlist for accounts
+  without its group (ADR 0010)
+- ⬜ Further helper operations: make a generation the default
 - ✅ Removable media for every account (udisks2, removable drives only) and
   encrypted backup/check/restore of the home folder (age, ADR 0008)
 - ⬜ Review `unprivileged_userns_clone` for Ultra-Stable-only machines

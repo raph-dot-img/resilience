@@ -161,7 +161,64 @@ case "$1" in
 esac
 "#
     );
-    for (name, text) in [("lsblk", lsblk), ("udisksctl", udisksctl)] {
+    // Fake nmcli: one Wi-Fi device, a saved network "Home" (not active), a
+    // network managed by an administrator ("Shared", its profile cannot be
+    // deleted by this account), and a few visible networks. Every call is
+    // logged to sys/nmcli.log; profiles live in sys/nm-profiles.
+    std::fs::write(
+        sys.join("nm-profiles"),
+        "Home:0b7e1d0a-9a7c-4c1e-8f53-4f5f2b2c9a10:802-11-wireless:no\n\
+         Shared:5f0c1a52-1b6f-4a39-9d1a-2a4c9d2c8e01:802-11-wireless:no\n\
+         Wired:6a1c1a52-1b6f-4a39-9d1a-2a4c9d2c8e02:802-3-ethernet:yes\n",
+    )
+    .expect("write profiles");
+    let nmcli = format!(
+        r#"#!/bin/sh
+echo "$@" >> {d}/nmcli.log
+P={d}/nm-profiles
+case "$*" in
+  "-t -f TYPE device") echo ethernet; [ -f {d}/no-wifi ] || echo wifi ;;
+  "-t radio wifi") if [ -f {d}/radio-off ]; then echo disabled; else echo enabled; fi ;;
+  "radio wifi on") rm -f {d}/radio-off ;;
+  "-t -f NAME,UUID,TYPE,ACTIVE connection show") cat $P ;;
+  "-t -f IN-USE,SSID,SECURITY,SIGNAL device wifi list --rescan no")
+    if grep -q '^Cafe:.*:yes$' $P; then C='*'; else C=''; fi
+    cat <<NM
+:Home:WPA2:70
+$C:Cafe:WPA2:55
+:Cafe:WPA2:30
+:Library:--:40
+:Corp:WPA2 802.1X:80
+:Old:WEP:20
+:Shared:WPA2:35
+NM
+    ;;
+  "device wifi rescan") ;;
+  "connection add "*)
+    if [ -f {d}/deny-add ]; then echo "Error: Failed to add 'x' connection: Insufficient privileges" >&2; exit 1; fi
+    shift 7; name="$1"; shift 4; uuid="$1"
+    echo "$name:$uuid:802-11-wireless:no" >> $P ;;
+  "connection delete uuid 5f0c1a52-1b6f-4a39-9d1a-2a4c9d2c8e01")
+    echo "Error: Connection deletion failed: Insufficient privileges" >&2; exit 1 ;;
+  "connection delete uuid "*) grep -v ":$4:" $P > $P.new; mv $P.new $P ;;
+  "connection down uuid "*) sed -i "s/:$4:802-11-wireless:yes/:$4:802-11-wireless:no/" $P ;;
+  "--wait 45 connection up uuid "*" passwd-file /dev/stdin")
+    # The secret arrives on stdin only; keep it for the test to check.
+    cat > {d}/nm-stdin
+    if [ "$(cat {d}/nm-stdin)" != "802-11-wireless-security.psk:right-password" ]; then
+      echo "Error: Connection activation failed: Secrets were required, but not provided." >&2; exit 4
+    fi
+    sed -i "s/:$6:802-11-wireless:no/:$6:802-11-wireless:yes/" $P ;;
+  "--wait 45 connection up uuid "*)
+    if [ -f {d}/forgot-secret ] || [ "$6" = 0b7e1d0a-9a7c-4c1e-8f53-4f5f2b2c9a10 -a -f {d}/home-refused ]; then
+      echo "Error: Connection activation failed: Secrets were required, but not provided." >&2; exit 4
+    fi
+    sed -i "s/:$6:802-11-wireless:no/:$6:802-11-wireless:yes/" $P ;;
+  *) echo "Error: unexpected arguments: $*" >&2; exit 2 ;;
+esac
+"#
+    );
+    for (name, text) in [("lsblk", lsblk), ("udisksctl", udisksctl), ("nmcli", nmcli)] {
         let p = sys.join(name);
         std::fs::write(&p, text).expect("write");
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("chmod");
@@ -170,6 +227,7 @@ esac
         lsblk: sys.join("lsblk").display().to_string(),
         udisksctl: sys.join("udisksctl").display().to_string(),
         backup: "/store/bin/resilience-backup".into(),
+        nmcli: sys.join("nmcli").display().to_string(),
         ..ToolPaths::default()
     }
 }
@@ -1211,4 +1269,321 @@ fn no_administrator_means_no_clock_change() {
         "{:?}",
         a.modal
     );
+}
+
+// ----- Wi-Fi ----------------------------------------------------------------------
+
+fn nmcli_log(a: &App) -> String {
+    std::fs::read_to_string(a.home.join("sys/nmcli.log")).unwrap_or_default()
+}
+
+fn profiles(a: &App) -> String {
+    std::fs::read_to_string(a.home.join("sys/nm-profiles")).unwrap_or_default()
+}
+
+fn select_network(a: &mut App, ssid: &str) {
+    let View::Wifi {
+        overview: Some(o), ..
+    } = a.view()
+    else {
+        panic!("not on the Wi-Fi view: {:?}", a.view())
+    };
+    let i = o
+        .networks
+        .iter()
+        .position(|n| n.ssid == ssid)
+        .expect("network listed");
+    press(a, KeyCode::Home);
+    for _ in 0..i {
+        press(a, KeyCode::Down);
+    }
+}
+
+#[test]
+fn wifi_is_offered_in_every_mode_and_lists_networks() {
+    for m in [Mode::UltraStable, Mode::Stable, Mode::Advanced] {
+        let a = app(m, &format!("wifi-{m:?}"));
+        assert!(
+            a.entries(Category::Networking)
+                .contains(&Entry::Builtin(Builtin::Wifi)),
+            "{m:?}"
+        );
+    }
+    let mut a = app(Mode::UltraStable, "wifi-list");
+    open(&mut a, Builtin::Wifi);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("WI-FI NETWORKS"), "{screen}");
+    for n in [
+        "Home", "Cafe", "Library", "Corp", "saved", "802.1X", "55%", "WEP",
+    ] {
+        assert!(screen.contains(n), "{n}: {screen}");
+    }
+    // One row per network name: Cafe appears once in the list.
+    let View::Wifi {
+        overview: Some(o), ..
+    } = a.view()
+    else {
+        panic!()
+    };
+    assert_eq!(o.networks.iter().filter(|n| n.ssid == "Cafe").count(), 1);
+    for (w, h) in [(80, 24), (40, 12), (120, 40), (200, 60)] {
+        assert_console_glyphs(&render(&mut a, w, h));
+    }
+}
+
+/// Wait for the background connection attempt (fake nmcli) to finish.
+fn finish_wifi_job(a: &mut App) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while a.wifi_job.is_some() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "connection attempt hangs"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        a.on_tick();
+    }
+}
+
+fn type_password(a: &mut App, p: &str) {
+    for c in p.chars() {
+        press(a, KeyCode::Char(c));
+    }
+}
+
+#[test]
+fn joining_a_new_network_asks_for_the_password_and_passes_it_on_stdin_only() {
+    let mut a = app(Mode::UltraStable, "wifi-join");
+    open(&mut a, Builtin::Wifi);
+    select_network(&mut a, "Cafe");
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    assert!(
+        matches!(&a.modal, Some(Modal::WifiPassword { .. })),
+        "{:?}",
+        a.modal
+    );
+    // Nothing is created before the password is confirmed.
+    assert!(!nmcli_log(&a).contains("connection add"));
+    type_password(&mut a, "right-password");
+    let s = render(&mut a, 80, 24);
+    assert!(
+        s.contains("WI-FI PASSWORD") && s.contains("**************"),
+        "{s}"
+    );
+    assert!(
+        !s.contains("right-password"),
+        "the password is never shown: {s}"
+    );
+    assert_console_glyphs(&s);
+    // Too short: explained in the dialog, nothing runs.
+    a.modal = Some(Modal::WifiPassword {
+        net: match &a.modal {
+            Some(Modal::WifiPassword { net, .. }) => net.clone(),
+            _ => unreachable!(),
+        },
+        uuid: None,
+        value: "short".into(),
+        error: None,
+    });
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(&a.modal, Some(Modal::WifiPassword { error: Some(e), .. }) if e.contains("at least 8")),
+        "{:?}",
+        a.modal
+    );
+    for _ in 0..5 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    type_password(&mut a, "right-password");
+    press(&mut a, KeyCode::Enter);
+    assert!(a.modal.is_none());
+    let log = nmcli_log(&a);
+    let add = log
+        .lines()
+        .find(|l| l.starts_with("connection add"))
+        .expect("profile created");
+    assert!(add.contains("connection.permissions user:tester"), "{add}");
+    assert!(add.contains("wifi-sec.psk-flags 0"), "{add}");
+    assert!(a.wifi_job.as_ref().is_some_and(|j| j.new_profile));
+    assert!(render(&mut a, 80, 24).contains("connecting to 'Cafe'"));
+    finish_wifi_job(&mut a);
+    assert!(a.modal.is_none(), "{:?}", a.modal);
+    assert!(!nmcli_log(&a).contains("right-password"), "never in argv");
+    assert_eq!(
+        std::fs::read_to_string(a.home.join("sys/nm-stdin")).expect("stdin"),
+        "802-11-wireless-security.psk:right-password\n"
+    );
+    assert!(profiles(&a).contains(":802-11-wireless:yes") && profiles(&a).contains("Cafe:"));
+    let s = render(&mut a, 80, 24);
+    assert!(s.contains("*Cafe"), "{s}");
+}
+
+#[test]
+fn a_wrong_password_saves_nothing_and_says_so() {
+    let mut a = app(Mode::UltraStable, "wifi-wrong");
+    open(&mut a, Builtin::Wifi);
+    select_network(&mut a, "Cafe");
+    press(&mut a, KeyCode::Enter);
+    type_password(&mut a, "wrong-password");
+    press(&mut a, KeyCode::Enter);
+    finish_wifi_job(&mut a);
+    match &a.modal {
+        Some(Modal::Message { title, body, error }) => {
+            assert_eq!(title, "NOT CONNECTED");
+            assert!(*error);
+            assert!(
+                body.contains("probably wrong") && body.contains("Nothing was saved"),
+                "{body}"
+            );
+        }
+        other => panic!("expected an explanation, got {other:?}"),
+    }
+    assert!(!profiles(&a).contains("Cafe:"), "{}", profiles(&a));
+    // Esc in the password dialog creates nothing at all.
+    a.modal = None;
+    press(&mut a, KeyCode::Enter);
+    type_password(&mut a, "whatever-1");
+    press(&mut a, KeyCode::Esc);
+    assert!(a.modal.is_none() && a.wifi_job.is_none());
+    assert_eq!(nmcli_log(&a).matches("connection add").count(), 1);
+}
+
+#[test]
+fn saved_networks_connect_without_a_password_and_can_be_forgotten() {
+    let mut a = app(Mode::UltraStable, "wifi-saved");
+    open(&mut a, Builtin::Wifi);
+    select_network(&mut a, "Home");
+    press(&mut a, KeyCode::Enter);
+    assert!(a.modal.is_none(), "no password asked: {:?}", a.modal);
+    assert!(
+        a.wifi_job
+            .as_ref()
+            .is_some_and(|j| !j.new_profile && !j.with_password)
+    );
+    finish_wifi_job(&mut a);
+    assert!(profiles(&a).contains("Home:0b7e1d0a-9a7c-4c1e-8f53-4f5f2b2c9a10:802-11-wireless:yes"));
+    assert!(!nmcli_log(&a).contains("connection add"));
+    // Disconnect.
+    select_network(&mut a, "Home");
+    press(&mut a, KeyCode::Char('d'));
+    assert!(profiles(&a).contains("Home:0b7e1d0a-9a7c-4c1e-8f53-4f5f2b2c9a10:802-11-wireless:no"));
+    // The saved password is refused: the password dialog opens for the
+    // same profile; a failed retry keeps the profile.
+    std::fs::write(a.home.join("sys/home-refused"), "").expect("w");
+    select_network(&mut a, "Home");
+    press(&mut a, KeyCode::Enter);
+    finish_wifi_job(&mut a);
+    match &a.modal {
+        Some(Modal::WifiPassword { uuid, error, .. }) => {
+            assert_eq!(
+                uuid.as_deref(),
+                Some("0b7e1d0a-9a7c-4c1e-8f53-4f5f2b2c9a10")
+            );
+            assert!(error.as_deref().is_some_and(|e| e.contains("not accepted")));
+        }
+        other => panic!("expected the password dialog, got {other:?}"),
+    }
+    type_password(&mut a, "wrong-again");
+    press(&mut a, KeyCode::Enter);
+    finish_wifi_job(&mut a);
+    assert!(matches!(&a.modal, Some(Modal::Message { title, .. }) if title == "NOT CONNECTED"));
+    assert!(profiles(&a).contains("Home:"), "a saved network is kept");
+    a.modal = None;
+    // Forget: confirmation with Cancel as default.
+    select_network(&mut a, "Home");
+    press(&mut a, KeyCode::Char('f'));
+    assert!(matches!(
+        &a.modal,
+        Some(Modal::Confirm {
+            yes_focused: false,
+            ..
+        })
+    ));
+    press(&mut a, KeyCode::Enter);
+    assert!(profiles(&a).contains("Home:"));
+    press(&mut a, KeyCode::Char('f'));
+    press(&mut a, KeyCode::Char('y'));
+    assert!(!profiles(&a).contains("Home:"), "{}", profiles(&a));
+    // A profile set up by an administrator cannot be removed: clear message.
+    select_network(&mut a, "Shared");
+    press(&mut a, KeyCode::Char('f'));
+    press(&mut a, KeyCode::Char('y'));
+    match &a.modal {
+        Some(Modal::Message { body, error, .. }) => {
+            assert!(*error);
+            assert!(body.contains("not allowed"), "{body}");
+        }
+        other => panic!("expected an explanation, got {other:?}"),
+    }
+}
+
+#[test]
+fn open_unsupported_and_refused_networks_are_explained() {
+    let mut a = app(Mode::UltraStable, "wifi-special");
+    open(&mut a, Builtin::Wifi);
+    // Open network: a warning first, Cancel by default, nothing created.
+    select_network(&mut a, "Library");
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    assert!(
+        matches!(&a.modal, Some(Modal::Confirm { title, yes_focused: false, .. }) if title == "OPEN NETWORK")
+    );
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    assert!(!nmcli_log(&a).contains("connection add"));
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::Char('y'));
+    assert!(a.wifi_job.as_ref().is_some_and(|j| !j.with_password));
+    finish_wifi_job(&mut a);
+    let log = nmcli_log(&a);
+    assert!(
+        log.contains("con-name Library") && !log.contains("wifi-sec"),
+        "{log}"
+    );
+    // Enterprise and WEP: not offered.
+    for ssid in ["Corp", "Old"] {
+        a.modal = None;
+        select_network(&mut a, ssid);
+        assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+        assert!(
+            matches!(&a.modal, Some(Modal::Message { title, .. }) if title == "NOT POSSIBLE"),
+            "{ssid}: {:?}",
+            a.modal
+        );
+    }
+    // polkit refuses to create the profile: explained, nothing runs.
+    a.modal = None;
+    std::fs::write(a.home.join("sys/deny-add"), "").expect("w");
+    select_network(&mut a, "Cafe");
+    press(&mut a, KeyCode::Enter);
+    type_password(&mut a, "right-password");
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { body, .. }) if body.contains("Insufficient privileges") && body.contains("not allowed")),
+        "{:?}",
+        a.modal
+    );
+    assert!(a.wifi_job.is_none());
+}
+
+#[test]
+fn wifi_off_or_missing_is_explained() {
+    let mut a = app(Mode::UltraStable, "wifi-off");
+    std::fs::write(a.home.join("sys/radio-off"), "").expect("w");
+    open(&mut a, Builtin::Wifi);
+    let s = render(&mut a, 80, 24);
+    assert!(s.contains("Wi-Fi is switched off"), "{s}");
+    press(&mut a, KeyCode::Char('w'));
+    assert!(nmcli_log(&a).contains("radio wifi on"));
+    let s = render(&mut a, 80, 24);
+    assert!(s.contains("Cafe"), "{s}");
+
+    let mut b = app(Mode::UltraStable, "wifi-none");
+    std::fs::write(b.home.join("sys/no-wifi"), "").expect("w");
+    open(&mut b, Builtin::Wifi);
+    let s = render(&mut b, 80, 24);
+    assert!(s.contains("No Wi-Fi adapter"), "{s}");
+
+    let mut c = app(Mode::UltraStable, "wifi-broken");
+    c.sys.tools.nmcli = c.home.join("sys/missing-nmcli").display().to_string();
+    open(&mut c, Builtin::Wifi);
+    let s = render(&mut c, 80, 24);
+    assert!(s.contains("not installed"), "{s}");
 }

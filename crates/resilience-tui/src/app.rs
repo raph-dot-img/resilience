@@ -26,6 +26,7 @@ use resilience_core::notes;
 use resilience_core::proc::run_full;
 use resilience_core::recovery;
 use resilience_core::status::{self, Snapshot, SystemState};
+use resilience_core::wifi::{self, Network, Overview};
 
 use crate::theme::Theme;
 
@@ -114,6 +115,7 @@ pub enum Builtin {
     Handbook,
     Notes,
     Network,
+    Wifi,
     SystemStatus,
     Notifications,
     Settings,
@@ -129,10 +131,11 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 15] = [
+    pub const ALL: [Builtin; 16] = [
         Builtin::Handbook,
         Builtin::Notes,
         Builtin::Network,
+        Builtin::Wifi,
         Builtin::SystemStatus,
         Builtin::Recovery,
         Builtin::Backup,
@@ -152,6 +155,7 @@ impl Builtin {
             Builtin::Handbook => "Resilience Handbook",
             Builtin::Notes => "Notes",
             Builtin::Network => "Network status & diagnostics",
+            Builtin::Wifi => "Wi-Fi networks",
             Builtin::SystemStatus => "System status",
             Builtin::Notifications => "Notification history",
             Builtin::Settings => "Settings",
@@ -177,6 +181,10 @@ impl Builtin {
             }
             Builtin::Network => {
                 "Shows whether this computer has a network link, a route, and (on request) Internet access."
+            }
+            Builtin::Wifi => {
+                "See nearby Wi-Fi networks and join one. Networks you join are saved for \
+                 your account only; their passwords are kept by the system, not shown."
             }
             Builtin::SystemStatus => {
                 "Detailed health report: services, storage, memory, power, system generation."
@@ -211,7 +219,7 @@ impl Builtin {
         match self {
             Builtin::Handbook => Category::Knowledge,
             Builtin::Notes => Category::Productivity,
-            Builtin::Network => Category::Networking,
+            Builtin::Network | Builtin::Wifi => Category::Networking,
             _ => Category::System,
         }
     }
@@ -228,6 +236,9 @@ impl Builtin {
             Builtin::Handbook => "help guide manual documentation docs",
             Builtin::Notes => "write text memo journal",
             Builtin::Network => "wifi ethernet internet offline online dns",
+            Builtin::Wifi => {
+                "wifi wi-fi wireless wlan hotspot ssid password connect join network internet"
+            }
             Builtin::SystemStatus => "health battery disk storage memory",
             Builtin::Settings => "theme colour color preferences",
             Builtin::Clock => "clock time date hour timezone zone ntp calendar rtc wrong",
@@ -344,6 +355,12 @@ pub enum View {
         error: Option<String>,
         list: ListState,
     },
+    /// Nearby Wi-Fi networks (NetworkManager, as the user).
+    Wifi {
+        overview: Option<Overview>,
+        error: Option<String>,
+        list: ListState,
+    },
     /// Backups on one mounted volume; row 0 is "make a new backup".
     Backups {
         volume: Volume,
@@ -373,6 +390,14 @@ pub enum Pending {
     Backup {
         mount: PathBuf,
     },
+    /// Join an open (unencrypted) network after a warning.
+    JoinWifi {
+        net: Network,
+    },
+    ForgetWifi {
+        name: String,
+        uuid: String,
+    },
     Restore {
         file: PathBuf,
     },
@@ -393,6 +418,14 @@ pub enum Modal {
         error: bool,
     },
     NewNote {
+        value: String,
+        error: Option<String>,
+    },
+    /// Type a Wi-Fi password (shown as stars). `uuid` is set when the
+    /// profile already exists (its saved password was refused).
+    WifiPassword {
+        net: Network,
+        uuid: Option<String>,
         value: String,
         error: Option<String>,
     },
@@ -464,9 +497,23 @@ pub struct App {
     pub modal: Option<Modal>,
     pub notices: Vec<Notice>,
     pub toast: Option<(usize, Instant)>,
+    /// The Wi-Fi connection attempt running in the background, if any.
+    pub wifi_job: Option<WifiJob>,
     pub tick: u64,
     last_fast: Instant,
     last_slow: Instant,
+}
+
+/// A Wi-Fi connection attempt (nmcli in a thread, up to about a minute).
+pub struct WifiJob {
+    pub ssid: String,
+    pub uuid: String,
+    /// The profile was created for this attempt: remove it if it fails.
+    pub new_profile: bool,
+    /// A password was typed for this attempt.
+    pub with_password: bool,
+    pub started: Instant,
+    rx: mpsc::Receiver<Result<(), String>>,
 }
 
 /// Inputs gathered by `main` before the interface starts.
@@ -501,6 +548,7 @@ impl App {
             modal: None,
             notices: Vec::new(),
             toast: None,
+            wifi_job: None,
             tick: 0,
             last_fast: Instant::now(),
             last_slow: Instant::now(),
@@ -531,6 +579,9 @@ impl App {
     pub fn refresh_fast(&mut self) {
         self.snapshot = status::snapshot(&self.home);
         self.net = network::passive_state();
+        if matches!(self.view(), View::Wifi { .. }) {
+            self.reload_wifi();
+        }
         self.last_fast = Instant::now();
     }
 
@@ -549,6 +600,7 @@ impl App {
         if self.last_slow.elapsed() >= SLOW_REFRESH {
             self.refresh_slow();
         }
+        self.poll_wifi_job();
         if let Some((rx, _)) = &self.probe.running {
             match rx.try_recv() {
                 Ok(report) => {
@@ -731,6 +783,7 @@ impl App {
             View::Users { .. } | View::ChooseMode { .. } => HelpTopic::Users,
             View::Recovery { .. } => HelpTopic::Recovery,
             View::Media { .. } | View::Backups { .. } => HelpTopic::Backup,
+            View::Wifi { .. } => HelpTopic::Network,
             View::Search { .. } => HelpTopic::Search,
         }
     }
@@ -982,6 +1035,57 @@ impl App {
                     _ => nav(list, volumes.len(), key),
                 }
             }
+            View::Wifi {
+                overview,
+                error,
+                list,
+            } => {
+                let n = overview.as_ref().map_or(0, |o| o.networks.len());
+                let selected = list
+                    .selected()
+                    .and_then(|i| overview.as_ref()?.networks.get(i))
+                    .cloned();
+                match key.code {
+                    KeyCode::Char('r') => {
+                        self.request_wifi_scan();
+                        self.notify(Level::Info, "Looking for Wi-Fi networks...");
+                        (*overview, *error) = self.load_wifi();
+                    }
+                    KeyCode::Char('w') => {
+                        match wifi::radio_on(&self.sys.tools.nmcli) {
+                            Ok(()) => {
+                                self.notify(Level::Info, "Wi-Fi switched on.");
+                                self.request_wifi_scan();
+                            }
+                            Err(e) => self.wifi_refused("Wi-Fi could not be switched on", &e),
+                        }
+                        (*overview, *error) = self.load_wifi();
+                    }
+                    KeyCode::Char('d') => {
+                        if let Some(net) = selected {
+                            self.disconnect_wifi(&net);
+                            (*overview, *error) = self.load_wifi();
+                        }
+                    }
+                    KeyCode::Char('f') => {
+                        if let Some(net) = selected {
+                            self.confirm_forget_wifi(&net);
+                        }
+                    }
+                    _ if is_activate(key) => {
+                        if let Some(net) = selected {
+                            self.join_wifi(&net);
+                        }
+                    }
+                    _ if is_back(key) => return (None, Effect::None),
+                    _ => nav(list, n, key),
+                }
+                let n = overview.as_ref().map_or(0, |o| o.networks.len());
+                if list.selected().is_none() && n > 0 {
+                    list.select(Some(0));
+                }
+                clamp_selection(list, n);
+            }
             View::Backups {
                 volume,
                 mount,
@@ -1187,6 +1291,19 @@ impl App {
                 self.open_set_time();
                 none
             }
+            Builtin::Wifi => {
+                self.request_wifi_scan();
+                let (overview, error) = self.load_wifi();
+                let sel = overview.as_ref().is_some_and(|o| !o.networks.is_empty());
+                (
+                    Some(View::Wifi {
+                        overview,
+                        error,
+                        list: ListState::default().with_selected(sel.then_some(0)),
+                    }),
+                    Effect::None,
+                )
+            }
             Builtin::Users => {
                 let (rows, error) = self.load_accounts();
                 let sel = (!rows.is_empty()).then_some(0);
@@ -1305,6 +1422,8 @@ impl App {
         let (title, body, confirm) = match &action {
             Pending::SetMode { .. }
             | Pending::SetTime { .. }
+            | Pending::JoinWifi { .. }
+            | Pending::ForgetWifi { .. }
             | Pending::Backup { .. }
             | Pending::Restore { .. } => return,
             Pending::Logout => (
@@ -1405,6 +1524,52 @@ impl App {
                     Effect::None
                 }
             },
+            Modal::WifiPassword {
+                net,
+                uuid,
+                mut value,
+                error,
+            } => match key.code {
+                KeyCode::Esc => {
+                    wifi::wipe(value);
+                    Effect::None
+                }
+                KeyCode::Enter => {
+                    self.submit_wifi_password(net, uuid, value);
+                    Effect::None
+                }
+                KeyCode::Backspace => {
+                    value.pop();
+                    self.modal = Some(Modal::WifiPassword {
+                        net,
+                        uuid,
+                        value,
+                        error: None,
+                    });
+                    Effect::None
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if value.len() < 64 {
+                        value.push(c);
+                    }
+                    self.modal = Some(Modal::WifiPassword {
+                        net,
+                        uuid,
+                        value,
+                        error: None,
+                    });
+                    Effect::None
+                }
+                _ => {
+                    self.modal = Some(Modal::WifiPassword {
+                        net,
+                        uuid,
+                        value,
+                        error,
+                    });
+                    Effect::None
+                }
+            },
             Modal::SetTime {
                 mut value,
                 zone,
@@ -1451,6 +1616,14 @@ impl App {
             Pending::Logout => return Effect::Quit,
             Pending::SetMode { user, to } => return self.set_mode_effect(&user, to),
             Pending::SetTime { utc } => return self.set_time_effect(utc),
+            Pending::JoinWifi { net } => {
+                self.create_and_join(&net, None);
+                return Effect::None;
+            }
+            Pending::ForgetWifi { name, uuid } => {
+                self.forget_wifi(&name, &uuid);
+                return Effect::None;
+            }
             Pending::Backup { mount } => {
                 return self.backup_tool_effect(BACKUP_LABEL, "create", &mount);
             }
@@ -1797,6 +1970,314 @@ impl App {
                  password. Press Ctrl-C to cancel."
             )),
         })
+    }
+
+    // ----- Wi-Fi ----------------------------------------------------------------
+
+    pub fn load_wifi(&self) -> (Option<Overview>, Option<String>) {
+        let nmcli = &self.sys.tools.nmcli;
+        if !wifi::available(nmcli) {
+            return (
+                None,
+                Some("NetworkManager is not installed on this system.".into()),
+            );
+        }
+        match wifi::overview(nmcli) {
+            Ok(o) => (Some(o), None),
+            Err(e) => (None, Some(e)),
+        }
+    }
+
+    fn reload_wifi(&mut self) {
+        let (o, e) = self.load_wifi();
+        for v in self.stack.iter_mut() {
+            if let View::Wifi {
+                overview,
+                error,
+                list,
+            } = v
+            {
+                *overview = o.clone();
+                *error = e.clone();
+                let n = overview.as_ref().map_or(0, |o| o.networks.len());
+                if list.selected().is_none() && n > 0 {
+                    list.select(Some(0));
+                }
+                clamp_selection(list, n);
+            }
+        }
+    }
+
+    /// Scanning takes a few seconds; results show up at the next refresh.
+    fn request_wifi_scan(&self) {
+        let nmcli = self.sys.tools.nmcli.clone();
+        if !wifi::available(&nmcli) {
+            return;
+        }
+        thread::spawn(move || {
+            if let Err(e) = wifi::request_scan(&nmcli) {
+                tracing::info!(error = %e, "wifi scan request");
+            }
+        });
+    }
+
+    fn wifi_refused(&mut self, what: &str, e: &str) {
+        let hint = if e.contains("nsufficient privileges") || e.contains("Not authorized") {
+            "\n\nYour account is not allowed to do this. An administrator can do it, \
+             or change your security mode."
+        } else {
+            ""
+        };
+        self.notify(Level::Error, format!("{what}: {e}"));
+        self.modal = Some(Modal::Message {
+            title: "WI-FI".into(),
+            body: format!("{what}:\n\n{e}{hint}"),
+            error: true,
+        });
+    }
+
+    fn join_wifi(&mut self, net: &Network) {
+        if let Some(j) = &self.wifi_job {
+            self.notify(Level::Warn, format!("Still connecting to '{}'...", j.ssid));
+            return;
+        }
+        if net.in_use {
+            self.modal = Some(Modal::Message {
+                title: "WI-FI".into(),
+                body: format!(
+                    "You are connected to '{}'. Press d to disconnect.",
+                    net.ssid
+                ),
+                error: false,
+            });
+            return;
+        }
+        if let Some(p) = &net.saved {
+            // NetworkManager has the password; if it is refused, the
+            // password dialog opens (see poll_wifi_job).
+            let (ssid, uuid) = (net.ssid.clone(), p.uuid.clone());
+            self.start_wifi_job(ssid, uuid, false, None);
+            return;
+        }
+        if let Some(problem) = net.problem() {
+            self.modal = Some(Modal::Message {
+                title: "NOT POSSIBLE".into(),
+                body: format!("'{}' cannot be joined here: {problem}.", net.ssid),
+                error: true,
+            });
+            return;
+        }
+        if net.security == wifi::Security::Open {
+            self.modal = Some(Modal::Confirm {
+                title: "OPEN NETWORK".into(),
+                body: format!(
+                    "'{}' has no password and no encryption. People nearby can see \
+                     what you send unless the program itself encrypts it.\n\n\
+                     Join it anyway?",
+                    net.ssid
+                ),
+                confirm: "Join".into(),
+                action: Pending::JoinWifi { net: net.clone() },
+                yes_focused: false,
+            });
+            return;
+        }
+        self.modal = Some(Modal::WifiPassword {
+            net: net.clone(),
+            uuid: None,
+            value: String::new(),
+            error: None,
+        });
+    }
+
+    /// The password dialog was confirmed. The password is checked, then
+    /// moved into the connection thread, which wipes it after use.
+    fn submit_wifi_password(&mut self, net: Network, uuid: Option<String>, value: String) {
+        if let Err(e) = wifi::check_password(&value) {
+            self.modal = Some(Modal::WifiPassword {
+                net,
+                uuid,
+                value,
+                error: Some(format!("{}.", capitalise(e))),
+            });
+            return;
+        }
+        match uuid {
+            Some(u) => self.start_wifi_job(net.ssid.clone(), u, false, Some(value)),
+            None => self.create_and_join(&net, Some(value)),
+        }
+    }
+
+    /// Create a profile for this account only (no secret), then connect.
+    fn create_and_join(&mut self, net: &Network, password: Option<String>) {
+        let nmcli = self.sys.tools.nmcli.clone();
+        let created = wifi::new_uuid()
+            .map_err(|e| e.to_string())
+            .and_then(|uuid| {
+                let argv = wifi::add_profile_argv(&nmcli, net, &uuid, &self.who.user)?;
+                wifi::add_profile(&argv)?;
+                Ok(uuid)
+            });
+        match created {
+            Ok(uuid) => {
+                tracing::info!(ssid = %net.ssid, "wifi profile created");
+                self.start_wifi_job(net.ssid.clone(), uuid, true, password);
+            }
+            Err(e) => {
+                if let Some(p) = password {
+                    wifi::wipe(p);
+                }
+                self.wifi_refused(&format!("'{}' could not be set up", net.ssid), &e);
+            }
+        }
+    }
+
+    fn start_wifi_job(
+        &mut self,
+        ssid: String,
+        uuid: String,
+        new_profile: bool,
+        password: Option<String>,
+    ) {
+        let nmcli = self.sys.tools.nmcli.clone();
+        let with_password = password.is_some();
+        let (tx, rx) = mpsc::channel();
+        let id = uuid.clone();
+        thread::spawn(move || {
+            let _ = tx.send(wifi::connect(&nmcli, &id, password));
+        });
+        self.notify(Level::Info, format!("Connecting to '{ssid}'..."));
+        self.wifi_job = Some(WifiJob {
+            ssid,
+            uuid,
+            new_profile,
+            with_password,
+            started: Instant::now(),
+            rx,
+        });
+    }
+
+    fn poll_wifi_job(&mut self) {
+        let Some(job) = &self.wifi_job else { return };
+        let result = match job.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => Err("the connection attempt stopped".into()),
+        };
+        let job = self.wifi_job.take().expect("checked above");
+        match result {
+            Ok(()) => {
+                tracing::info!(ssid = %job.ssid, "wifi connected");
+                self.notify(Level::Info, format!("Connected to '{}'.", job.ssid));
+            }
+            Err(e) => {
+                tracing::info!(ssid = %job.ssid, error = %e, "wifi connection failed");
+                if job.new_profile {
+                    // A failed first attempt leaves nothing behind.
+                    if let Err(f) = wifi::forget(&self.sys.tools.nmcli, &job.uuid) {
+                        self.notify(
+                            Level::Warn,
+                            format!("the new network could not be removed: {f}"),
+                        );
+                    }
+                }
+                let password_problem = wifi::needs_password(&e);
+                if password_problem && !job.new_profile && !job.with_password {
+                    // A saved network whose password was refused or lost.
+                    let net = self
+                        .wifi_networks()
+                        .into_iter()
+                        .find(|n| n.ssid == job.ssid);
+                    if let Some(net) = net {
+                        self.modal = Some(Modal::WifiPassword {
+                            net,
+                            uuid: Some(job.uuid),
+                            value: String::new(),
+                            error: Some(
+                                "The saved password was not accepted. Type it again.".into(),
+                            ),
+                        });
+                        self.reload_wifi();
+                        return;
+                    }
+                }
+                let mut body = format!("Could not connect to '{}':\n\n{e}", job.ssid);
+                if let Some(hint) = wifi::failure_hint(&e, job.with_password) {
+                    body.push_str("\n\n");
+                    body.push_str(hint);
+                }
+                if job.new_profile {
+                    body.push_str(" Nothing was saved.");
+                }
+                self.notify(Level::Warn, format!("Not connected to '{}'.", job.ssid));
+                self.modal = Some(Modal::Message {
+                    title: "NOT CONNECTED".into(),
+                    body,
+                    error: true,
+                });
+            }
+        }
+        self.reload_wifi();
+    }
+
+    fn wifi_networks(&self) -> Vec<Network> {
+        self.stack
+            .iter()
+            .find_map(|v| match v {
+                View::Wifi {
+                    overview: Some(o), ..
+                } => Some(o.networks.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    fn disconnect_wifi(&mut self, net: &Network) {
+        match &net.saved {
+            Some(p) if p.active => match wifi::disconnect(&self.sys.tools.nmcli, p) {
+                Ok(()) => self.notify(Level::Info, format!("Disconnected from '{}'.", net.ssid)),
+                Err(e) => self.wifi_refused("Could not disconnect", &e),
+            },
+            _ if net.in_use => self.wifi_refused(
+                "Could not disconnect",
+                "this connection was not set up under the network's name",
+            ),
+            _ => self.notify(Level::Info, format!("'{}' is not connected.", net.ssid)),
+        }
+    }
+
+    fn confirm_forget_wifi(&mut self, net: &Network) {
+        let Some(p) = &net.saved else {
+            self.notify(Level::Info, format!("'{}' is not saved.", net.ssid));
+            return;
+        };
+        self.modal = Some(Modal::Confirm {
+            title: "FORGET NETWORK".into(),
+            body: format!(
+                "Forget '{}'? The saved password is deleted{}. You will need the \
+                 password to join it again.",
+                net.ssid,
+                if p.active {
+                    " and you are disconnected"
+                } else {
+                    ""
+                }
+            ),
+            confirm: "Forget".into(),
+            action: Pending::ForgetWifi {
+                name: net.ssid.clone(),
+                uuid: p.uuid.clone(),
+            },
+            yes_focused: false,
+        });
+    }
+
+    fn forget_wifi(&mut self, name: &str, uuid: &str) {
+        match wifi::forget(&self.sys.tools.nmcli, uuid) {
+            Ok(()) => self.notify(Level::Info, format!("'{name}' was forgotten.")),
+            Err(e) => self.wifi_refused(&format!("'{name}' could not be forgotten"), &e),
+        }
+        self.reload_wifi();
     }
 
     // ----- removable media and backups ---------------------------------------

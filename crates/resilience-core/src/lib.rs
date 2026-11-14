@@ -23,6 +23,7 @@ pub mod notes;
 pub mod proc;
 pub mod recovery;
 pub mod status;
+pub mod wifi;
 
 /// Version of the Resilience userland, taken from the Cargo workspace.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
