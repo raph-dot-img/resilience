@@ -154,9 +154,13 @@ fn cli_apps() -> ExitCode {
     let s = startup();
     let mode = s.who.mode;
     for a in &s.catalog.apps {
-        let avail = match a.availability(mode) {
-            Availability::Ready(_) => "ready".to_string(),
-            Availability::Missing(p) => format!("unavailable({p})"),
+        let avail = if !mode.allows(a.min_mode) {
+            format!("requires-{}", a.min_mode.label().to_lowercase())
+        } else {
+            match a.availability(mode) {
+                Availability::Ready(_) => "ready".to_string(),
+                Availability::Missing(p) => format!("unavailable({p})"),
+            }
         };
         println!("{}\t{:?}\t{:?}\t{avail}", a.id, a.category, a.min_mode);
     }
