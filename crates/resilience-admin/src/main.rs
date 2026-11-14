@@ -3,13 +3,15 @@
 //! It exposes a fixed set of typed operations (ADR 0007); it never runs a
 //! shell or a program chosen by the caller. Privileged operations must run as
 //! root, which ordinary users reach only through `pkexec`, with the polkit
-//! action `org.resilience.admin.set-mode` (`auth_admin`: an administrator's
-//! password every time). Every argument is validated here, server-side,
-//! whatever the TUI already checked.
+//! action per operation (`org.resilience.admin.set-mode`,
+//! `org.resilience.admin.set-time`; `auth_admin`: an administrator's password
+//! every time). Every argument is validated here, server-side, whatever the
+//! TUI already checked.
 //!
 //! ```text
 //! resilience-admin list                  any user, read-only
 //! resilience-admin set-mode USER MODE    root (pkexec / sudo)
+//! resilience-admin set-time UTC-TIME     root (pkexec / sudo), ADR 0009
 //! resilience-admin apply-state           root (system activation)
 //! ```
 
@@ -17,6 +19,7 @@ use resilience_core::admin::{
     self, AdminConfig, Change, ModeState, Source, effective_mode, group_ops, mode_id,
     plan_set_mode, stale_overrides,
 };
+use resilience_core::clock;
 use resilience_core::mode::{Mode, user_name};
 use resilience_core::proc::run_full;
 use std::ffi::CString;
@@ -36,6 +39,7 @@ const USAGE: &str = "\
 Usage:
   resilience-admin list                  Show managed accounts and their modes
   resilience-admin set-mode USER MODE    Change a security mode (administrator)
+  resilience-admin set-time TIME         Set the clock; TIME is YYYY-MM-DDTHH:MM:SSZ (UTC)
   resilience-admin apply-state           Re-apply recorded modes (system use)
 MODE is one of: ultra-stable, stable, advanced";
 
@@ -45,6 +49,7 @@ fn main() -> ExitCode {
     let result = match argv.as_slice() {
         ["list"] => list(),
         ["set-mode", user, mode] => set_mode(user, mode),
+        ["set-time", time] => set_time(time),
         ["apply-state"] => apply_state(),
         ["--version"] => {
             println!("resilience-admin {}", resilience_core::VERSION);
@@ -345,6 +350,81 @@ fn set_mode(user: &str, mode: &str) -> Result<()> {
         println!("{} receives the new rights at the next login.", change.user);
     }
     Ok(())
+}
+
+/// Set the system clock and the hardware clock to an exact UTC time.
+/// The time is validated here (strict format, 2025 <= t < 2100), then
+/// handed to systemd's timedatectl as `@SECONDS`; timedated writes the
+/// RTC in the configured mode (UTC or local) and refuses while NTP is on.
+fn set_time(requested: &str) -> Result<()> {
+    if !is_root() {
+        return Err(Failure::Permission);
+    }
+    let cfg = AdminConfig::load().map_err(err)?;
+    let (uid, by) = caller();
+    let uid_s = uid.to_string();
+    let _lock = lock(&cfg)?;
+    let before = admin::now_rfc3339();
+    let base = [
+        ("op", "set-time"),
+        ("caller", by.as_str()),
+        ("caller_uid", uid_s.as_str()),
+        ("from", before.as_str()),
+    ];
+    let outcome = |extra: &[(&str, &str)]| {
+        let mut f = base.to_vec();
+        f.extend_from_slice(extra);
+        audit(&cfg, &f);
+    };
+    let t = match clock::parse_utc(requested) {
+        Ok(t) => t,
+        Err(r) => {
+            let reason = r.to_string();
+            // As requested (quoted and escaped by audit_line if unusual).
+            outcome(&[
+                ("to", requested),
+                ("result", "refused"),
+                ("reason", &reason),
+            ]);
+            return Err(Failure::Refused(reason));
+        }
+    };
+    let to = admin::rfc3339_utc(t);
+    let timedatectl = cfg.timedatectl.to_string_lossy();
+    let at = format!("@{t}");
+    let out = run_full(
+        &[timedatectl.as_ref(), "--no-ask-password", "set-time", &at],
+        Duration::from_secs(20),
+    );
+    match out {
+        Some(o) if o.success() => {
+            outcome(&[("to", &to), ("result", "ok")]);
+            println!("The clock is now set to {to} (UTC).");
+            println!("The hardware clock was updated too, so the time is kept after a restart.");
+            println!("The change is recorded in the audit log.");
+            Ok(())
+        }
+        Some(o) => {
+            let reason = o.stderr.trim().to_string();
+            outcome(&[("to", &to), ("result", "error"), ("reason", &reason)]);
+            let hint = if reason.contains("NTP") || reason.contains("synchroni") {
+                "\nAutomatic time synchronisation (NTP) is on; it sets the clock itself."
+            } else {
+                ""
+            };
+            Err(err(format!("timedatectl refused: {reason}{hint}")))
+        }
+        None => {
+            outcome(&[
+                ("to", &to),
+                ("result", "error"),
+                ("reason", "timedatectl did not finish"),
+            ]);
+            Err(err(
+                "timedatectl did not finish; the clock may be unchanged",
+            ))
+        }
+    }
 }
 
 fn apply_state() -> Result<()> {

@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use resilience_core::admin;
 use resilience_core::catalog::{Catalog, Category};
+use resilience_core::clock;
 use resilience_core::config::{SystemConfig, ThemeName, ToolPaths, UserSettings};
 use resilience_core::mode::{Detected, Mode};
 
@@ -94,6 +96,7 @@ audit_log = "{0}/audit.log"
 lock_file = "{0}/lock"
 gpasswd = "/bin/gpasswd"
 loginctl = "/bin/loginctl"
+timedatectl = "/bin/timedatectl"
 helper = "/store/bin/resilience-admin"
 pkexec = "/run/wrappers/bin/pkexec"
 pkttyagent = "/store/bin/pkttyagent"
@@ -1056,4 +1059,156 @@ fn media_view_survives_a_failing_lsblk() {
     press(&mut a, KeyCode::Char('e'));
     assert!(a.modal.is_none());
     assert!(matches!(a.view(), View::Media { .. }));
+}
+
+// ----- date and time ------------------------------------------------------------
+
+fn type_time(a: &mut App, text: &str) {
+    for _ in 0..25 {
+        press(a, KeyCode::Backspace);
+    }
+    for c in text.chars() {
+        press(a, KeyCode::Char(c));
+    }
+}
+
+fn open_clock(a: &mut App) {
+    let (v, e) = a.activate(Entry::Builtin(Builtin::Clock));
+    assert!(v.is_none());
+    assert_eq!(e, Effect::None);
+}
+
+#[test]
+fn clock_is_offered_in_every_mode_and_shows_the_current_time() {
+    for m in [Mode::UltraStable, Mode::Stable, Mode::Advanced] {
+        let a = app(m, &format!("clock-{m:?}"));
+        assert!(
+            a.entries(Category::System)
+                .contains(&Entry::Builtin(Builtin::Clock)),
+            "{m:?}"
+        );
+    }
+    let mut a = app(Mode::UltraStable, "clock-open");
+    open_clock(&mut a);
+    match &a.modal {
+        Some(Modal::SetTime { value, error, .. }) => {
+            // Prefilled with the current local time, ready to correct.
+            assert!(clock::parse_local(value).is_ok(), "{value}");
+            assert!(error.is_none());
+        }
+        other => panic!("expected the clock dialog, got {other:?}"),
+    }
+    for (w, h) in [(80, 24), (60, 20), (40, 12), (120, 40)] {
+        let s = render(&mut a, w, h);
+        assert_console_glyphs(&s);
+        if w >= 80 {
+            assert!(s.contains("DATE & TIME") && s.contains("time zone"), "{s}");
+        }
+    }
+}
+
+#[test]
+fn setting_the_clock_confirms_then_runs_the_helper_with_utc() {
+    let mut a = app(Mode::UltraStable, "clock-set");
+    open_clock(&mut a);
+    type_time(&mut a, "2031-03-01 10:00");
+    press(&mut a, KeyCode::Char('x')); // only digits and separators are typed
+    press(&mut a, KeyCode::Enter);
+    let expected = clock::local_to_unix(clock::parse_local("2031-03-01 10:00").expect("valid"))
+        .expect("representable");
+    match &a.modal {
+        Some(Modal::Confirm {
+            title,
+            body,
+            action,
+            yes_focused,
+            ..
+        }) => {
+            assert_eq!(title, "SET THE CLOCK");
+            assert!(!yes_focused, "the safe choice is the default");
+            assert!(body.contains("2031-03-01 10:00"), "{body}");
+            assert!(body.contains("administrator must type"), "{body}");
+            assert!(body.contains(&admin::rfc3339_utc(expected)), "{body}");
+            assert_eq!(*action, Pending::SetTime { utc: expected });
+        }
+        other => panic!("expected confirmation, got {other:?}"),
+    }
+    assert_console_glyphs(&render(&mut a, 80, 24));
+    // Enter on the default button cancels; nothing runs.
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    assert!(a.modal.is_none());
+
+    open_clock(&mut a);
+    type_time(&mut a, "2031-03-01 10:00");
+    press(&mut a, KeyCode::Enter);
+    match press(&mut a, KeyCode::Char('y')) {
+        Effect::Run(r) => {
+            assert_eq!(
+                r.argv,
+                vec![
+                    "/run/wrappers/bin/pkexec".to_string(),
+                    "/store/bin/resilience-admin".into(),
+                    "set-time".into(),
+                    admin::rfc3339_utc(expected),
+                ]
+            );
+            assert!(r.extra_args.is_empty());
+            assert!(r.pause_after);
+            assert_eq!(r.polkit_agent.as_deref(), Some("/store/bin/pkttyagent"));
+            assert_eq!(r.env[0].0, "SHELL");
+            a.after_run(&r.label, &Ok(std::process::ExitStatus::default()));
+        }
+        other => panic!("expected run, got {other:?}"),
+    }
+}
+
+#[test]
+fn impossible_or_out_of_range_times_are_explained_in_the_dialog() {
+    let mut a = app(Mode::Stable, "clock-bad");
+    open_clock(&mut a);
+    for (input, why) in [
+        ("2031-02-30 10:00", "does not exist"),
+        ("2031-03-01 25:00", "does not exist"),
+        ("2020-06-01 10:00", "2025 or later"),
+        ("2100-06-01 10:00", "before the year 2100"),
+        ("2031-3-1 10:00", "YYYY-MM-DD HH:MM"),
+        ("", "YYYY-MM-DD HH:MM"),
+    ] {
+        type_time(&mut a, input);
+        assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+        match &a.modal {
+            Some(Modal::SetTime {
+                error: Some(e),
+                value,
+                ..
+            }) => {
+                assert!(e.contains(why), "{input:?}: {e}");
+                assert_eq!(value, input, "the typed text is kept for correction");
+            }
+            other => panic!("{input:?}: expected an error in the dialog, got {other:?}"),
+        }
+        assert_console_glyphs(&render(&mut a, 80, 24));
+    }
+    // Esc closes the dialog without doing anything.
+    assert_eq!(press(&mut a, KeyCode::Esc), Effect::None);
+    assert!(a.modal.is_none());
+}
+
+#[test]
+fn no_administrator_means_no_clock_change() {
+    let mut a = app(Mode::UltraStable, "clock-noadmin");
+    std::fs::write(&a.paths.group_file, "").expect("w");
+    let cfg = std::fs::read_to_string(&a.paths.admin_config).expect("r");
+    std::fs::write(
+        &a.paths.admin_config,
+        cfg.replace("declared_mode = \"advanced\"", "declared_mode = \"stable\""),
+    )
+    .expect("w");
+    open_clock(&mut a);
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { title, body, .. })
+            if title == "NO ADMINISTRATOR" && body.contains("Setting the clock")),
+        "{:?}",
+        a.modal
+    );
 }

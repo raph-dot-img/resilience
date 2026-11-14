@@ -84,6 +84,8 @@ pub struct AdminConfig {
     /// Absolute paths of the only programs the helper ever runs.
     pub gpasswd: PathBuf,
     pub loginctl: PathBuf,
+    /// systemd's timedatectl: sets the system clock and the hardware clock.
+    pub timedatectl: PathBuf,
     /// The helper itself and pkexec, for the TUI to build the fixed argv.
     pub helper: PathBuf,
     pub pkexec: PathBuf,
@@ -108,7 +110,9 @@ impl AdminConfig {
         for p in [
             &cfg.gpasswd,
             &cfg.loginctl,
+            &cfg.timedatectl,
             &cfg.helper,
+            &cfg.pkttyagent,
             &cfg.pkexec,
             &cfg.session_shell,
         ] {
@@ -470,6 +474,7 @@ mod tests {
             lock_file: "/run/resilience-admin.lock".into(),
             gpasswd: "/bin/gpasswd".into(),
             loginctl: "/bin/loginctl".into(),
+            timedatectl: "/bin/timedatectl".into(),
             helper: "/bin/resilience-admin".into(),
             pkexec: "/run/wrappers/bin/pkexec".into(),
             pkttyagent: "/bin/pkttyagent".into(),
@@ -529,6 +534,7 @@ mod tests {
             lock_file = "/run/resilience-admin.lock"
             gpasswd = "/nix/store/x/bin/gpasswd"
             loginctl = "/nix/store/y/bin/loginctl"
+            timedatectl = "/nix/store/y/bin/timedatectl"
             helper = "/nix/store/z/bin/resilience-admin"
             pkexec = "/run/wrappers/bin/pkexec"
             pkttyagent = "/nix/store/w/bin/pkttyagent"

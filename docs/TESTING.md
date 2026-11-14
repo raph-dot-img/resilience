@@ -4,7 +4,7 @@ Every result below is **PASS**, **FAIL**, **BLOCKED** or **NOT TESTED**.
 A test is only PASS if it was actually executed. "VM" means QEMU/KVM on the
 development host — **no test has been run on physical hardware**.
 
-Last full run: 2026-11-14 on the Phase 2 commits (: privileged helper, Users & modes, Recovery), nixpkgs `f1e5c356`. ISO SHA-256 of that build: `3d28aeb2…a9f591` (bit-for-bit reproducibility not verified).
+Last full run (`nix flake check -L --max-jobs 1`, all VM tests): 2026-11-14 on the Phase 2 commits (privileged helper, Users & modes, Recovery, backups, Date & time), nixpkgs `f1e5c356`. ISO not rebuilt since the helper build (SHA-256 `3d28aeb2…a9f591`) (bit-for-bit reproducibility not verified).
 
 ## How to run
 
@@ -31,8 +31,8 @@ which corrupts text next to box-drawing characters with our console font.
 
 | Suite | Tests | Result |
 |---|---|---|
-| resilience-core: mode, status, network, catalog, config, handbook, notes, launch (incl. env overrides, polkit agent ordering), proc, admin (names, modes, config, refusals, overrides/staleness, group ops, audit lines, timestamps), recovery (generations, report files), media (lsblk parsing/escapes, removable-only selection, device validation, udisks errors), backup (names, checksums, listing, size estimate, pipeline failure cause, **real age round trip**: encrypt, check, restore, no overwrite, wrong key, damaged with/without checksum) | 68 | PASS (round trip needs age in PATH: runs in the Nix build; SKIPPED on a host without age) |
-| resilience-tui: navigation, rendering 80×24…200×60, modes, restricted commands, missing programs, confirmations, Ctrl-C, handbook, search, notes, themes, shell gating, wrapping, console glyphs; Users & modes (consequences, Cancel default, fixed pkexec argv + SHELL + agent, refusals, no administrator, corrupt config); Recovery (health, generations, guide, report 0600 / no overwrite); Backups & USB sticks (internal disk never listed, unusable devices, mount via `--no-user-interaction`, Cancel default, backup/check/restore argv, eject busy / safe, lsblk failure) | 31 | PASS |
+| resilience-core: mode, status, network, catalog, config, handbook, notes, launch (incl. env overrides, polkit agent ordering), proc, admin (names, modes, config, refusals, overrides/staleness, group ops, audit lines, timestamps), recovery (generations, report files), media (lsblk parsing/escapes, removable-only selection, device validation, udisks errors), backup (names, checksums, listing, size estimate, pipeline failure cause, **real age round trip**: encrypt, check, restore, no overwrite, wrong key, damaged with/without checksum), clock (local and strict UTC parsing, impossible dates, bounds, zone names) | 73 | PASS (round trip needs age in PATH: runs in the Nix build; SKIPPED on a host without age) |
+| resilience-tui: navigation, rendering 80×24…200×60, modes, restricted commands, missing programs, confirmations, Ctrl-C, handbook, search, notes, themes, shell gating, wrapping, console glyphs; Users & modes (consequences, Cancel default, fixed pkexec argv + SHELL + agent, refusals, no administrator, corrupt config); Recovery (health, generations, guide, report 0600 / no overwrite); Backups & USB sticks (internal disk never listed, unusable devices, mount via `--no-user-interaction`, Cancel default, backup/check/restore argv, eject busy / safe, lsblk failure); Date & time (prefilled, input filter, errors kept in the dialog, Cancel default, local→UTC argv, no administrator) | 35 | PASS |
 | `cargo clippy --all-targets` | — | PASS (0 warnings) |
 
 ### Nix
@@ -41,7 +41,7 @@ which corrupts text next to box-drawing characters with our console font.
 |---|---|
 | Flake evaluation (`nix flake check --no-build`) | PASS |
 | `eval-live-iso`: live-standard, live-minimal, dev-vm evaluate | PASS |
-| `security-invariants`: 19 invariants × 3 configurations | PASS |
+| `security-invariants`: 20 invariants × 3 configurations | PASS |
 | Invariant checker rejects a deliberately broken configuration (ssh on, root password) | PASS (manual, once) |
 | Invariant checker rejects a privileged autologin account and an extra polkit admin identity | PASS (manual, once; this found that the autologin invariant had been vacuous) |
 | Build-time catalog check (every app command executable) | PASS (part of every system build) |
@@ -82,7 +82,7 @@ which corrupts text next to box-drawing characters with our console font.
 | TUI on tty3 as Stable: terminal shell offered, runs as the user, returns | PASS |
 | Root password locked | covered by `security-invariants` (test VMs deliberately unlock root) |
 
-### VM: `vm-admin` — privileged helper (ADR 0007), driven through the TUI
+### VM: `vm-admin` — privileged helper (ADR 0007, 0009), driven through the TUI
 
 | Check | Result |
 |---|---|
@@ -96,6 +96,10 @@ which corrupts text next to box-drawing characters with our console font.
 | Demotion terminates all of the account's sessions; returning to the declared mode removes the override | PASS |
 | Recorded override survives a reboot (re-applied after activation, audited) | PASS |
 | pam_faillock: 5 wrong sudo passwords lock the account (correct password refused); `faillock --reset` unlocks | PASS |
+| `set-time`: second polkit action installed; without root exits 77; refused and audited (6×): before 2025, 2100, 30 February, space instead of `T`, `@seconds`, trailing `;id`; extra argument → usage (64); clock unchanged | PASS |
+| TUI *Date & time* (Ultra-Stable on tty1, two administrators → pkttyagent "Choose identity" answered): wrong password → clock unchanged, nothing audited as ok | PASS |
+| TUI: correct password → clock 2031-03-01T10:00Z, `/sys/class/rtc/rtc0` updated, audit + journal `op=set-time caller=alice … from=<old> to=… result=ok` | PASS |
+| Clock kept by the RTC across a reboot; RTC in local-time mode; NTP-on refusal | NOT TESTED |
 | Override dropped when the Nix declaration changes | unit tests only (needs a second system configuration in the VM) |
 
 ### VM: `vm-backup` — removable media and backups (ADR 0008), driven through the TUI

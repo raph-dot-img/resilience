@@ -23,6 +23,12 @@ versions follow [Semantic Versioning](https://semver.org/).
   passphrase, restored into a new `~/Restored/backup-<date>` folder.
   Handbook page "Backups and USB sticks"; VM test `vm-backup` (hot-plugged
   virtual stick); invariants for udisks2 polkit and mount location.
+- *Date & time* (ADR 0009): set the clock from the TUI in every mode with an
+  administrator's password; `resilience-admin set-time` (polkit action
+  `org.resilience.admin.set-time`, auth_admin), strict UTC and bounds
+  2025–2099 checked in the helper, audited with the previous time; timedated
+  updates the hardware clock. Handbook section "The clock"; vm-admin covers
+  refusals, wrong and right passwords, two administrators, the RTC.
 - `/etc/resilience/system.toml` gained `[tools]` (absolute paths, checked at
   build time).
 

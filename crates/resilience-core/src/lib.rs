@@ -12,6 +12,7 @@
 pub mod admin;
 pub mod backup;
 pub mod catalog;
+pub mod clock;
 pub mod config;
 pub mod handbook;
 pub mod launch;

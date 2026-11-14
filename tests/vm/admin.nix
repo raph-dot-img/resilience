@@ -1,7 +1,8 @@
 # The privileged helper `resilience-admin` (ADR 0007): typed operations,
 # polkit authorisation with an administrator password, server-side
 # validation, audit log, persistence across reboots, session termination on
-# demotion, and PAM faillock. Driven through the real TUI on tty1.
+# demotion, setting the clock (ADR 0009) and PAM faillock. Driven through
+# the real TUI on tty1.
 { self }:
 {
   name = "resilience-admin";
@@ -196,6 +197,83 @@
         out = machine.succeed("resilience-admin list")
         print(out)
         assert re.search(r"bob\s+stable\s+advanced\s+advanced\s+changed .* by root", out), out
+
+    with subtest("set-time: only root, strict UTC, bounds checked server-side, audited"):
+        machine.succeed("grep -q 'org.resilience.admin.set-time' /run/current-system/sw/share/polkit-1/actions/org.resilience.admin.policy")
+        rc, out = machine.execute(as_user("alice", f"{helper} set-time 2031-03-01T10:00:00Z 2>&1"))
+        assert rc == 77, (rc, out)
+        before = machine.succeed("date -u +%Y").strip()
+        for arg, reason in [
+            ("2024-12-31T23:59:59Z", "2025 or later"),
+            ("2100-01-01T00:00:00Z", "before the year 2100"),
+            ("2031-02-30T10:00:00Z", "does not exist"),
+            ("'2031-03-01 10:00:00'", "YYYY-MM-DDTHH:MM:SSZ"),
+            ("@1930000000", "YYYY-MM-DDTHH:MM:SSZ"),
+            ("'2031-03-01T10:00:00Z;id'", "YYYY-MM-DDTHH:MM:SSZ"),
+        ]:
+            rc, out = machine.execute(f"{helper} set-time {arg} 2>&1")
+            assert rc == 2 and reason in out, (arg, rc, out)
+        rc, out = machine.execute(f"{helper} set-time 2031-03-01T10:00:00Z extra 2>&1")
+        assert rc == 64, (rc, out)
+        log = audit()
+        print(log)
+        assert len(re.findall(r"op=set-time .*result=refused", log)) == 6, log
+        assert machine.succeed("date -u +%Y").strip() == before
+
+    def authenticate_as_carol(password):
+        # bob is Advanced too by now: pkttyagent asks which administrator.
+        wait_tty("1", "AUTHENTICATING FOR org.resilience.admin.set-time")
+        wait_tty("1", "Choose identity|Password:")
+        screen = tty_text("1")
+        print("polkit agent prompt:", "choose identity" if "Choose identity" in screen else "password only")
+        print(screen)
+        if "Choose identity" in screen:
+            m = re.search(r"(\d)\. .*carol", screen)
+            assert m, screen
+            machine.send_chars(m.group(1) + "\n")
+            wait_tty("1", "Password:")
+        machine.send_chars(password + "\n")
+
+    def open_clock_dialog(first):
+        if first:
+            machine.send_chars("/clock")
+            wait_tty("1", "Date & time")
+        machine.send_key("ret")
+        wait_tty("1", "DATE & TIME")
+        wait_tty("1", "time zone UTC")
+        for _ in range(20):
+            machine.send_key("backspace")
+        machine.send_chars("2031-03-01 10:00\n")
+        wait_tty("1", "SET THE CLOCK")
+        wait_tty("1", "2031-03-01T10:00:00Z")
+        machine.send_chars("y")
+
+    with subtest("TUI: a wrong administrator password leaves the clock alone"):
+        wait_tty("1", "MAIN MENU")
+        open_clock_dialog(first=True)
+        authenticate_as_carol("not-the-password")
+        wait_tty("1", "Press Enter to return", timeout=90)
+        assert machine.succeed("date -u +%Y").strip() == before
+        assert not re.search(r"op=set-time .*result=ok", audit())
+        machine.send_key("ret")
+        wait_tty("1", "Date & time")
+
+    with subtest("TUI: Ultra-Stable user sets the clock and the hardware clock with an administrator's password"):
+        open_clock_dialog(first=False)
+        authenticate_as_carol("carol-pw")
+        wait_tty("1", "clock is now set to 2031-03-01T10:00:00Z", timeout=90)
+        wait_tty("1", "Press Enter to return")
+        target = 1930125600  # 2031-03-01T10:00:00Z
+        now = int(machine.succeed("date -u +%s"))
+        assert target <= now < target + 600, now
+        rtc = int(machine.succeed("cat /sys/class/rtc/rtc0/since_epoch"))
+        assert target - 5 <= rtc < target + 600, rtc
+        log = audit()
+        print(log)
+        assert re.search(r"op=set-time caller=alice caller_uid=\d+ from=\S+ to=2031-03-01T10:00:00Z result=ok", log), log
+        machine.succeed("journalctl -t resilience-admin | grep -q 'to=2031-03-01T10:00:00Z result=ok'")
+        machine.send_key("ret")
+        wait_tty("1", "Date & time")
 
     with subtest("faillock: repeated wrong passwords lock the account for a while"):
         for _ in range(5):

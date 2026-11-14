@@ -64,6 +64,12 @@ TUI ──confirm──► pkttyagent (user) + pkexec resilience-admin set-mode 
                      ▼
                resilience-admin (root): validate → modes.toml → gpasswd → audit
                                          → loginctl terminate-user (demotion)
+
+TUI ──confirm──► pkttyagent + pkexec resilience-admin set-time YYYY-MM-DDTHH:MM:SSZ
+                     │ polkit org.resilience.admin.set-time: auth_admin (ADR 0009)
+                     ▼
+               resilience-admin (root): strict UTC, 2025 ≤ t < 2100 → audit
+                                         → timedatectl set-time @t (clock + RTC)
 boot/switch: activation `users` resets groups → `resilienceModes` → apply-state
 ```
 

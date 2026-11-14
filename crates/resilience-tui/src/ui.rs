@@ -1381,6 +1381,29 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
             }
             ("NEW NOTE", l, t.base)
         }
+        Modal::SetTime { value, zone, error } => {
+            let mut l = vec![
+                Line::from(format!(
+                    "The clock shows {} (time zone {zone}).",
+                    date_time(SystemTime::now())
+                )),
+                Line::from(""),
+                Line::from("Correct date and time:"),
+                Line::from(vec![
+                    Span::styled(format!("> {value}"), t.accent),
+                    Span::styled("█", t.base),
+                ]),
+                Line::from(""),
+            ];
+            match error {
+                Some(e) => l.push(Line::from(Span::styled(format!("[!!] {e}"), t.error))),
+                None => l.push(Line::from(Span::styled(
+                    "YYYY-MM-DD HH:MM | Enter continue, Esc cancel",
+                    t.dim,
+                ))),
+            }
+            ("DATE & TIME", l, t.base)
+        }
     };
     let width = 64u16;
     lines = wrap(lines, width as usize - 4);

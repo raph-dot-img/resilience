@@ -16,5 +16,23 @@ TESTING INTERNET ACCESS
   The test opens one connection to well-known public addresses and looks
   up one name, each limited to a few seconds. It runs only when you ask.
 
+THE CLOCK
+  Without the Internet the clock is never corrected automatically. If the
+  date or time on the main screen is wrong, open SYSTEM MANAGEMENT >
+  Date & time. The current time and the time zone are shown; type the
+  correct local date and time as YYYY-MM-DD HH:MM (for example
+  2026-11-14 09:30) and press Enter. The interface shows what it will set,
+  in your time zone and in UTC, and asks for confirmation. Cancel is
+  preselected.
+
+  An ADMINISTRATOR (an Advanced account) must then type their password.
+  If there are several administrators, first type the number of the one
+  who is typing the password. The change is written to the audit log, and
+  the computer's hardware clock keeps it after a restart. Dates before 2025
+  are refused.
+
+  If the clock is wrong again after every restart, the small battery on the
+  motherboard is probably empty.
+
 A local network without Internet is still useful: computers on it can talk
 to each other. Local messaging between Resilience computers is planned.

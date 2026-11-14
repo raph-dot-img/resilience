@@ -15,6 +15,7 @@ use ratatui::widgets::ListState;
 use resilience_core::admin::{self, AccountRow, AdminConfig, ModeState};
 use resilience_core::backup::{self, BackupFile};
 use resilience_core::catalog::{Availability, Catalog, Category};
+use resilience_core::clock;
 use resilience_core::config::{SystemConfig, ThemeName, UserSettings};
 use resilience_core::handbook;
 use resilience_core::human_bytes;
@@ -34,6 +35,7 @@ const TOAST_DURATION: Duration = Duration::from_secs(6);
 const MAX_NOTICES: usize = 100;
 /// Label of the run request that changes a security mode (see `after_run`).
 pub const SET_MODE_LABEL: &str = "Change security mode";
+pub const SET_TIME_LABEL: &str = "Set the clock";
 /// Labels of the backup tool runs (see `after_run`).
 pub const BACKUP_LABEL: &str = "Backup of your files";
 pub const CHECK_LABEL: &str = "Check a backup";
@@ -115,6 +117,7 @@ pub enum Builtin {
     SystemStatus,
     Notifications,
     Settings,
+    Clock,
     Users,
     Recovery,
     Backup,
@@ -126,7 +129,7 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 14] = [
+    pub const ALL: [Builtin; 15] = [
         Builtin::Handbook,
         Builtin::Notes,
         Builtin::Network,
@@ -135,6 +138,7 @@ impl Builtin {
         Builtin::Backup,
         Builtin::Notifications,
         Builtin::Settings,
+        Builtin::Clock,
         Builtin::Users,
         Builtin::Help,
         Builtin::Shell,
@@ -151,6 +155,7 @@ impl Builtin {
             Builtin::SystemStatus => "System status",
             Builtin::Notifications => "Notification history",
             Builtin::Settings => "Settings",
+            Builtin::Clock => "Date & time",
             Builtin::Users => "Users & security modes",
             Builtin::Recovery => "Recovery & diagnostics",
             Builtin::Backup => "Backups & USB sticks",
@@ -178,6 +183,10 @@ impl Builtin {
             }
             Builtin::Notifications => "Messages the interface has shown during this session.",
             Builtin::Settings => "Choose the colour theme. Your security mode is shown here too.",
+            Builtin::Clock => {
+                "Shows the date, time and time zone, and sets the clock when it is wrong \
+                 (there is no network time). Setting it asks for an administrator password."
+            }
             Builtin::Users => {
                 "See each account's security mode. An administrator can change a mode here; \
                  every change asks for an administrator password and is recorded."
@@ -221,6 +230,7 @@ impl Builtin {
             Builtin::Network => "wifi ethernet internet offline online dns",
             Builtin::SystemStatus => "health battery disk storage memory",
             Builtin::Settings => "theme colour color preferences",
+            Builtin::Clock => "clock time date hour timezone zone ntp calendar rtc wrong",
             Builtin::Users => {
                 "account accounts mode modes administrator admin permissions privileges sudo"
             }
@@ -352,9 +362,20 @@ pub enum Pending {
     Logout,
     Reboot,
     PowerOff,
-    SetMode { user: String, to: Mode },
-    Backup { mount: PathBuf },
-    Restore { file: PathBuf },
+    SetMode {
+        user: String,
+        to: Mode,
+    },
+    /// Seconds since the epoch, validated by `clock::check_bounds`.
+    SetTime {
+        utc: i64,
+    },
+    Backup {
+        mount: PathBuf,
+    },
+    Restore {
+        file: PathBuf,
+    },
 }
 
 #[derive(Debug)]
@@ -373,6 +394,12 @@ pub enum Modal {
     },
     NewNote {
         value: String,
+        error: Option<String>,
+    },
+    /// Type a new local date and time.
+    SetTime {
+        value: String,
+        zone: String,
         error: Option<String>,
     },
 }
@@ -1156,6 +1183,10 @@ impl App {
                     Effect::None,
                 )
             }
+            Builtin::Clock => {
+                self.open_set_time();
+                none
+            }
             Builtin::Users => {
                 let (rows, error) = self.load_accounts();
                 let sel = (!rows.is_empty()).then_some(0);
@@ -1272,7 +1303,10 @@ impl App {
 
     fn confirm(&mut self, action: Pending) {
         let (title, body, confirm) = match &action {
-            Pending::SetMode { .. } | Pending::Backup { .. } | Pending::Restore { .. } => return,
+            Pending::SetMode { .. }
+            | Pending::SetTime { .. }
+            | Pending::Backup { .. }
+            | Pending::Restore { .. } => return,
             Pending::Logout => (
                 "LOG OUT",
                 "End this session? Programs you started from here will be closed.",
@@ -1371,6 +1405,44 @@ impl App {
                     Effect::None
                 }
             },
+            Modal::SetTime {
+                mut value,
+                zone,
+                error,
+            } => match key.code {
+                KeyCode::Esc => Effect::None,
+                KeyCode::Enter => {
+                    self.submit_set_time(value, zone);
+                    Effect::None
+                }
+                KeyCode::Backspace => {
+                    value.pop();
+                    self.modal = Some(Modal::SetTime {
+                        value,
+                        zone,
+                        error: None,
+                    });
+                    Effect::None
+                }
+                KeyCode::Char(c)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && (c.is_ascii_digit() || "-: ".contains(c)) =>
+                {
+                    if value.len() < 19 {
+                        value.push(c);
+                    }
+                    self.modal = Some(Modal::SetTime {
+                        value,
+                        zone,
+                        error: None,
+                    });
+                    Effect::None
+                }
+                _ => {
+                    self.modal = Some(Modal::SetTime { value, zone, error });
+                    Effect::None
+                }
+            },
         }
     }
 
@@ -1378,6 +1450,7 @@ impl App {
         let verb = match action {
             Pending::Logout => return Effect::Quit,
             Pending::SetMode { user, to } => return self.set_mode_effect(&user, to),
+            Pending::SetTime { utc } => return self.set_time_effect(utc),
             Pending::Backup { mount } => {
                 return self.backup_tool_effect(BACKUP_LABEL, "create", &mount);
             }
@@ -1494,17 +1567,7 @@ impl App {
     }
 
     fn choose_mode(&mut self, row: AccountRow) -> Option<View> {
-        let (rows, _) = self.load_accounts();
-        if admin::administrators(&rows) == 0 {
-            self.modal = Some(Modal::Message {
-                title: "NO ADMINISTRATOR".into(),
-                body: "Changing a security mode needs the password of an Advanced \
-                       (administrator) account, and this system has none.\n\n\
-                       On the live system this is intentional. On an installed system, \
-                       see the handbook page 'Security modes'."
-                    .into(),
-                error: true,
-            });
+        if !self.has_administrator("Changing a security mode") {
             return None;
         }
         let i = MODES.iter().position(|m| *m == row.effective);
@@ -1512,6 +1575,26 @@ impl App {
             row,
             list: ListState::default().with_selected(i),
         })
+    }
+
+    /// False (with an explanation shown) when no account could type an
+    /// administrator password, so an action is not offered at all.
+    fn has_administrator(&mut self, what: &str) -> bool {
+        let (rows, _) = self.load_accounts();
+        if admin::administrators(&rows) > 0 {
+            return true;
+        }
+        self.modal = Some(Modal::Message {
+            title: "NO ADMINISTRATOR".into(),
+            body: format!(
+                "{what} needs the password of an Advanced (administrator) account, \
+                 and this system has none.\n\n\
+                 On the live system this is intentional. On an installed system, \
+                 see the handbook page 'Security modes'."
+            ),
+            error: true,
+        });
+        false
     }
 
     /// Explain the consequences before anything happens. The checks here
@@ -1619,6 +1702,99 @@ impl App {
             banner: Some(format!(
                 "CHANGE SECURITY MODE: '{user}' -> {to}. An administrator must now type \
                  their password. Press Ctrl-C to cancel."
+            )),
+        })
+    }
+
+    // ----- date and time ------------------------------------------------------
+
+    fn open_set_time(&mut self) {
+        if !self.has_administrator("Setting the clock") {
+            return;
+        }
+        self.modal = Some(Modal::SetTime {
+            value: crate::ui::date_time(SystemTime::now()),
+            zone: clock::system_zone(),
+            error: None,
+        });
+    }
+
+    /// Validate the typed local time; on success ask for confirmation.
+    /// The helper checks format and bounds again on the UTC value.
+    fn submit_set_time(&mut self, value: String, zone: String) {
+        let parsed = clock::parse_local(&value).and_then(|c| {
+            clock::local_to_unix(c)
+                .ok_or(clock::TimeRefusal::NoSuchDate)
+                .and_then(clock::check_bounds)
+        });
+        let utc = match parsed {
+            Ok(t) => t,
+            Err(e) => {
+                self.modal = Some(Modal::SetTime {
+                    value,
+                    zone,
+                    error: Some(capitalise(&e.to_string())),
+                });
+                return;
+            }
+        };
+        let now = crate::ui::date_time(SystemTime::now());
+        let new = crate::ui::date_time(SystemTime::UNIX_EPOCH + Duration::from_secs(utc as u64));
+        let body = format!(
+            "Set the clock to {new} ({zone})?\n\n\
+             The clock now shows {now}. In UTC the new time is {}.\n\n\
+             An administrator must type their password next. The change is \
+             recorded in the audit log, and the hardware clock keeps it after \
+             a restart.",
+            admin::rfc3339_utc(utc)
+        );
+        self.modal = Some(Modal::Confirm {
+            title: "SET THE CLOCK".into(),
+            body,
+            confirm: "Continue".into(),
+            action: Pending::SetTime { utc },
+            yes_focused: false,
+        });
+    }
+
+    /// The fixed argv: `pkexec <helper> set-time <YYYY-MM-DDTHH:MM:SSZ>`.
+    fn set_time_effect(&mut self, utc: i64) -> Effect {
+        let cfg = match std::fs::read_to_string(&self.paths.admin_config)
+            .map_err(|e| e.to_string())
+            .and_then(|t| AdminConfig::parse(&t))
+        {
+            Ok(c) => c,
+            Err(e) => {
+                self.notify(
+                    Level::Error,
+                    format!("setting the clock is unavailable: {e}"),
+                );
+                return Effect::None;
+            }
+        };
+        let Ok(utc) = clock::check_bounds(utc) else {
+            return Effect::None;
+        };
+        let at = admin::rfc3339_utc(utc);
+        tracing::warn!(to = %at, "clock change requested");
+        Effect::Run(RunRequest {
+            label: SET_TIME_LABEL.into(),
+            argv: vec![
+                cfg.pkexec.to_string_lossy().into_owned(),
+                cfg.helper.to_string_lossy().into_owned(),
+                "set-time".into(),
+                at.clone(),
+            ],
+            extra_args: Vec::new(),
+            env: vec![(
+                "SHELL".into(),
+                cfg.session_shell.to_string_lossy().into_owned(),
+            )],
+            polkit_agent: Some(cfg.pkttyagent.to_string_lossy().into_owned()),
+            pause_after: true,
+            banner: Some(format!(
+                "SET THE CLOCK to {at}. An administrator must now type their \
+                 password. Press Ctrl-C to cancel."
             )),
         })
     }

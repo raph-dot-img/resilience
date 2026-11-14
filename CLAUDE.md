@@ -27,7 +27,7 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            generates /etc/resilience/{system,apps}.toml
    │                            (build fails if an app command is not executable)
    │            admin.nix       privileged helper: /etc/resilience/admin.toml, polkit
-   │                            action org.resilience.admin.set-mode (auth_admin),
+   │                            actions org.resilience.admin.{set-mode,set-time} (auth_admin),
    │                            tmpfiles for state/audit, activation `apply-state`
    │            media.nix       udisks2 (removable media; its polkit defaults, no overrides)
    │            users.nix       resilience.users.<n>.mode -> groups, login shell,
@@ -44,11 +44,12 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
 
 crates/resilience-core  library: status, network (passive + on-demand probe),
                         mode detection, catalog, config, handbook, notes, launch, proc,
-                        admin (pure mode-change rules), recovery (generations, report),
+                        admin (pure mode-change rules), clock (time parsing/bounds),
+                        recovery (generations, report),
                         media (lsblk parsing, udisksctl mount/eject), backup (tar|zstd|age
                         pipeline, checksum, restore into ~/Restored)
 crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR 0007):
-                        list | set-mode USER MODE | apply-state
+                        list | set-mode USER MODE | set-time UTC | apply-state
 crates/resilience-backup binary `resilience-backup` (UNPRIVILEGED, ADR 0008):
                         create MOUNT | check FILE | restore FILE
 crates/resilience-tui   binary `resilience`: app.rs (state machine, returns Effects),
@@ -124,6 +125,8 @@ it concurrently with VM tests.
 - VM tests read the screen through `/dev/vcsuN` (helper `tty_text`/`wait_tty`
   in each test): the driver's `get_tty_text()` mis-decodes CP437 glyphs.
   Long TUI texts wrap: wait for short fragments.
+- pkttyagent asks "Choose identity" when several Advanced accounts exist;
+  VM tests must answer it (see `authenticate_as_carol` in vm-admin).
 - pkexec in VM tests: run it under `setsid -w` when no agent is wanted,
   otherwise its text agent writes into the driver's terminal protocol.
 - USB sticks in VM tests: `-device qemu-xhci,id=xhci` + QEMU monitor
@@ -223,8 +226,8 @@ needlessly. Watch `free -h` during VM tests.
 Phase 0 (foundation) and Phase 1 (core) done; Phase 2 mostly done:
 privileged helper with set-mode, TUI Users & security modes, TUI Recovery &
 diagnostics, faillock (ADR 0007); removable media + encrypted backups (ADR
-0008, merged into main). Remaining in Phase 2: more helper
-operations (Wi-Fi, time, default generation). See ROADMAP.md.
+0008); Date & time via `set-time` (ADR 0009). Remaining in Phase 2: more
+helper operations (Wi-Fi, default generation). See ROADMAP.md.
 Done: flake, modules, editions (minimal/standard), live ISO config, dev VM,
 TUI (main menu, status panel, categories, search, help, settings/themes,
 notes, handbook, network diagnostics, system status, notifications, power and
@@ -253,7 +256,7 @@ See docs/TESTING.md for what has actually been executed and passed.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Next: finish Phase 2 (Wi-Fi/time/default-generation helper
+See ROADMAP.md. Next: finish Phase 2 (Wi-Fi/default-generation helper
 operations), then Phase 3 (Kiwix, resource packs; reuse media.rs for USB).
 
 ## 17. Important decisions (docs/decisions/)
@@ -266,6 +269,7 @@ operations), then Phase 3 (Kiwix, resource packs; reuse media.rs for USB).
 - 0006 Session model: login shell wrapper, autologin only for ultra-stable
 - 0007 Privileged helper (pkexec + typed ops), persistent mode overrides, audit, recovery layers
 - 0008 Removable media via udisks2 (no overrides), unprivileged age-encrypted backups, restore into a new folder
+- 0009 Clock set via helper `set-time` (own auth_admin action, bounds, audit) → timedatectl
 
 ## 18. How to continue safely
 

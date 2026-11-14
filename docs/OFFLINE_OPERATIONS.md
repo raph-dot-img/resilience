@@ -8,7 +8,7 @@ Resilience is designed for **no Internet, no DNS, no public servers**.
 |---|---|
 | Resilience TUI | Reads network state from the kernel only. Contacts nothing unless you press `p` in Network status. |
 | NetworkManager | Connectivity checking disabled. Configures links you ask for (and DHCP on cables you plug in). |
-| Time | `systemd-timesyncd` disabled: no NTP traffic. Set the clock manually (Advanced: `sudo date -s`) or enable NTP (below). |
+| Time | `systemd-timesyncd` disabled: no NTP traffic. Set the clock from the TUI (*Date & time*, administrator password, also writes the hardware clock; ADR 0009) or enable NTP (below). |
 | Nix | No channels, no automatic updates. If an administrator runs a build while offline, binary-cache connections fail after 5 s instead of hanging; anything not already in the local store cannot be fetched. |
 | ModemManager | Disabled by default. |
 | SSH | Disabled; no listening sockets at all by default (tested). |

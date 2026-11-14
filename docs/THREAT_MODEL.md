@@ -44,7 +44,7 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 | T1 | Beginner deletes or corrupts system files | Ultra-Stable has no write access outside home; Nix store read-only; no sudo | Implemented (vm-modes) |
 | T2 | Beginner reaches a shell and runs damaging commands | No shell entry; login shell refuses `-c`; `$SHELL=nologin` for program escapes; **even with a shell, no privileges** | Implemented (vm-modes, vm-boot-offline) |
 | T3 | Ultra-Stable user installs or builds software, fills disk via Nix | Nix daemon refuses non-allowed users | Implemented (vm-modes) |
-| T4 | Privilege escalation via the TUI | TUI runs unprivileged; no command construction; power actions via logind policy with `--no-ask-password`; the only privileged path is `pkexec resilience-admin set-mode`, which needs an administrator's password every time | Implemented (vm-admin) |
+| T4 | Privilege escalation via the TUI | TUI runs unprivileged; no command construction; power actions via logind policy with `--no-ask-password`; the only privileged paths are `pkexec resilience-admin set-mode` and `set-time`, each of which needs an administrator's password every time | Implemented (vm-admin) |
 | T5 | Stable user changes system configuration | No sudo; /etc and store read-only; polkit denies unit management | Implemented (vm-modes) |
 | T6 | Advanced user's password guessed by another local user | sudo/polkit require the Advanced user's password; pam_faillock on login, su, sudo, polkit-1 (5 failures / 15 min → 5 min lock) | Implemented (vm-admin, security-invariants) |
 | T7 | Root login | Root password locked ("!"), no SSH | Implemented (security-invariants) |
@@ -60,17 +60,19 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 | T17 | Physical access bypass | Out of scope without FDE; installer will offer LUKS | Documented |
 | T18 | Recovery needs root but root is locked | Layered recovery without a root password (ADR 0007): TUI Recovery section, other consoles + Advanced account with sudo, earlier generations, live ISO; installer must create an Advanced account | Designed; Recovery section tested (unit/TUI); installed-system path NOT TESTED (no installer) |
 | T19 | Abuse of the privileged helper (argument injection, unmanaged accounts, lock-out of all admins, privileges kept after demotion) | Fixed sub-commands; every argument validated in the helper; only accounts in `resilience.users`; only the three mode groups touched; absolute tool paths from root-owned config, environment ignored; last administrator protected; autologin stays Ultra-Stable; demotion terminates sessions; refusal on corrupt state | Implemented (vm-admin, unit tests) |
-| T20 | Unaudited security-sensitive changes | Append-only logfmt audit log (root:wheel 0640) + journal (authpriv) for every set-mode/apply-state outcome; polkit logs denied authorisations | Implemented (vm-admin) |
+| T20 | Unaudited security-sensitive changes | Append-only logfmt audit log (root:wheel 0640) + journal (authpriv) for every set-mode/set-time/apply-state outcome (set-time records the clock before and after); polkit logs denied authorisations | Implemented (vm-admin) |
 | T21 | Fake password prompt captures an administrator's password in another user's session | Inherent to "over-the-shoulder" authorisation; Ultra-Stable sessions cannot run arbitrary programs; handbook tells administrators to authorise only on a trusted screen | Accepted risk, documented |
 | T22 | Mode overrides silently reverted or stale | Recorded overrides re-applied after every activation; overrides older than a changed Nix declaration are dropped and audited | Implemented (vm-admin reboot test; staleness: unit tests) |
 | T23 | Malicious or damaged removable media (USB stick) | Only removable/hot-plugged drives offered; mounted only on user request (no automount), by udisks2, `nosuid,nodev`, per user under /run/media; internal disks need an administrator (udisks polkit, `--no-user-interaction`); common file systems only. Kernel file-system drivers still parse the stick | Implemented (vm-backup); kernel parsing: accepted risk |
 | T24 | Lost or stolen backup stick exposes user files | Backups encrypted with age (passphrase, scrypt); passphrase typed into age on the terminal, never in our argv, env or logs; no plaintext written to the stick (vm-backup scans the raw device) | Implemented (vm-backup, unit tests) |
 | T25 | Restoring a backup destroys newer files, or a bad backup goes unnoticed | Restore only into a new 0700 folder under ~/Restored; checksum checked first, damaged copies refused; age authenticates every chunk; partial backups never listed (`.partial` + rename); failed restores marked `-incomplete` | Implemented (vm-backup, unit tests) |
+| T26 | Clock moved to hide log entries, shorten faillock lock-outs or (later) accept expired signatures | Only via `resilience-admin set-time` with an administrator's password every time (own polkit action, auth_admin); strict UTC format and bounds 2025 ≤ t < 2100 checked in the helper; audited with the previous time; no polkit rule relaxes timedated; no NTP in the background | Implemented (vm-admin, unit tests, security-invariants). Root and Advanced users can still use `date`/`timedatectl` directly |
 
 ## 5. Known gaps (honest list)
 
-- The privileged helper offers only `set-mode` so far: Ultra-Stable users
-  cannot yet join Wi-Fi or set the time through the TUI. Stable users use `nmtui`.
+- The privileged helper offers `set-mode` and `set-time` so far:
+  Ultra-Stable users cannot yet join Wi-Fi through the TUI. Stable users
+  use `nmtui`. The time zone can only be changed in the Nix configuration.
 - The audit log is append-only by convention (root writes with O_APPEND);
   root can still edit it. No remote/WORM log copy.
 - pkexec is setuid and its generic action allows any program with an

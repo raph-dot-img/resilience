@@ -31,7 +31,9 @@ test in docs/TESTING.md actually ran and passed (VM only so far).
   section: health, failures, recent errors, generations, diagnostic report,
   emergency guide
 - ✅ PAM faillock (login, su, sudo, polkit)
-- ⬜ Further helper operations: Wi-Fi, time, make a generation the default
+- ✅ Setting the clock from the TUI: `resilience-admin set-time`, own polkit
+  action (auth_admin), bounds, audit, hardware clock (ADR 0009)
+- ⬜ Further helper operations: Wi-Fi, make a generation the default
 - ✅ Removable media for every account (udisks2, removable drives only) and
   encrypted backup/check/restore of the home folder (age, ADR 0008)
 - ⬜ Review `unprivileged_userns_clone` for Ultra-Stable-only machines
