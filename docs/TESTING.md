@@ -4,7 +4,7 @@ Every result below is **PASS**, **FAIL**, **BLOCKED** or **NOT TESTED**.
 A test is only PASS if it was actually executed. "VM" means QEMU/KVM on the
 development host — **no test has been run on physical hardware**.
 
-Last full run: 2026-11-14 on branch `feat/phase2-admin-helper` (Phase 2: privileged helper, Users & modes, Recovery), nixpkgs `f1e5c356`. ISO SHA-256 of that build: `3d28aeb2…a9f591` (bit-for-bit reproducibility not verified).
+Last full run: 2026-11-14 on the Phase 2 commits (: privileged helper, Users & modes, Recovery), nixpkgs `f1e5c356`. ISO SHA-256 of that build: `3d28aeb2…a9f591` (bit-for-bit reproducibility not verified).
 
 ## How to run
 

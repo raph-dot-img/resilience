@@ -201,8 +201,8 @@ needlessly. Watch `free -h` during VM tests.
 
 ## 14. Current implementation status (2026-11-14)
 
-Phase 0 (foundation) and Phase 1 (core) done; Phase 2 mostly done (branch
-`feat/phase2-admin-helper`): privileged helper with set-mode, TUI Users &
+Phase 0 (foundation) and Phase 1 (core) done; Phase 2 mostly done (merged into
+`main`): privileged helper with set-mode, TUI Users &
 security modes, TUI Recovery & diagnostics, faillock, ADR 0007. Remaining in
 Phase 2: user-data backups, more helper operations. See ROADMAP.md.
 Done: flake, modules, editions (minimal/standard), live ISO config, dev VM,
