@@ -14,8 +14,10 @@ pub mod backup;
 pub mod catalog;
 pub mod clock;
 pub mod config;
+pub mod files;
 pub mod handbook;
 pub mod launch;
+pub mod manpage;
 pub mod media;
 pub mod mode;
 pub mod network;
@@ -28,6 +30,14 @@ pub mod wifi;
 
 /// Version of the Resilience userland, taken from the Cargo workspace.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `s` without control characters, safe to print on a terminal (file
+/// names can contain escape sequences).
+pub fn printable(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_control() { '?' } else { c })
+        .collect()
+}
 
 /// Format a byte count with binary units, e.g. `42.3 GiB`.
 pub fn human_bytes(bytes: u64) -> String {

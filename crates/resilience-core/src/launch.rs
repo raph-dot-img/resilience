@@ -45,11 +45,32 @@ pub fn run_foreground(
     extra_args: &[&std::ffi::OsStr],
     env: &[(String, String)],
 ) -> io::Result<ExitStatus> {
+    run_foreground_env(argv, extra_args, env, false)
+}
+
+/// [`run_foreground`]; with `clean`, the child gets only `TERM`, `LANG`,
+/// `HOME`, `USER`, a fixed `PATH` and `env`: nothing else of this process's
+/// environment reaches it.
+pub fn run_foreground_env(
+    argv: &[String],
+    extra_args: &[&std::ffi::OsStr],
+    env: &[(String, String)],
+    clean: bool,
+) -> io::Result<ExitStatus> {
     let (prog, args) = argv
         .split_first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty command"))?;
     let mut cmd = Command::new(prog);
     cmd.args(args).args(extra_args);
+    if clean {
+        let keep: Vec<(String, String)> = ["TERM", "LANG", "HOME", "USER"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
+            .collect();
+        cmd.env_clear()
+            .envs(keep)
+            .env("PATH", "/run/current-system/sw/bin");
+    }
     cmd.envs(env.iter().map(|(k, v)| (k, v)));
     // SAFETY: the closure runs between fork and exec and only calls signal(),
     // which is async-signal-safe.

@@ -19,6 +19,7 @@ use resilience_core::clock;
 use resilience_core::config::{SystemConfig, ThemeName, UserSettings};
 use resilience_core::handbook;
 use resilience_core::human_bytes;
+use resilience_core::manpage;
 use resilience_core::media::{self, Ejected, Volume};
 use resilience_core::mode::{Detected, Mode};
 use resilience_core::network::{self, NetworkState, ProbeConfig, ProbeReport};
@@ -30,9 +31,14 @@ use resilience_core::wifi::{self, Network, Overview};
 
 use crate::theme::Theme;
 
+#[path = "files_ui.rs"]
+mod files_ui;
 #[path = "library.rs"]
 mod library;
-pub use library::{ItemPlace, LibItem, PackRow, PacksScreen, stick_items};
+pub use files_ui::Table;
+#[cfg(test)]
+pub use library::{ItemPlace, stick_items};
+pub use library::{LibItem, PackRow, PacksScreen};
 
 const FAST_REFRESH: Duration = Duration::from_secs(5);
 const SLOW_REFRESH: Duration = Duration::from_secs(30);
@@ -138,6 +144,8 @@ impl RecoveryItem {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     Handbook,
+    Files,
+    Manual,
     Library,
     Packs,
     Notes,
@@ -158,8 +166,10 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 18] = [
+    pub const ALL: [Builtin; 20] = [
         Builtin::Handbook,
+        Builtin::Files,
+        Builtin::Manual,
         Builtin::Library,
         Builtin::Packs,
         Builtin::Notes,
@@ -182,6 +192,8 @@ impl Builtin {
     pub fn name(self) -> &'static str {
         match self {
             Builtin::Handbook => "Resilience Handbook",
+            Builtin::Manual => "Manual pages (man)",
+            Builtin::Files => "Find & view files",
             Builtin::Library => "Offline library",
             Builtin::Packs => "Resource packs: choose what to get",
             Builtin::Notes => "Notes",
@@ -206,6 +218,15 @@ impl Builtin {
         match self {
             Builtin::Handbook => {
                 "The built-in user guide: first steps, security modes, recovery. Works fully offline."
+            }
+            Builtin::Files => {
+                "Find a file by part of its name, in your home folder and on open USB \
+                 sticks, and read it here: text, PDF, CSV tables, archive contents. Shows \
+                 a file's size and checksum. Nothing is ever changed or run."
+            }
+            Builtin::Manual => {
+                "The reference manual of every command and file of this system. Type a \
+                 command name (for example ls), or a few words to search the manuals."
             }
             Builtin::Library => {
                 "Read the resource packs installed on this computer (encyclopedias, \
@@ -258,8 +279,10 @@ impl Builtin {
 
     pub fn category(self) -> Category {
         match self {
-            Builtin::Handbook | Builtin::Library | Builtin::Packs => Category::Knowledge,
-            Builtin::Notes => Category::Productivity,
+            Builtin::Handbook | Builtin::Manual | Builtin::Library | Builtin::Packs => {
+                Category::Knowledge
+            }
+            Builtin::Notes | Builtin::Files => Category::Productivity,
             Builtin::Network | Builtin::Wifi => Category::Networking,
             _ => Category::System,
         }
@@ -275,6 +298,11 @@ impl Builtin {
     fn keywords(self) -> &'static str {
         match self {
             Builtin::Handbook => "help guide manual documentation docs",
+            Builtin::Files => {
+                "file files find search document documents pdf csv spreadsheet table \
+                 archive zip tar checksum sha256 view open read"
+            }
+            Builtin::Manual => "man manual manpage manpages reference command commands options",
             Builtin::Library => {
                 "library kiwix zim wikipedia encyclopedia dictionary wiktionary read offline \
                  medicine health travel wikivoyage articles"
@@ -341,6 +369,7 @@ pub enum HelpTopic {
     Recovery,
     Backup,
     Library,
+    Files,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -411,6 +440,14 @@ pub enum View {
         list: ListState,
         purpose: MediaPurpose,
     },
+    /// File search: the index is built when the view opens.
+    Files {
+        idx: Box<resilience_core::files::Index>,
+        query: String,
+        list: ListState,
+    },
+    /// A CSV/TSV file.
+    Table(Box<Table>),
     /// Suggested selections of packs, over the packs screen.
     PackSets {
         list: ListState,
@@ -510,6 +547,11 @@ pub enum Modal {
         value: String,
         error: Option<String>,
     },
+    /// A manual page name, or words to search the manuals for.
+    ManPage {
+        value: String,
+        error: Option<String>,
+    },
     /// Words to search for in one pack.
     PackSearch { item: LibItem, value: String },
     /// Type a new local date and time.
@@ -530,6 +572,10 @@ pub struct RunRequest {
     pub env: Vec<(String, String)>,
     /// For pkexec commands: polkit text agent to register first.
     pub polkit_agent: Option<String>,
+    /// Start from an empty environment (only TERM, LANG, HOME, USER, a fixed
+    /// PATH, then `env`), e.g. for `man`, whose pager and formatter read many
+    /// variables.
+    pub clean_env: bool,
     pub pause_after: bool,
     pub banner: Option<String>,
 }
@@ -871,6 +917,7 @@ impl App {
             View::Recovery { .. } | View::Generations { .. } => HelpTopic::Recovery,
             View::Media { .. } | View::Backups { .. } => HelpTopic::Backup,
             View::Wifi { .. } => HelpTopic::Network,
+            View::Files { .. } | View::Table(_) => HelpTopic::Files,
             View::Library { .. } | View::Packs { .. } | View::PackSets { .. } => HelpTopic::Library,
             View::Search { .. } => HelpTopic::Search,
         }
@@ -883,7 +930,7 @@ impl App {
         if let Some(modal) = self.modal.take() {
             return self.handle_modal(modal, key);
         }
-        let typing = matches!(self.view(), View::Search { .. });
+        let typing = matches!(self.view(), View::Search { .. } | View::Files { .. });
         match key.code {
             KeyCode::F(1) => {
                 let topic = self.help_topic();
@@ -1305,6 +1352,66 @@ impl App {
                     _ => library::nav_rows(list, &rows, key),
                 }
             }
+            View::Files { idx, query, list } => {
+                let hits: Vec<(PathBuf, String)> = resilience_core::files::search(idx, query)
+                    .iter()
+                    .map(|e| (e.path.clone(), e.shown.clone()))
+                    .collect();
+                let selected = list.selected().and_then(|i| hits.get(i)).cloned();
+                match key.code {
+                    KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if query.chars().count() < 64 {
+                            query.push(c);
+                        }
+                        let n = resilience_core::files::search(idx, query).len();
+                        list.select((n > 0).then_some(0));
+                    }
+                    KeyCode::Backspace => {
+                        query.pop();
+                        let n = resilience_core::files::search(idx, query).len();
+                        list.select((n > 0).then_some(0));
+                    }
+                    KeyCode::Enter => {
+                        if let Some((p, shown)) = selected {
+                            let (v, e) = self.view_file(&p, &shown);
+                            next = v;
+                            effect = e;
+                        }
+                    }
+                    KeyCode::F(3) => {
+                        if let Some((p, shown)) = selected {
+                            effect = self.file_details(&p, &shown);
+                        }
+                    }
+                    KeyCode::F(2) => {
+                        **idx = resilience_core::files::index(&self.file_roots());
+                        let n = resilience_core::files::search(idx, query).len();
+                        clamp_selection(list, n);
+                        self.notify(Level::Info, format!("{} files indexed.", idx.entries.len()));
+                    }
+                    _ => nav(list, hits.len(), key),
+                }
+            }
+            View::Table(t) => {
+                let rows = t.rows.len().saturating_sub(1);
+                let cols = t.widths.len();
+                match key.code {
+                    KeyCode::Left => t.col = t.col.saturating_sub(1),
+                    KeyCode::Right => t.col = (t.col + 1).min(cols.saturating_sub(1)),
+                    KeyCode::Up | KeyCode::Char('k') => t.row = t.row.saturating_sub(1),
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        t.row = (t.row + 1).min(rows.saturating_sub(1))
+                    }
+                    KeyCode::PageUp => t.row = t.row.saturating_sub(15),
+                    KeyCode::PageDown | KeyCode::Char(' ') => {
+                        t.row = (t.row + 15).min(rows.saturating_sub(1))
+                    }
+                    KeyCode::Home | KeyCode::Char('g') => t.row = 0,
+                    KeyCode::End | KeyCode::Char('G') => t.row = rows.saturating_sub(1),
+                    KeyCode::Backspace => return (None, Effect::None),
+                    _ => {}
+                }
+            }
             View::PackSets { list } => {
                 let n = self.pack_sets_len();
                 if is_activate(key) {
@@ -1370,6 +1477,7 @@ impl App {
                             extra_args: Vec::new(),
                             env: Vec::new(),
                             polkit_agent: None,
+                            clean_env: false,
                             pause_after: app.pause_after_exit,
                             banner: None,
                         };
@@ -1519,7 +1627,15 @@ impl App {
                 }),
                 Effect::None,
             ),
+            Builtin::Manual => {
+                self.modal = Some(Modal::ManPage {
+                    value: String::new(),
+                    error: None,
+                });
+                none
+            }
             Builtin::Library => (self.open_library(), Effect::None),
+            Builtin::Files => (Some(self.open_files()), Effect::None),
             Builtin::Packs => (self.open_packs(), Effect::None),
             Builtin::Backup => {
                 let (volumes, error) = self.load_volumes();
@@ -1548,6 +1664,7 @@ impl App {
                     extra_args: Vec::new(),
                     env: Vec::new(),
                     polkit_agent: None,
+                    clean_env: false,
                     pause_after: false,
                     banner: Some(format!(
                         "RESILIENCE SHELL — {} mode, unprivileged. Type 'exit' to return to the interface.",
@@ -1604,6 +1721,7 @@ impl App {
             extra_args: vec![path],
             env: Vec::new(),
             polkit_agent: None,
+            clean_env: false,
             pause_after: false,
             banner: None,
         })
@@ -1769,6 +1887,26 @@ impl App {
                         value,
                         error,
                     });
+                    Effect::None
+                }
+            },
+            Modal::ManPage { mut value, error } => match key.code {
+                KeyCode::Esc => Effect::None,
+                KeyCode::Enter => self.submit_man_page(value),
+                KeyCode::Backspace => {
+                    value.pop();
+                    self.modal = Some(Modal::ManPage { value, error: None });
+                    Effect::None
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if value.chars().count() < 80 {
+                        value.push(c);
+                    }
+                    self.modal = Some(Modal::ManPage { value, error: None });
+                    Effect::None
+                }
+                _ => {
+                    self.modal = Some(Modal::ManPage { value, error });
                     Effect::None
                 }
             },
@@ -2123,6 +2261,7 @@ impl App {
                 cfg.session_shell.to_string_lossy().into_owned(),
             )],
             polkit_agent: Some(cfg.pkttyagent.to_string_lossy().into_owned()),
+            clean_env: false,
             pause_after: true,
             banner: Some(format!(
                 "CHANGE SECURITY MODE: '{user}' -> {to}. An administrator must now type \
@@ -2216,6 +2355,7 @@ impl App {
                 cfg.session_shell.to_string_lossy().into_owned(),
             )],
             polkit_agent: Some(cfg.pkttyagent.to_string_lossy().into_owned()),
+            clean_env: false,
             pause_after: true,
             banner: Some(format!(
                 "SET THE CLOCK to {at}. An administrator must now type their \
@@ -2571,6 +2711,74 @@ impl App {
         }
     }
 
+    /// Open one manual page in `less` (secure mode), or show the pages whose
+    /// description matches the words.
+    fn submit_man_page(&mut self, value: String) -> Effect {
+        let req = match manpage::parse(&value) {
+            Ok(r) => r,
+            Err(e) => {
+                self.modal = Some(Modal::ManPage {
+                    value,
+                    error: Some(e),
+                });
+                return Effect::None;
+            }
+        };
+        let man = self.sys.tools.man.clone();
+        let program = match &req {
+            manpage::Request::Page { .. } => man.clone(),
+            manpage::Request::Search(_) => self.sys.tools.apropos.clone(),
+        };
+        let mut argv: Vec<String> = vec![program];
+        argv.extend(req.args());
+        match &req {
+            manpage::Request::Page { .. } => {
+                let mut probe: Vec<&str> = vec![man.as_str(), "-w"];
+                probe.extend(argv[1..].iter().map(String::as_str));
+                if !run_full(&probe, Duration::from_secs(10)).is_some_and(|o| o.success()) {
+                    self.modal = Some(Modal::ManPage {
+                        value,
+                        error: Some(
+                            "No manual page with that name. Type a few words to search instead."
+                                .into(),
+                        ),
+                    });
+                    return Effect::None;
+                }
+                Effect::Run(RunRequest {
+                    label: "Manual pages".into(),
+                    argv,
+                    extra_args: Vec::new(),
+                    env: manpage::environment(&self.sys.tools.less),
+                    polkit_agent: None,
+                    clean_env: true,
+                    pause_after: false,
+                    banner: None,
+                })
+            }
+            manpage::Request::Search(words) => {
+                let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+                let text = run_full(&refs, Duration::from_secs(15))
+                    .filter(|o| o.success() && !o.stdout.trim().is_empty())
+                    .map(|o| {
+                        format!(
+                            "Manual pages about \"{}\". Open one with Manual pages and its \
+                             name (the section in brackets can come first, e.g. \"5 passwd\").\n\n{}",
+                            words.join(" "),
+                            o.stdout
+                        )
+                    })
+                    .unwrap_or_else(|| format!("No manual page mentions \"{}\".", words.join(" ")));
+                self.push(View::Pager {
+                    title: "MANUAL PAGES".into(),
+                    text,
+                    scroll: 0,
+                });
+                Effect::None
+            }
+        }
+    }
+
     /// Mount (if needed) a volume; explains any problem in a message.
     fn mount_volume(&mut self, v: &Volume) -> Option<PathBuf> {
         if let Some(p) = &v.problem {
@@ -2754,6 +2962,7 @@ impl App {
             extra_args: vec![path.to_path_buf()],
             env: Vec::new(),
             polkit_agent: None,
+            clean_env: false,
             pause_after: true,
             banner: Some(format!("{}: press Ctrl-C to cancel.", label.to_uppercase())),
         })
@@ -2924,6 +3133,7 @@ impl App {
                 cfg.session_shell.to_string_lossy().into_owned(),
             )],
             polkit_agent: Some(cfg.pkttyagent.to_string_lossy().into_owned()),
+            clean_env: false,
             pause_after: true,
             banner: Some(format!(
                 "DEFAULT GENERATION {number}. An administrator must now type their \

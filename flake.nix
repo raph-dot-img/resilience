@@ -74,6 +74,7 @@
         vm-wifi = vmTest ./tests/vm/wifi.nix;
         vm-generations = vmTest ./tests/vm/generations.nix;
         vm-packs = vmTest ./tests/vm/packs.nix;
+        vm-documents = vmTest ./tests/vm/documents.nix;
         security-invariants = pkgs.callPackage ./tests/eval/security-invariants.nix {
           configurations = {
             inherit (self.nixosConfigurations) live-standard live-minimal dev-vm;

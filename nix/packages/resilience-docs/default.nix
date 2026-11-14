@@ -3,8 +3,11 @@
 # of the pinned nixpkgs. Read in the Offline library like any other pack.
 #
 # The NixOS manual and options come from nixpkgs' own release jobs
-# (nixos/release.nix), which are in the binary cache: nothing heavy is
-# built. The pack is small (a few MiB) and needs no download.
+# (nixos/release.nix, with its default arguments). For the pinned nixpkgs
+# these outputs were found in the binary cache on 2026-11-14 (2 MiB each);
+# otherwise they are built locally, which takes a few minutes. They show the
+# NixOS release (26.05), not the exact revision, and do not include the
+# `resilience.*` options (documented in the handbook and docs/).
 {
   lib,
   runCommand,

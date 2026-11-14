@@ -184,6 +184,8 @@ fn footer_hints(view: &View) -> &'static str {
         View::Backups { .. } => "Enter Back up/Restore  c Check  e Eject  Esc Back  F1 Help",
         View::Packs { .. } => "Space Tick  s Sets  d Download  u From USB  f Language  Enter Info",
         View::PackSets { .. } => "Enter Tick this set  Esc Back",
+        View::Files { .. } => "Type a name  Enter View  F3 Details & checksum  F2 Rescan  Esc",
+        View::Table(_) => "Arrows Rows & columns  PgUp/PgDn  Esc Back",
         View::Library { .. } => "Enter Read  s Search  c Check  u USB stick  p Get packs  Esc Back",
     }
 }
@@ -330,6 +332,8 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
             purpose,
         } => draw_media(f, app, area, volumes, error.as_deref(), list, *purpose),
         View::PackSets { list } => draw_pack_sets(f, app, area, list),
+        View::Files { idx, query, list } => draw_files(f, app, area, idx, query, list),
+        View::Table(tbl) => draw_table(f, app, area, tbl),
         View::Library { items, list } => draw_library(f, app, area, items, list),
         View::Packs { s, list } => draw_packs(f, app, area, s, list),
         View::Backups {
@@ -1731,6 +1735,107 @@ fn draw_backups(
     details(f, &t, d, lines);
 }
 
+fn draw_files(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    idx: &resilience_core::files::Index,
+    query: &str,
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    let [input, results] =
+        Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(area);
+    let cursor = if (app.tick / 2) % 2 == 0 { "█" } else { " " };
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(query.to_string(), t.accent),
+            Span::styled(cursor, t.base),
+        ]))
+        .block(block("FIND FILES (home folder and open USB sticks)", &t)),
+        input,
+    );
+    let hits = resilience_core::files::search(idx, query);
+    let w = results.width.saturating_sub(4 + 11) as usize;
+    let items: Vec<ListItem> = hits
+        .iter()
+        .map(|e| {
+            // Keep the end of long paths: the file name matters most.
+            let n = e.shown.chars().count();
+            let shown: String = if n > w {
+                let tail: String = e.shown.chars().skip(n - w + 3).collect();
+                format!("...{tail}")
+            } else {
+                e.shown.clone()
+            };
+            ListItem::new(format!("{shown:<w$} {:>10}", human_bytes(e.size)))
+        })
+        .collect();
+    let empty = if query.trim().is_empty() {
+        format!(
+            "Type part of a file name. {} files can be searched.",
+            idx.entries.len()
+        )
+    } else {
+        "No file name matches.".to_string()
+    };
+    draw_list(
+        f,
+        &t,
+        results,
+        &format!("FILES ({})", hits.len()),
+        items,
+        list,
+        &empty,
+    );
+}
+
+fn draw_table(f: &mut Frame, app: &App, area: Rect, tbl: &crate::app::Table) {
+    let t = app.theme;
+    let inner_w = area.width.saturating_sub(2) as usize;
+    let inner_h = area.height.saturating_sub(2) as usize;
+    let cols = tbl.widths.len();
+    let widths = &tbl.widths;
+    let fmt_row = |r: &Vec<String>| -> String {
+        let mut line = String::new();
+        for (c, w) in widths.iter().enumerate().skip(tbl.col) {
+            let cell = r.get(c).map(String::as_str).unwrap_or("");
+            let cell: String = cell
+                .chars()
+                .map(|ch| if ch.is_control() { ' ' } else { ch })
+                .take(*w)
+                .collect();
+            line.push_str(&format!("{cell:<w$} | "));
+            if line.chars().count() > inner_w {
+                break;
+            }
+        }
+        line.chars().take(inner_w).collect()
+    };
+    let mut lines = Vec::new();
+    if let Some(h) = tbl.rows.first() {
+        lines.push(Line::from(Span::styled(fmt_row(h), t.accent)));
+    }
+    for r in tbl
+        .rows
+        .iter()
+        .skip(1 + tbl.row)
+        .take(inner_h.saturating_sub(1))
+    {
+        lines.push(Line::from(fmt_row(r)));
+    }
+    let pos = format!(
+        " row {}/{}  column {}/{} ",
+        (tbl.row + 1).min(tbl.rows.len().saturating_sub(1)),
+        tbl.rows.len().saturating_sub(1),
+        (tbl.col + 1).min(cols),
+        cols
+    );
+    let b =
+        block(&tbl.title, &t).title_bottom(Line::from(Span::styled(pos, t.dim)).right_aligned());
+    f.render_widget(Paragraph::new(lines).style(t.base).block(b), area);
+}
+
 fn draw_search(
     f: &mut Frame,
     app: &App,
@@ -1860,6 +1965,24 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
                 ))),
             }
             ("WI-FI PASSWORD", l, t.base)
+        }
+        Modal::ManPage { value, error } => {
+            let mut l = vec![
+                Line::from("Command name, or words to search the manuals for:"),
+                Line::from(vec![
+                    Span::styled(format!("> {value}"), t.accent),
+                    Span::styled("█", t.base),
+                ]),
+                Line::from(""),
+            ];
+            match error {
+                Some(e) => l.push(Line::from(Span::styled(format!("[!!] {e}"), t.error))),
+                None => l.push(Line::from(Span::styled(
+                    "e.g. ls, 5 passwd, copy files | In a page: q quits, / searches",
+                    t.dim,
+                ))),
+            }
+            ("MANUAL PAGES", l, t.base)
         }
         Modal::PackSearch { item, value } => {
             let l = vec![

@@ -56,8 +56,17 @@ resilience-library open FILE [--search WORDS]
 `resilience-packs`. The store protocol (stdin chunks, plan lines) is
 documented in `crates/resilience-core/src/packs.rs`.
 
+## Sets, built-in packs, sticks
+
+- `resilience.packs.sets`: suggested selections (`nix/packs/sets.nix`);
+  unknown ids are dropped when the catalog is replaced.
+- `resilience.packs.builtinDocs`: the "System documentation" ZIM built from
+  the handbook and nixpkgs' NixOS manual and `options.json`
+  (`nix/packages/resilience-docs/make-docs.py`), listed as `[[builtin]]`.
+- Packs on mounted sticks are listed in the Offline library and can be
+  checked with `resilience-library check FILE`.
+
 ## Not yet
 
-- Reading packs directly from a stick without installing them (live system).
 - Maps (Phase 5), documentation packs of our own, signed packs that can be
   updated without a system update (Phase 8).

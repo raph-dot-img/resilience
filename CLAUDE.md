@@ -52,7 +52,8 @@ crates/resilience-core  library: status, network (passive + on-demand probe),
                         mode detection, catalog, config, handbook, notes, launch, proc,
                         admin (pure mode-change rules), clock (time parsing/bounds),
                         recovery (generations, default-generation rules, report),
-                        media (lsblk parsing, udisksctl mount/eject), backup (tar|zstd|age
+                        media (lsblk parsing, udisksctl mount/eject), files (name
+                        index, kinds, text caps, CSV), manpage (names, secure env), backup (tar|zstd|age
                         pipeline, checksum, restore into ~/Restored), wifi (nmcli parsing,
                         private profiles, password via stdin), packs (catalog, inventory,
                         stdin chunk framing, receive+hash, remove, reader URLs)
@@ -104,6 +105,9 @@ in the foreground → pkttyagent + `pkexec --user resilience-packs
 lines → library streams curl (HTTPS only, --continue-at) or the stick file as
 [u32 len][bytes] chunks → store appends to .staging/F.part, sha256sum over
 old+new bytes, rename only on match; early end keeps the part (resume).
+Sets: `s` on Resource packs ticks a suggested set. Library also lists built-in
+packs (`[[builtin]]`, the docs ZIM from nix/packages/resilience-docs) and packs on
+mounted sticks (`u` opens one, `c` → `resilience-library check FILE`).
 Reading: Offline library → `resilience-library open FILE` → kiwix-serve
 127.0.0.1:<free port> + lynx with every restriction (`-restrictions=…`, not `all`) and `-localhost`.
 
@@ -278,8 +282,10 @@ needlessly. Watch `free -h` during VM tests.
 
 ## 14. Current implementation status (2026-11-14)
 
-Phase 0 (foundation), Phase 1 (core) and Phase 2 done; Phase 3 in progress
-(resource packs and the offline library done, ADR 0013). Phase 2:
+Phase 0 (foundation), Phase 1 (core), Phase 2 and Phase 3 done (Phase 3:
+resource packs, sets, built-in docs, packs on sticks, ADR 0013; Find & view
+files and manual pages, ADR 0014).
+A future `build_resilience.sh` (interactive custom ISO) is described in ROADMAP. Phase 2:
 privileged helper with set-mode, TUI Users & security modes, TUI Recovery &
 diagnostics, faillock (ADR 0007); removable media + encrypted backups (ADR
 0008); Date & time via `set-time` (ADR 0009); Wi-Fi for every account and
@@ -319,8 +325,8 @@ See docs/TESTING.md for what has actually been executed and passed.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Next: rest of Phase 3 (packs read from a stick on the live
-system, guides with provenance, document viewing, CSV, file search).
+See ROADMAP.md. Next: Phase 4 (cryptography: guided age/minisign/GnuPG
+workflows, signature verification).
 
 ## 17. Important decisions (docs/decisions/)
 
@@ -337,6 +343,7 @@ system, guides with provenance, document viewing, CSV, file search).
 - 0011 Default generation via helper `set-default-generation` (nix-env + that generation's switch-to-configuration boot)
 - 0012 User namespaces: off (max_user_namespaces=0, no Nix sandbox) when every account is Ultra-Stable
 - 0013 Resource packs: hash-pinned catalog, unprivileged store via pkexec --user, kiwix-serve + restricted lynx
+- 0014 Find & view files inside the TUI (read-only viewers); man in less secure mode
 
 ## 18. How to continue safely
 

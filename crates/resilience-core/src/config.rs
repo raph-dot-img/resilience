@@ -71,6 +71,13 @@ pub struct ToolPaths {
     pub nmcli: String,
     /// The offline library `resilience-library` (resource packs, ADR 0013).
     pub library: String,
+    /// Manual pages: `man` (man-db) and the pager it runs, `less`.
+    pub man: String,
+    pub apropos: String,
+    pub less: String,
+    /// Document viewing: PDF text and archive listings.
+    pub pdftotext: String,
+    pub bsdtar: String,
 }
 
 impl Default for ToolPaths {
@@ -85,6 +92,11 @@ impl Default for ToolPaths {
             backup: "resilience-backup".into(),
             nmcli: "nmcli".into(),
             library: "resilience-library".into(),
+            man: "man".into(),
+            apropos: "apropos".into(),
+            less: "less".into(),
+            pdftotext: "pdftotext".into(),
+            bsdtar: "bsdtar".into(),
         }
     }
 }

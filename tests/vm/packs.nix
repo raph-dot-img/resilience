@@ -221,6 +221,21 @@ in
         machine.send_key("ret")
         wait_tty("1", "RESOURCE PACKS")
 
+    def select(regexp):
+        """Move the list selection to the line matching `regexp` (lists wrap)."""
+        for _ in range(12):
+            if re.search(r"> " + regexp, tty_text("1")):
+                return
+            machine.send_key("down")
+            _time.sleep(0.3)
+        raise Exception(f"line {regexp!r} not found:\n" + tty_text("1"))
+
+    def quit_lynx(back="OFFLINE LIBRARY"):
+        machine.send_chars("q")
+        wait_tty("1", "Are you sure you want to quit")
+        machine.send_chars("y")
+        wait_tty("1", back)
+
     def tick(title):
         """Select the row whose text contains `title` (lists wrap) and tick it."""
         for _ in range(12):
@@ -308,7 +323,21 @@ in
         wait_tty("1", "Offline library")
         machine.send_key("ret")
         wait_tty("1", "OFFLINE LIBRARY")
+        # Built in, installed, and the copy still on the stick.
+        wait_tty("1", r"Built in\s+System documentation \(built in\)")
         wait_tty("1", r"Practical\s+Field notes \(test\)")
+        wait_tty("1", r"USB stick\s+Field notes \(test\)")
+        select(r"Built in")
+        machine.send_key("ret")
+        wait_tty("1", "Offline documentation of this computer", timeout=60)
+        quit_lynx()
+        machine.send_chars("s")
+        wait_tty("1", "Search in 'System documentation")
+        machine.send_chars("virtualHosts\n")
+        wait_tty("1", r"Results 1-\d+ of \d+", timeout=60)
+        wait_tty("1", "from System documentation")
+        quit_lynx()
+        select(r"Practical")
         machine.send_key("ret")
         wait_tty("1", "Test notice: read with care")
         machine.send_key("ret")
@@ -340,10 +369,25 @@ in
         machine.send_key("ret")  # the notice
         wait_tty("1", r"Results 1-1 of 1", timeout=60)
         wait_tty("1", "Drinking water")
-        machine.send_chars("q")
-        wait_tty("1", "Are you sure you want to quit")
-        machine.send_chars("y")
+        quit_lynx()
+
+    with subtest("library: a pack on the stick is checked and read without installing it"):
+        select(r"USB stick")
+        wait_tty("1", "not checked yet")
+        machine.send_chars("c")
+        wait_tty("1", "MATCHES: this is exactly the file of the catalog", timeout=60)
+        machine.send_key("ret")
         wait_tty("1", "OFFLINE LIBRARY")
+        select(r"USB stick")
+        machine.send_key("ret")
+        wait_tty("1", "Test notice: read with care")
+        machine.send_key("ret")
+        wait_tty("1", "A tiny test pack", timeout=60)
+        # The server reads the file on the stick, as alice.
+        ps = machine.succeed("ps -o user=,args= -C kiwix-serve")
+        print(ps)
+        assert ps.startswith("alice ") and "/run/media/alice/PACKSTICK/" in ps, ps
+        quit_lynx()
 
     with subtest("download: a wrong password changes nothing"):
         machine.send_chars("p")

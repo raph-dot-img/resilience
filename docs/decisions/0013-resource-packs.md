@@ -132,6 +132,42 @@ included.
   `p` goes to Resource packs.
 - Both entries are shown only when the system has a catalog.
 
+### Suggested sets, built-in documentation, packs on a stick
+
+Added the same day, after the first version:
+
+- **Suggested sets** (`resilience.packs.sets`, default `nix/packs/sets.nix`):
+  Essential (English), Essentiel (français), Field guides, Knowledge,
+  Connaissances, Extended documentation, Complete. On the Resource packs
+  screen, `s` lists them with what is still missing and its size. Enter
+  ticks those packs; nothing is downloaded until `d` or `u`. Sets keep only
+  the packs present in the catalog, so a smaller catalog still works. The
+  roadmap's "Geography" set waits for maps (Phase 5).
+- **A built-in documentation pack**, about 4 MiB, shipped in the system
+  (`resilience.packs.builtinDocs`, on by default, also on the live system).
+  It holds the Resilience handbook, the NixOS manual and all NixOS options,
+  one page per option group, so pages stay small and search finds an
+  option by name or description. It is built at build time
+  (`nix/packages/resilience-docs`) from nixpkgs' own manual and
+  `options.json`, which are in the binary cache, with `zimwriterfs`. It sits
+  in the Nix store, so it is as trusted as the rest of the system.
+- **Reading packs on a stick without installing them** (the live system has
+  no administrator). The Offline library also lists:
+  - catalog files on mounted sticks, matched by name and size, at the top
+    or in `Resilience-packs/`;
+  - any other `.zim` file in that folder, marked as not in the catalog.
+
+  `u` opens a stick. `c` checks a stick file with `resilience-library
+  check`, which hashes it against the catalog: matches, does not match, or
+  unknown with its SHA-256 shown. Opening an unchecked file is the user's
+  choice: libzim parses it as the user, as with any document. The
+  description says it was not checked.
+- Eight more catalog packs, one reason for the new **Documentation**
+  category:
+  - documentation: Linux manual pages, Bash and Nix (DevDocs);
+  - Stack Exchange: home improvement, vehicle repair, earth science and
+    weather, amateur radio, electronics.
+
 ## Alternatives considered
 
 - **Our own `.rpack` archive with minisign signatures** (the earlier

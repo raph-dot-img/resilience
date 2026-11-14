@@ -567,10 +567,18 @@ fn check(cfg: &PackConfig, path: &Path) -> Result<(), Failure> {
     let meta = fs::metadata(path)
         .ok()
         .filter(|m| m.is_file())
-        .ok_or_else(|| Failure::Refused(format!("{} is not available.", path.display())))?;
+        .ok_or_else(|| {
+            Failure::Refused(format!(
+                "{} is not available.",
+                resilience_core::printable(&path.to_string_lossy())
+            ))
+        })?;
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let pack = cfg.packs.iter().find(|p| p.file == name);
-    println!("Checking {}", path.display());
+    println!(
+        "Checking {}",
+        resilience_core::printable(&path.to_string_lossy())
+    );
     if let Some(p) = pack {
         println!("against: {} ({})\n", p.title, human_bytes(p.size));
         if meta.len() != p.size {
@@ -676,14 +684,19 @@ fn open(cfg: &PackConfig, args: &[String]) -> Result<(), Failure> {
     if !file.is_absolute() {
         return Err(Failure::Refused(format!(
             "{} must be an absolute path.",
-            file.display()
+            resilience_core::printable(&file.to_string_lossy())
         )));
     }
     let name = file
         .file_name()
         .and_then(|n| n.to_str())
         .filter(|n| packs::valid_file_name(n))
-        .ok_or_else(|| Failure::Refused(format!("{} is not a pack file.", file.display())))?;
+        .ok_or_else(|| {
+            Failure::Refused(format!(
+                "{} is not a pack file.",
+                resilience_core::printable(&file.to_string_lossy())
+            ))
+        })?;
     if !fs::metadata(&file).is_ok_and(|m| m.is_file()) {
         return Err(Failure::Refused(format!(
             "{} is not available.",
@@ -691,7 +704,20 @@ fn open(cfg: &PackConfig, args: &[String]) -> Result<(), Failure> {
         )));
     }
     let book = name.strip_suffix(".zim").unwrap_or(name);
-    let pack = cfg.packs.iter().find(|p| p.file == name);
+    let size = fs::metadata(&file).map_or(0, |m| m.len());
+    let pack = cfg.packs.iter().find(|p| p.file == name && p.size == size);
+    // Installed files (and older versions) were checked when installed.
+    let builtin = cfg.builtin.iter().any(|b| b.path == file) || file.starts_with(&cfg.dir);
+    if pack.is_none() && !builtin && io::stdin().is_terminal() {
+        println!(
+            "{}\n\nThis file is not in the catalog of this system, so it was not checked. \
+             Open it only if you trust where it comes from.\n",
+            resilience_core::printable(&file.to_string_lossy())
+        );
+        print!("Press Enter to open it, or Ctrl-C to cancel...");
+        let _ = io::stdout().flush();
+        let _ = io::stdin().lock().read_line(&mut String::new());
+    }
     if let Some(notice) = pack.and_then(|p| p.notice.as_deref())
         && io::stdin().is_terminal()
     {

@@ -116,6 +116,17 @@ pub fn lines(topic: HelpTopic, mode: Mode) -> Vec<String> {
             "  checked against its fingerprint (SHA-256) before it is installed. A download",
             "  stopped with Ctrl-C or by a lost connection continues where it stopped.",
         ],
+        HelpTopic::Files => &[
+            "== FIND & VIEW FILES ==",
+            "  Type part of a file's name (several words: all must match). Your home folder",
+            "  and open USB sticks are searched; hidden files are not.",
+            "  Enter                  Show the file: text, PDF text, CSV table, archive",
+            "                         contents, or a resource pack in the library",
+            "  F3                     Size, date and SHA-256 checksum",
+            "  F2                     Search again (after plugging in a stick)",
+            "  In a table: arrows move between rows and columns, Esc goes back.",
+            "  Nothing is ever changed, extracted or run from a file.",
+        ],
         HelpTopic::Search => &[
             "== SEARCH ==",
             "  Type any word. Results include menu sections [MENU], built-in tools [TOOL],",

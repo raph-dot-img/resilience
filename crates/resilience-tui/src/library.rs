@@ -513,6 +513,7 @@ impl App {
             extra_args: Vec::new(),
             env: Vec::new(),
             polkit_agent: None,
+            clean_env: false,
             pause_after: true,
             banner: Some(format!(
                 "CHECKING {}. Large packs take a while; Ctrl-C stops.",
@@ -573,6 +574,7 @@ impl App {
             extra_args: Vec::new(),
             env: Vec::new(),
             polkit_agent: None,
+            clean_env: false,
             pause_after: false,
             banner: None,
         })
@@ -857,6 +859,7 @@ impl App {
             extra_args: Vec::new(),
             env: Vec::new(),
             polkit_agent: None,
+            clean_env: false,
             pause_after: true,
             banner: Some(
                 "RESOURCE PACKS. An administrator must now type their password. Ctrl-C \

@@ -1,8 +1,9 @@
 //! Running short helper programs with a hard timeout.
 //!
-//! Used for read-only queries such as `systemctl is-system-running`. Output is
-//! captured only after the child exits, so this is intended for commands with
-//! small output (well under the 64 KiB pipe buffer).
+//! Used for read-only queries such as `systemctl is-system-running`, and for
+//! viewers (pdftotext, bsdtar) whose output can be large: stdout and stderr
+//! are read while the child runs, up to [`MAX_OUTPUT`] bytes each (the rest is
+//! discarded, see [`Output::truncated`]), and decoded lossily.
 
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
@@ -17,6 +18,9 @@ pub fn run_capture(argv: &[&str], timeout: Duration) -> Option<String> {
     run_full(argv, timeout).map(|o| o.stdout)
 }
 
+/// Bytes kept of each of stdout and stderr.
+pub const MAX_OUTPUT: usize = 8 * 1024 * 1024;
+
 /// Captured result of [`run_full`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Output {
@@ -24,6 +28,8 @@ pub struct Output {
     pub code: Option<i32>,
     pub stdout: String,
     pub stderr: String,
+    /// stdout was longer than [`MAX_OUTPUT`] and was cut.
+    pub truncated: bool,
 }
 
 impl Output {
@@ -102,6 +108,28 @@ fn run_inner(argv: &[&str], input: Option<&[u8]>, timeout: Duration) -> Option<O
         // gets EPIPE, which is not an error here. Dropping closes it.
         let _ = stdin.write_all(data);
     }
+    // Read both pipes in threads while the child runs: a child writing more
+    // than the pipe buffer would otherwise block until the timeout.
+    fn drain(mut r: impl Read + Send + 'static) -> thread::JoinHandle<(Vec<u8>, bool)> {
+        thread::spawn(move || {
+            let mut kept = Vec::new();
+            let mut buf = [0u8; 65536];
+            let mut cut = false;
+            loop {
+                match r.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let room = MAX_OUTPUT.saturating_sub(kept.len());
+                        kept.extend_from_slice(&buf[..n.min(room)]);
+                        cut |= n > room;
+                    }
+                }
+            }
+            (kept, cut)
+        })
+    }
+    let out_t = drain(child.stdout.take()?);
+    let err_t = drain(child.stderr.take()?);
     let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
@@ -116,20 +144,37 @@ fn run_inner(argv: &[&str], input: Option<&[u8]>, timeout: Duration) -> Option<O
             Err(_) => return None,
         }
     };
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    child.stdout.take()?.read_to_string(&mut stdout).ok()?;
-    child.stderr.take()?.read_to_string(&mut stderr).ok()?;
+    // A grandchild may still hold the pipes open: the threads end with it.
+    let (out, truncated) = out_t.join().ok()?;
+    let (err, _) = err_t.join().ok()?;
     Some(Output {
         code: status.code(),
-        stdout,
-        stderr,
+        stdout: String::from_utf8_lossy(&out).into_owned(),
+        stderr: String::from_utf8_lossy(&err).into_owned(),
+        truncated,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_and_non_utf8_output_is_captured() {
+        // More than the pipe buffer: this used to block until the timeout.
+        let out = run_full(
+            &[
+                "sh",
+                "-c",
+                "head -c 300000 /dev/zero | tr '\\0' a; printf '\\377'",
+            ],
+            Duration::from_secs(10),
+        )
+        .expect("finished");
+        assert!(out.success());
+        assert_eq!(out.stdout.len(), 300_000 + '\u{fffd}'.len_utf8());
+        assert!(!out.truncated);
+    }
 
     #[test]
     fn captures_output() {

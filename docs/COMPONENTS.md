@@ -21,6 +21,9 @@ activity as known on 2026-11-14; re-check before each release.
 | kiwix-tools (kiwix-serve) | 3.8.2 | GPL-3.0-or-later | https://github.com/kiwix/kiwix-tools | yes | serves one installed ZIM file on 127.0.0.1 while it is read (ADR 0013) |
 | libkiwix, libzim, Xapian | 14.2.1, 9.7.0, 1.4.31 | GPL-3.0+, GPL-2.0+, GPL-2.0+ | https://kiwix.org | yes | dependencies of kiwix-serve (ZIM reading, full-text search) |
 | Lynx | 2.9.2 | GPL-2.0-or-later | https://lynx.invisible-island.net | yes | text browser of the offline library, `-restrictions=… -localhost` |
+| poppler-utils (pdftotext) | 26.10.0 | GPL-2.0-or-later | https://poppler.freedesktop.org | yes | text of PDF files in Find & view files (ADR 0014) |
+| libarchive (bsdtar) | 3.8.9 | BSD-3-Clause | https://libarchive.org | yes | lists archive contents, never extracts (ADR 0014) |
+| man-db, less | 2.13.1, 692 | GPL-2.0-or-later, GPL-3.0-or-later | https://man-db.gitlab.io, https://greenwoodsoftware.com/less | yes | Manual pages; less in secure mode (ADR 0014) |
 | curl | 8.23.0 | curl | https://curl.se | downloads only | downloads resource packs on request, HTTPS only, resumable |
 | Kiwix ZIM content (catalog) | 2024–2026 files | CC-BY-SA-4.0 and others (per pack) | https://download.kiwix.org | yes | not shipped: chosen by the user, hashes pinned in `nix/packs/kiwix.nix` |
 | age | 1.3.2 | BSD-3-Clause | https://age-encryption.org | yes | backup encryption (passphrase, read from the terminal by age) |

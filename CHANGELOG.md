@@ -23,6 +23,19 @@ versions follow [Semantic Versioning](https://semver.org/).
   full-text search. New tool `resilience-library`; handbook page "The
   offline library"; VM test `vm-packs` (HTTPS mirror, USB stick, Ctrl-C
   and resume, tampered file, wrong password, removal).
+- *Find & view files* (ADR 0014): search file names in the home folder and on
+  open sticks; view text, PDF text (pdftotext), CSV/TSV tables, archive
+  listings (bsdtar -t, never extracted) inside the TUI; size, date and
+  SHA-256. *Manual pages*: `man` in less's secure mode, `apropos --and` search
+  (whatis database now built). Handbook page "Files and manuals"; VM test
+  `vm-documents`.
+- Suggested sets of packs (`s` on Resource packs: Essential, Field guides,
+  Knowledge, Extended documentation, Complete...); a built-in "System
+  documentation" pack (handbook, NixOS manual, every NixOS option,
+  searchable); packs read directly from a USB stick and checked with
+  `resilience-library check` (`u` and `c` in the Offline library); eight
+  more catalog packs (DevDocs man/Bash/Nix; Stack Exchange DIY, vehicles,
+  earth science, ham radio, electronics).
 - `resilience-admin`, the privileged helper (ADR 0007): `list`, `set-mode`,
   `apply-state`; polkit action `org.resilience.admin.set-mode` (auth_admin),
   server-side validation, persistent overrides re-applied after activation,

@@ -13,8 +13,8 @@ use resilience_core::config::{SystemConfig, ThemeName, ToolPaths, UserSettings};
 use resilience_core::mode::{Detected, Mode};
 
 use crate::app::{
-    App, BACKUP_LABEL, Builtin, CHECK_LABEL, Effect, Entry, MediaPurpose, Modal, PACKS_LABEL,
-    PackRow, Paths, Pending, RESTORE_LABEL, Startup, View,
+    App, BACKUP_LABEL, Builtin, CHECK_LABEL, Effect, Entry, ItemPlace, MediaPurpose, Modal,
+    PACKS_LABEL, PackRow, Paths, Pending, RESTORE_LABEL, Startup, View, stick_items,
 };
 use crate::ui;
 
@@ -287,7 +287,30 @@ NM
 esac
 "#
     );
-    for (name, text) in [("lsblk", lsblk), ("udisksctl", udisksctl), ("nmcli", nmcli)] {
+    // Fake man: knows only ls; -k finds it by its description.
+    let man = r#"#!/bin/sh
+case "$1" in
+  -w) [ "$2" = ls ] && echo /share/man/man1/ls.1.gz || exit 16 ;;
+  --and) echo "ls (1)               - list directory contents" ;;
+  *) exit 3 ;;
+esac
+"#
+    .to_string();
+    for (name, text) in [
+        ("lsblk", lsblk),
+        ("udisksctl", udisksctl),
+        ("nmcli", nmcli),
+        ("man", man),
+        (
+            "pdftotext",
+            "#!/bin/sh\necho \"PDF TEXT of $6\"\n".to_string(),
+        ),
+        (
+            "bsdtar",
+            "#!/bin/sh\n[ \"$1\" = -tvf ] && echo \"-rw-r--r-- 0 a a 5 Jan 1 2026 inside.txt\"\n"
+                .to_string(),
+        ),
+    ] {
         let p = sys.join(name);
         std::fs::write(&p, text).expect("write");
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("chmod");
@@ -297,6 +320,11 @@ esac
         udisksctl: sys.join("udisksctl").display().to_string(),
         backup: "/store/bin/resilience-backup".into(),
         nmcli: sys.join("nmcli").display().to_string(),
+        man: sys.join("man").display().to_string(),
+        apropos: sys.join("man").display().to_string(),
+        less: "/store/bin/less".into(),
+        pdftotext: sys.join("pdftotext").display().to_string(),
+        bsdtar: sys.join("bsdtar").display().to_string(),
         ..ToolPaths::default()
     }
 }
@@ -415,8 +443,8 @@ fn ultra_stable_uses_restricted_command() {
         .position(|c| *c == Category::Productivity)
         .expect("productivity");
     press(&mut a, KeyCode::Char(char::from(b'1' + idx as u8)));
-    // Entries: [Notes builtin, Text editor app]
-    let eff = press(&mut a, KeyCode::Char('2'));
+    // Entries: [Notes builtin, Files builtin, Text editor app]
+    let eff = press(&mut a, KeyCode::Char('3'));
     match eff {
         Effect::Run(r) => assert_eq!(r.argv, vec!["/bin/sh", "-c", "restricted"]),
         other => panic!("expected run, got {other:?}"),
@@ -2157,5 +2185,245 @@ fn library_entries_are_hidden_without_a_catalog() {
     assert!(v.is_none() && e == Effect::None);
     assert!(
         matches!(&a.modal, Some(Modal::Message { title, .. }) if title == "RESOURCE PACKS UNAVAILABLE")
+    );
+}
+
+#[test]
+fn suggested_sets_tick_what_is_missing() {
+    let mut a = app(Mode::UltraStable, "pack-sets");
+    open(&mut a, Builtin::Packs);
+    press(&mut a, KeyCode::Char('s'));
+    assert!(matches!(a.view(), View::PackSets { .. }));
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("SUGGESTED SETS"), "{screen}");
+    // wiki-en is installed; medicine (3000 left) and wiki-fr (3000) are not.
+    assert!(screen.contains("Starter set"), "{screen}");
+    assert!(screen.contains("2 to get, 5.9 KiB"), "{screen}");
+    assert_console_glyphs(&screen);
+    press(&mut a, KeyCode::Enter);
+    let View::Packs { s, .. } = a.view() else {
+        panic!("back on the packs view")
+    };
+    assert_eq!(s.marked.iter().copied().collect::<Vec<_>>(), vec![1, 2]);
+    assert!(
+        a.current_toast()
+            .is_some_and(|n| n.text.contains("2 more packs ticked"))
+    );
+    // Esc leaves the sets without ticking anything.
+    press(&mut a, KeyCode::Char('s'));
+    press(&mut a, KeyCode::Esc);
+    assert!(matches!(a.view(), View::Packs { .. }));
+}
+
+#[test]
+fn packs_on_a_stick_are_read_without_installing_and_can_be_checked() {
+    let mut a = app(Mode::UltraStable, "stick-read");
+    let stick = a.home.join("stick");
+    std::fs::create_dir_all(stick.join("Resilience-packs")).expect("mkdir");
+    std::fs::write(stick.join("wiki_fr_2026-10.zim"), vec![0u8; 3000]).expect("w");
+    std::fs::write(stick.join("Resilience-packs/own_docs.zim"), b"x").expect("w");
+    std::fs::write(stick.join("Resilience-packs/notes.txt"), b"x").expect("w");
+    let cfg = resilience_core::packs::PackConfig::load(&a.paths.packs_config).expect("cfg");
+    let items = stick_items(&cfg, "STICK", &stick);
+    let got: Vec<(&str, &ItemPlace)> = items.iter().map(|i| (i.title.as_str(), &i.place)).collect();
+    let on = |known| ItemPlace::Stick {
+        volume: "STICK".into(),
+        known,
+    };
+    assert_eq!(
+        got,
+        vec![
+            ("Wikipedia (French)", &on(true)),
+            ("own_docs.zim", &on(false))
+        ]
+    );
+    // In the library: c checks a stick file with the library tool.
+    open(&mut a, Builtin::Library);
+    if let Some(View::Library { items: list, .. }) = a.stack.last_mut() {
+        list.push(items[0].clone());
+    }
+    press(&mut a, KeyCode::End);
+    let screen = render(&mut a, 80, 24);
+    assert!(
+        screen.contains("USB stick    Wikipedia (French)"),
+        "{screen}"
+    );
+    assert!(screen.contains("not checked yet"), "{screen}");
+    let Effect::Run(req) = press(&mut a, KeyCode::Char('c')) else {
+        panic!("expected a run")
+    };
+    assert_eq!(
+        req.argv,
+        [
+            "resilience-library".to_string(),
+            "check".into(),
+            stick.join("wiki_fr_2026-10.zim").display().to_string()
+        ]
+    );
+    // u: choose a stick to open for reading; Enter mounts it, back in the library.
+    press(&mut a, KeyCode::Char('u'));
+    assert!(matches!(
+        a.view(),
+        View::Media {
+            purpose: MediaPurpose::ReadPacks,
+            ..
+        }
+    ));
+    assert!(render(&mut a, 80, 24).contains("READ PACKS ON A USB STICK"));
+    press(&mut a, KeyCode::Enter);
+    assert!(udisks_log(&a).contains("mount --no-user-interaction --block-device /dev/sda1"));
+    assert!(
+        matches!(a.view(), View::Library { .. }),
+        "back in the library"
+    );
+}
+
+fn type_text(a: &mut App, text: &str) {
+    for c in text.chars() {
+        press(a, KeyCode::Char(c));
+    }
+}
+
+#[test]
+fn manual_pages_open_in_a_secure_pager_or_are_searched() {
+    let mut a = app(Mode::UltraStable, "man");
+    assert!(
+        a.entries(Category::Knowledge)
+            .contains(&Entry::Builtin(Builtin::Manual))
+    );
+    let (v, e) = a.activate(Entry::Builtin(Builtin::Manual));
+    assert!(v.is_none() && e == Effect::None);
+    assert!(matches!(a.modal, Some(Modal::ManPage { .. })));
+    assert_console_glyphs(&render(&mut a, 80, 24));
+    // Options and shell syntax are refused in the dialog.
+    type_text(&mut a, "-H ls");
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(&a.modal, Some(Modal::ManPage { error: Some(e), .. }) if e.contains("no leading -"))
+    );
+    a.modal = Some(Modal::ManPage {
+        value: String::new(),
+        error: None,
+    });
+    type_text(&mut a, "nope");
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(&a.modal, Some(Modal::ManPage { error: Some(e), .. }) if e.contains("No manual page"))
+    );
+    a.modal = Some(Modal::ManPage {
+        value: String::new(),
+        error: None,
+    });
+    type_text(&mut a, "ls");
+    let Effect::Run(req) = press(&mut a, KeyCode::Enter) else {
+        panic!("expected a run")
+    };
+    assert_eq!(req.argv[1..], ["ls".to_string()]);
+    assert!(req.argv[0].ends_with("/sys/man"));
+    assert!(req.env.contains(&("LESSSECURE".into(), "1".into())));
+    assert!(req.clean_env, "man starts from an empty environment");
+    assert!(
+        req.env
+            .contains(&("MANPAGER".into(), "/store/bin/less".into()))
+    );
+    // Several words: the matching pages, inside the interface.
+    a.modal = Some(Modal::ManPage {
+        value: String::new(),
+        error: None,
+    });
+    type_text(&mut a, "list files");
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    let View::Pager { text, .. } = a.view() else {
+        panic!("expected the search results")
+    };
+    assert!(
+        text.contains("ls (1)") && text.contains("list files"),
+        "{text}"
+    );
+}
+
+#[test]
+fn files_are_found_by_name_and_shown_read_only() {
+    let mut a = app(Mode::UltraStable, "files");
+    let h = a.home.clone();
+    std::fs::create_dir_all(h.join("Notes")).expect("mkdir");
+    std::fs::create_dir_all(h.join("Data")).expect("mkdir");
+    std::fs::create_dir_all(h.join(".secret")).expect("mkdir");
+    std::fs::write(h.join("Notes/Water plan.md"), "Boil for one minute.\n").expect("w");
+    std::fs::write(
+        h.join("Data/budget.csv"),
+        "item,cost,notes\nrice,3,\"dry, keep\"\nbeans,2,\n",
+    )
+    .expect("w");
+    std::fs::write(h.join("Data/manual.pdf"), b"%PDF-1.4 fake").expect("w");
+    std::fs::write(h.join("Data/photos.zip"), b"PK\x03\x04").expect("w");
+    std::fs::write(h.join("Data/radio.bin"), b"\x00\x01\x02").expect("w");
+    std::fs::write(h.join(".secret/water-key.txt"), "x").expect("w");
+    open(&mut a, Builtin::Files);
+    // Typing goes to the query, even '/' and '?'.
+    type_text(&mut a, "water");
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("~/Notes/Water plan.md"), "{screen}");
+    assert!(
+        !screen.contains("water-key"),
+        "hidden files are not searched: {screen}"
+    );
+    assert_console_glyphs(&screen);
+    press(&mut a, KeyCode::Enter);
+    let View::Pager { text, .. } = a.view() else {
+        panic!("text shown in the pager")
+    };
+    assert!(text.contains("Boil for one minute"));
+    press(&mut a, KeyCode::Esc);
+
+    // A CSV file as a table; the columns scroll sideways.
+    for _ in 0..5 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    type_text(&mut a, "budget");
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(a.view(), View::Table(_)));
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("item  | cost | notes"), "{screen}");
+    assert!(screen.contains("rice  | 3    | dry, keep"), "{screen}");
+    press(&mut a, KeyCode::Right);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("cost | notes"), "{screen}");
+    assert!(!screen.contains("item |"), "{screen}");
+    press(&mut a, KeyCode::Esc);
+    assert!(matches!(a.view(), View::Files { .. }));
+
+    let show = |a: &mut App, name: &str| {
+        for _ in 0..10 {
+            press(a, KeyCode::Backspace);
+        }
+        type_text(a, name);
+        press(a, KeyCode::Enter)
+    };
+    // A PDF through pdftotext, an archive listed, never extracted.
+    show(&mut a, "manual");
+    assert!(
+        matches!(a.view(), View::Pager { text, .. } if text.contains("PDF TEXT of") && text.contains("manual.pdf"))
+    );
+    press(&mut a, KeyCode::Esc);
+    show(&mut a, "photos");
+    assert!(
+        matches!(a.view(), View::Pager { text, .. } if text.contains("inside.txt") && text.contains("nothing is extracted"))
+    );
+    press(&mut a, KeyCode::Esc);
+    // Anything else: details; F3 adds the SHA-256.
+    show(&mut a, "radio");
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { body, .. }) if body.contains("press F3")),
+        "{:?}",
+        a.modal
+    );
+    a.modal = None;
+    assert_eq!(press(&mut a, KeyCode::F(3)), Effect::None);
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { title, body, .. })
+        if title == "FILE DETAILS" && body.contains("SHA-256: ae4b3280e56e2faf83f414a6e3dabe9d5fbe18976544c05fed121accb85b53fc")),
+        "{:?}",
+        a.modal
     );
 }

@@ -44,13 +44,16 @@ test in docs/TESTING.md actually ran and passed (VM only so far).
 - ✅ User namespaces reviewed: refused to everyone on Ultra-Stable-only
   machines (live system), kept for the Nix sandbox elsewhere (ADR 0012)
 
-## Phase 3 — Productivity and knowledge 🟡
+## Phase 3 — Productivity and knowledge ✅
 - ✅ Nano, Vim, Midnight Commander, calculator, units, calendar, notes, handbook
 - ✅ Kiwix: `kiwix-serve` (127.0.0.1, one file) + lynx (restricted), links and full-text search tested (ADR 0013)
 - ✅ Resource packs: choose by category/language with sizes, download (resumable) or copy from USB, hash-pinned catalog, unprivileged store (ADR 0013)
-- ⬜ Read packs directly from a stick on the live system (no installation)
-- ⬜ First offline guides with provenance; man/NixOS docs pack
-- ⬜ Document viewing (pdftotext), CSV tool, file search in the TUI
+- ✅ Read packs directly from a stick (no installation; works on the live system), check them against the catalog
+- ✅ Suggested sets of packs (Essential, Field guides, Knowledge, Extended documentation, Complete; Geography waits for maps)
+- ✅ Built-in documentation pack: handbook, NixOS manual and options (searchable)
+- ✅ First offline guides with provenance: practical and health packs from named sources (catalog `source`, `license`, medical notice)
+- ✅ Manual pages from the TUI, less in secure mode, search of the manuals (ADR 0014)
+- ✅ Find & view files: name search, text, PDF (pdftotext), CSV/TSV table, archive listing, SHA-256 (ADR 0014)
 
 ## Phase 4 — Cryptography ⬜
 Guided age/minisign/GnuPG workflows, checksums, random data, key management;
@@ -72,6 +75,36 @@ MBTiles/GeoPackage storage, block-character renderer, place search, routing stud
 ## Phase 8 — Updates and installation ⬜
 Text installer, offline update bundles (`nix copy` + minisign manifest),
 signed pack verification, rollback tests, installation docs.
+
+### Planned for the final product: `build_resilience.sh` (requested 2026-11-14)
+A self-contained script that builds a custom ISO from answers to plain
+questions, for people who do not write Nix. Sketch:
+
+- Questions, each with a sensible default and an explanation:
+  - edition (minimal or standard);
+  - accounts, and the security mode of each;
+  - which account logs in automatically, if any;
+  - language and keyboard layout, time zone;
+  - Wi-Fi on or off;
+  - which resource packs, or suggested sets, to **put on the image**
+    ("Would you like to download Wikipedia?"), with sizes and the free
+    space needed;
+  - optional applications;
+  - where to write the ISO.
+- Writes the answers to a small generated Nix file (`custom.nix`, kept, so
+  the same image can be rebuilt or edited later), shows a summary to
+  confirm, then runs `nix build` for a `custom` configuration of the flake,
+  and prints where the ISO is and how to write it to a stick.
+- Requires only Nix with flakes. Never uses sudo; writing the ISO to a
+  stick is left to the user, with instructions. Checks free space first
+  (large packs make large images) and uses the pack catalog's pinned
+  hashes to fetch packs at build time (fixed-output downloads).
+- Packs on the image: either inside the squashfs (simple; image size grows)
+  or on a second partition of the stick (better for tens of GiB). This is
+  to be decided when it is built.
+- Passwords are never asked by the script or stored in the Nix files.
+  First-boot setup asks for them, or hashed passwords come from a file
+  outside the repository.
 
 ## Phase 9 — Audit and release ⬜
 Independent architecture and security reviews, `cargo deny`, license audit,

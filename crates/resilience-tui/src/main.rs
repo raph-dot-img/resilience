@@ -269,7 +269,7 @@ fn run_program(terminal: &mut DefaultTerminal, app: &mut App, req: &RunRequest) 
     let extra: Vec<&std::ffi::OsStr> = req.extra_args.iter().map(|p| p.as_os_str()).collect();
     let result = match &req.polkit_agent {
         Some(agent) => launch::run_with_polkit_agent(agent, &req.argv, &req.env),
-        None => launch::run_foreground(&req.argv, &extra, &req.env),
+        None => launch::run_foreground_env(&req.argv, &extra, &req.env, req.clean_env),
     };
     let failed = !matches!(&result, Ok(st) if st.success());
     if req.pause_after || failed {

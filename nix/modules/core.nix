@@ -141,6 +141,11 @@ let
     backup = "${cfg.package}/bin/resilience-backup";
     nmcli = "${lib.getBin config.networking.networkmanager.package}/bin/nmcli";
     library = "${cfg.package}/bin/resilience-library";
+    man = "${config.documentation.man.man-db.package}/bin/man";
+    apropos = "${config.documentation.man.man-db.package}/bin/apropos";
+    less = "${pkgs.less}/bin/less";
+    pdftotext = "${lib.getBin pkgs.poppler-utils}/bin/pdftotext";
+    bsdtar = "${lib.getBin pkgs.libarchive}/bin/bsdtar";
   };
 
   systemConfigUnchecked = toml.generate "resilience-system.toml" {

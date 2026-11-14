@@ -145,7 +145,7 @@ let
     set = cfg.sets;
     builtin = lib.optional cfg.builtinDocs {
       title = "System documentation (built in)";
-      description = "The Resilience handbook, the NixOS manual and every NixOS option of this system.";
+      description = "The Resilience handbook, the NixOS manual and the NixOS options of this NixOS release.";
       category = "documentation";
       language = "en";
       path = "${docsPack}/share/resilience/packs/resilience-system-docs.zim";

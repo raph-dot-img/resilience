@@ -15,6 +15,8 @@
   documentation = {
     enable = true;
     man.enable = true;
+    # The whatis database: "Manual pages" searches descriptions (man -k).
+    man.cache.enable = true;
     info.enable = false;
     doc.enable = false;
     nixos.enable = false;

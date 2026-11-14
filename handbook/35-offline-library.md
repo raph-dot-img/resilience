@@ -15,6 +15,19 @@ READING
   In the library, s searches the whole text of the selected pack.
   The browser cannot open web sites or start other programs.
 
+BUILT-IN DOCUMENTATION
+  "System documentation (built in)" is always there, even without packs:
+  this handbook, the NixOS manual and every NixOS setting. Press s on it
+  and type a word (for example "wifi" or "firewall") to search all of it.
+
+PACKS ON A USB STICK
+  Packs on a stick can be read without installing them. In the Offline
+  library press u, choose the stick and press Enter: its packs appear with
+  the label "USB stick". Press c to check that a pack is exactly the
+  expected file (this reads the whole file and takes a while for big
+  packs). A file that is not in this system's list cannot be checked: open
+  it only if you trust where it comes from.
+
 CHOOSING WHAT TO GET
   Open KNOWLEDGE & DOCUMENTATION > Resource packs. Every pack is listed
   with its size:
@@ -26,6 +39,9 @@ CHOOSING WHAT TO GET
   Then press:
     d   to download the ticked packs (an Internet connection is needed)
     u   to copy them from a USB stick instead
+  Not sure what to choose? Press s for suggested sets ("Essential",
+  "Field guides", ...). Enter ticks the packs of a set; you can still
+  untick some before pressing d or u.
   An administrator types their password once for the whole selection.
 
   Large packs take a long time: the complete English Wikipedia is about
