@@ -220,7 +220,7 @@ needlessly. Watch `free -h` during VM tests.
 Phase 0 (foundation) and Phase 1 (core) done; Phase 2 mostly done:
 privileged helper with set-mode, TUI Users & security modes, TUI Recovery &
 diagnostics, faillock (ADR 0007); removable media + encrypted backups (ADR
-0008, branch feat/phase2-backup). Remaining in Phase 2: more helper
+0008, merged into main). Remaining in Phase 2: more helper
 operations (Wi-Fi, time, default generation). See ROADMAP.md.
 Done: flake, modules, editions (minimal/standard), live ISO config, dev VM,
 TUI (main menu, status panel, categories, search, help, settings/themes,
