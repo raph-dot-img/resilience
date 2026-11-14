@@ -26,6 +26,25 @@ WHAT MODES DO AND DO NOT PROTECT
   disk; full-disk encryption (planned for the installer) addresses that.
 
 CHANGING A MODE
-  Only an administrator can change an account's mode, by changing the
-  system configuration (resilience.users.<name>.mode) and rebuilding. A
-  guided mode-change tool is planned; see ROADMAP.md.
+  SYSTEM MANAGEMENT > Users & security modes lists every account. Choose an
+  account, press Enter, and choose the new mode. The interface explains
+  what will change, then asks for confirmation. Cancel is preselected.
+
+  Next, an ADMINISTRATOR (an Advanced account) must type their own
+  password. Without it nothing changes, even if you are asking about your
+  own account. Every change is written to the audit log and stays in
+  effect after a restart.
+
+  - More rights apply the next time that person logs in.
+  - Fewer rights apply immediately: all of that account's sessions are
+    closed, including yours if you lowered your own mode.
+  - The account that logs in automatically always stays Ultra-Stable.
+  - The last administrator cannot be lowered, so the computer always keeps
+    someone who can repair it.
+
+  Administrators: type your password only on a screen you trust.
+
+TOO MANY WRONG PASSWORDS
+  After 5 wrong passwords within 15 minutes, the account is locked for
+  5 minutes. Wait, or ask an administrator to run
+  `faillock --user NAME --reset`.

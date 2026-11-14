@@ -1,6 +1,6 @@
 # ADR 0003 — Security modes are per-account group membership
 
-Status: accepted (2026-11-14); mode-change tooling pending (Phase 2)
+Status: accepted (2026-11-14); mode changes at runtime: see ADR 0007
 
 ## Context
 The spec requires three modes (Ultra-Stable, Stable, Advanced) that differ
@@ -35,11 +35,12 @@ modes for different people at once, and a system-wide mode cannot be both
 ## Mode switching (current and planned)
 - Now: an administrator edits `resilience.users.<name>.mode` and rebuilds.
   This is authorised (root), persistent and recorded in the system generation.
-- Phase 2: `resilience-admin` privileged helper (D-Bus/varlink service,
-  polkit `auth_admin`) exposing a typed `SetMode(user, mode)` operation,
-  with an append-only audit log and a re-login requirement.
+- Phase 2 (done, ADR 0007): `resilience-admin set-mode`, run through pkexec
+  with polkit `auth_admin`, recorded as a persistent override and audited.
+  It turned out simpler than a D-Bus/varlink service.
 
 ## Consequences
 + Modes are testable as OS facts (tests/vm/modes.nix).
 − With `users.mutableUsers = true` (needed so users can `passwd`), group
-  changes made outside Nix may be reverted at activation — intended.
+  changes made outside Nix are reverted at activation; the helper re-applies
+  its recorded overrides right after (ADR 0007).

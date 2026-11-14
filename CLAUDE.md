@@ -26,19 +26,26 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │            core.nix        options: resilience.{edition,apps,probe,package...}
    │                            generates /etc/resilience/{system,apps}.toml
    │                            (build fails if an app command is not executable)
+   │            admin.nix       privileged helper: /etc/resilience/admin.toml, polkit
+   │                            action org.resilience.admin.set-mode (auth_admin),
+   │                            tmpfiles for state/audit, activation `apply-state`
    │            users.nix       resilience.users.<n>.mode -> groups, login shell,
    │                            nix allowed-users
    │            interface.nix   getty branding, console font ter-i16n, tty1-only
    │                            autologin via getty@tty1 drop-in (NOT services.getty.autologinUser)
-   │            security.nix    sudo (wheel+password), sysctls, no ssh, no phoning home
+   │            security.nix    sudo (wheel+password), pam_faillock, sysctls, no ssh
    │            networking.nix  NetworkManager (no connectivity check), firewall, no NTP
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
    ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
    ├─ packages: resilience, resilience-session, resilience-handbook, iso, iso-minimal, vm
-   └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, eval-live-iso
+   └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
+              security-invariants, eval-live-iso
 
 crates/resilience-core  library: status, network (passive + on-demand probe),
-                        mode detection, catalog, config, handbook, notes, launch, proc
+                        mode detection, catalog, config, handbook, notes, launch, proc,
+                        admin (pure mode-change rules), recovery (generations, report)
+crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR 0007):
+                        list | set-mode USER MODE | apply-state
 crates/resilience-tui   binary `resilience`: app.rs (state machine, returns Effects),
                         ui.rs (rendering), theme.rs, help.rs, tests.rs
 nix/packages/resilience-session  login shell: runs TUI, restarts after crash, refuses -c
@@ -49,6 +56,13 @@ tests/vm/*.nix          NixOS VM tests (QEMU/KVM via nix build .#checks...)
 Runtime flow: getty (tty1 autologin or login prompt) → login shell
 `resilience-session` → `resilience` TUI → programs launched with fixed argv
 (never via a shell) → back to TUI. tty2–tty6 always offer normal logins.
+
+Mode change flow: TUI Users screen → consequences + confirm (Cancel default)
+→ `pkttyagent` registered for the TUI pid + `pkexec <helper> set-mode U M`
+(SHELL set to the session shell: pkexec rejects nologin) → admin password →
+helper validates, writes /var/lib/resilience/modes.toml, gpasswd, audit log,
+terminates sessions on demotion. Activation (`users` resets groups) →
+`resilienceModes` script → `apply-state` re-applies overrides.
 
 ## 3. Directory structure
 
@@ -97,6 +111,9 @@ it concurrently with VM tests.
 
 - VM tests read the screen through `/dev/vcsuN` (helper `tty_text`/`wait_tty`
   in each test): the driver's `get_tty_text()` mis-decodes CP437 glyphs.
+  Long TUI texts wrap: wait for short fragments.
+- pkexec in VM tests: run it under `setsid -w` when no agent is wanted,
+  otherwise its text agent writes into the driver's terminal protocol.
 - ISO: `python3 -I tests/iso/smoke.py ISO OUTDIR [--uefi OVMF.fd]` takes
   screenshots; look at them (the Read tool displays PNGs).
 - Rust: `cargo test` (unit + TUI behaviour via ratatui TestBackend) and
@@ -131,8 +148,12 @@ Commit trailers: `Co-Authored-By: Claude …` as instructed by the session.
 
 - Modes are OS privileges (groups), never UI flags. Hidden menus are not a boundary.
 - The TUI never builds shell commands; programs run from fixed argv.
-- No privileged command runner. Future privileged actions: a narrow typed
-  helper behind polkit (Phase 2), validating every argument server-side.
+- No privileged command runner. Privileged actions go only through
+  `resilience-admin`: one sub-command + one polkit action (auth_admin, never
+  _keep) per operation, every argument validated in the helper, absolute tool
+  paths from root-owned admin.toml, environment ignored, every outcome
+  audited (/var/log/resilience/audit.log + journal). Add new operations the
+  same way (pure rule in resilience-core/admin.rs + unit tests + vm-admin).
 - No secrets in Git, Nix expressions, the Nix store, logs or world-readable temp files.
 - No cryptography of our own. Use age, minisign, GnuPG, cryptsetup, OpenSSL.
 - No background network traffic. The Internet probe runs only on user request,
@@ -180,7 +201,10 @@ needlessly. Watch `free -h` during VM tests.
 
 ## 14. Current implementation status (2026-11-14)
 
-Phase 0 (foundation) and Phase 1 (core) — see ROADMAP.md for detail.
+Phase 0 (foundation) and Phase 1 (core) done; Phase 2 mostly done (branch
+`feat/phase2-admin-helper`): privileged helper with set-mode, TUI Users &
+security modes, TUI Recovery & diagnostics, faillock, ADR 0007. Remaining in
+Phase 2: user-data backups, more helper operations. See ROADMAP.md.
 Done: flake, modules, editions (minimal/standard), live ISO config, dev VM,
 TUI (main menu, status panel, categories, search, help, settings/themes,
 notes, handbook, network diagnostics, system status, notifications, power and
@@ -191,20 +215,25 @@ See docs/TESTING.md for what has actually been executed and passed.
 ## 15. Known bugs and limitations
 
 - No installer yet; the ISO is live-only and has no admin account (by design).
-- Mode switching is declarative only (edit config + rebuild as admin);
-  no guided tool or audit log yet (Phase 2).
+- Mode changes need an Advanced account to authorise; the live ISO has none,
+  so modes cannot be changed there (by design).
+- pkexec's built-in text agent fails on success with NixOS 26.05's
+  socket-activated polkit helper ("No session for cookie"); always register
+  `pkttyagent` first (launch::run_with_polkit_agent).
+- Making an older generation the permanent default is not implemented
+  (boot menu only). No user-data backup tool yet.
 - Ultra-Stable restrictions on launched programs rely on restricted modes of
   those programs; they are usability measures, not a sandbox.
-- Emergency/rescue shell requires root, which is locked: recovery today is
-  "boot a previous generation" or the live ISO. Phase 2 must design this.
+- Emergency/rescue shell requires root, which is locked, by design: layered
+  recovery (TUI Recovery, other ttys + Advanced/sudo, generations, live ISO).
 - No resource packs, Kiwix, maps, crypto workflows, comms or SDR yet.
 - Power profiles not implemented (schedutil governor only). Not measured yet.
 - Not tested on physical hardware.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Next: Phase 2 (privileged helper + polkit, mode-change tool
-with audit log, recovery access, backups), then Phase 3 (Kiwix, resource packs).
+See ROADMAP.md. Next: finish Phase 2 (encrypted user-data backups with
+removable media, Wi-Fi/time helper operations), then Phase 3 (Kiwix, resource packs).
 
 ## 17. Important decisions (docs/decisions/)
 
@@ -214,6 +243,7 @@ with audit log, recovery access, backups), then Phase 3 (Kiwix, resource packs).
 - 0004 Offline-first networking: passive detection, explicit probe only
 - 0005 Application catalog generated by Nix, verified at build time
 - 0006 Session model: login shell wrapper, autologin only for ultra-stable
+- 0007 Privileged helper (pkexec + typed ops), persistent mode overrides, audit, recovery layers
 
 ## 18. How to continue safely
 

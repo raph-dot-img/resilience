@@ -1,6 +1,6 @@
 # Threat model
 
-Version 0.1 (2026-11-14). Reviewed whenever a security-relevant feature is
+Version 0.2 (2026-11-14, Phase 2: privileged helper). Reviewed whenever a security-relevant feature is
 added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 
 ## 1. What we protect
@@ -44,9 +44,9 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 | T1 | Beginner deletes or corrupts system files | Ultra-Stable has no write access outside home; Nix store read-only; no sudo | Implemented (vm-modes) |
 | T2 | Beginner reaches a shell and runs damaging commands | No shell entry; login shell refuses `-c`; `$SHELL=nologin` for program escapes; **even with a shell, no privileges** | Implemented (vm-modes, vm-boot-offline) |
 | T3 | Ultra-Stable user installs or builds software, fills disk via Nix | Nix daemon refuses non-allowed users | Implemented (vm-modes) |
-| T4 | Privilege escalation via the TUI | TUI runs unprivileged; no privileged helper exists yet; no command construction; power actions via logind policy with `--no-ask-password` | Implemented |
+| T4 | Privilege escalation via the TUI | TUI runs unprivileged; no command construction; power actions via logind policy with `--no-ask-password`; the only privileged path is `pkexec resilience-admin set-mode`, which needs an administrator's password every time | Implemented (vm-admin) |
 | T5 | Stable user changes system configuration | No sudo; /etc and store read-only; polkit denies unit management | Implemented (vm-modes) |
-| T6 | Advanced user's password guessed by another local user | sudo requires the Advanced user's password; rate limiting via PAM faillock | Partly (faillock not configured yet) |
+| T6 | Advanced user's password guessed by another local user | sudo/polkit require the Advanced user's password; pam_faillock on login, su, sudo, polkit-1 (5 failures / 15 min → 5 min lock) | Implemented (vm-admin, security-invariants) |
 | T7 | Root login | Root password locked ("!"), no SSH | Implemented (security-invariants) |
 | T8 | Users read each other's files | Home directories mode 0700 (NixOS default); notes and settings created 0600 | Implemented (vm-modes, unit tests) |
 | T9 | Background network traffic leaks presence/metadata | No NTP, no NM connectivity check, no update checks; probe only on keypress, configurable targets | Implemented (security-invariants, vm-boot-offline `ss` check) |
@@ -58,13 +58,20 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 | T15 | Malicious resource pack or offline update | minisign signature verification against pinned keys before extraction; extraction in a private staging dir; no symlinks/absolute paths | Planned (Phase 3/8) |
 | T16 | Kernel info leaks / ptrace abuse | sysctls: kptr_restrict, dmesg_restrict, ptrace_scope=1, unprivileged BPF off, kexec off | Implemented (config) |
 | T17 | Physical access bypass | Out of scope without FDE; installer will offer LUKS | Documented |
-| T18 | Recovery needs root but root is locked | Previous generations; live ISO. Rescue design pending | **Open** (Phase 2) |
+| T18 | Recovery needs root but root is locked | Layered recovery without a root password (ADR 0007): TUI Recovery section, other consoles + Advanced account with sudo, earlier generations, live ISO; installer must create an Advanced account | Designed; Recovery section tested (unit/TUI); installed-system path NOT TESTED (no installer) |
+| T19 | Abuse of the privileged helper (argument injection, unmanaged accounts, lock-out of all admins, privileges kept after demotion) | Fixed sub-commands; every argument validated in the helper; only accounts in `resilience.users`; only the three mode groups touched; absolute tool paths from root-owned config, environment ignored; last administrator protected; autologin stays Ultra-Stable; demotion terminates sessions; refusal on corrupt state | Implemented (vm-admin, unit tests) |
+| T20 | Unaudited security-sensitive changes | Append-only logfmt audit log (root:wheel 0640) + journal (authpriv) for every set-mode/apply-state outcome; polkit logs denied authorisations | Implemented (vm-admin) |
+| T21 | Fake password prompt captures an administrator's password in another user's session | Inherent to "over-the-shoulder" authorisation; Ultra-Stable sessions cannot run arbitrary programs; handbook tells administrators to authorise only on a trusted screen | Accepted risk, documented |
+| T22 | Mode overrides silently reverted or stale | Recorded overrides re-applied after every activation; overrides older than a changed Nix declaration are dropped and audited | Implemented (vm-admin reboot test; staleness: unit tests) |
 
 ## 5. Known gaps (honest list)
 
-- No privileged helper yet, so Ultra-Stable users cannot do safe administrative
-  tasks (join Wi-Fi, change time) through the TUI. Stable users use `nmtui`.
-- No PAM faillock configuration, no audit log of security-sensitive changes.
+- The privileged helper offers only `set-mode` so far: Ultra-Stable users
+  cannot yet join Wi-Fi or set the time through the TUI. Stable users use `nmtui`.
+- The audit log is append-only by convention (root writes with O_APPEND);
+  root can still edit it. No remote/WORM log copy.
+- pkexec is setuid and its generic action allows any program with an
+  administrator's password (equivalent to that administrator's sudo).
 - No full-disk encryption (no installer yet). No Secure Boot integration.
 - Launched third-party programs may contain their own shell escapes; this
   is acceptable only because accounts have no privileges (T2).

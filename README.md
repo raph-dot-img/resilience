@@ -33,7 +33,11 @@ works at 80×24, without colour, and on modest hardware.
 - Main menu, live status panel (system health, mode, network, battery,
   storage, memory), search, context help, four themes including Monochrome.
 - Three security modes enforced by the operating system (groups, sudo,
-  Nix daemon access) — not by hidden menus.
+  Nix daemon access) — not by hidden menus. Modes can be changed from the
+  interface with an administrator's password; every change is audited and
+  survives reboots.
+- Recovery section: system health, failed services, earlier system
+  generations, exportable diagnostic report, emergency guide.
 - Offline handbook, private notes, network diagnostics with an opt-in,
   time-limited Internet probe, system status report, notification history.
 - Launcher for verified text-mode programs (editors, file manager,

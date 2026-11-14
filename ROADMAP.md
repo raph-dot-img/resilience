@@ -22,12 +22,19 @@ test in docs/TESTING.md actually ran and passed (VM only so far).
 - ✅ Three modes as real privileges (groups, sudo, Nix daemon, polkit defaults)
 - ✅ Account separation, private homes, locked root, permission VM tests
 - ✅ Evaluation-time security invariants
-- ⬜ `resilience-privileged`: typed polkit-authorised helper (set mode, Wi-Fi,
-  time, pack import) with server-side validation and audit log
-- ⬜ Guided mode switching with administrator authentication and re-login
-- ⬜ Recovery access design for locked root (rescue target / recovery key)
-- ⬜ PAM faillock; review `unprivileged_userns_clone` for Ultra-Stable machines
-- ⬜ Backup/restore of user data (age-encrypted, external media)
+- ✅ `resilience-admin`: typed helper (`set-mode`), polkit `auth_admin`
+  every time, server-side validation, audit log + journal (ADR 0007)
+- ✅ Guided mode switching in the TUI: consequences, confirmation
+  (Cancel default), administrator password, persistence across reboots,
+  sessions closed on demotion, new rights at next login
+- ✅ Recovery access design for locked root (layered, ADR 0007); TUI Recovery
+  section: health, failures, recent errors, generations, diagnostic report,
+  emergency guide
+- ✅ PAM faillock (login, su, sudo, polkit)
+- ⬜ Further helper operations: Wi-Fi, time, make a generation the default
+- ⬜ Backup/restore of user data (age-encrypted, external media; needs
+  removable-media mounting via udisks2)
+- ⬜ Review `unprivileged_userns_clone` for Ultra-Stable-only machines
 
 ## Phase 3 — Productivity and knowledge 🟡
 - ✅ Nano, Vim, Midnight Commander, calculator, units, calendar, notes, handbook

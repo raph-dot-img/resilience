@@ -13,7 +13,10 @@ Version 0.1.0. Decisions and their rationale live in `docs/decisions/`.
 │   ui.rs rendering   help.rs   theme.rs                                │
 ├──────────────────────────────────────────────────────────────────────┤
 │ resilience-core (Rust library)                                        │
-│   status  network  mode  catalog  config  handbook  notes  launch proc│
+│   status network mode catalog config handbook notes launch proc       │
+│   admin (pure mode-change rules)  recovery (generations, report)      │
+├──────────────────────────────────────────────────────────────────────┤
+│ resilience-admin (root, via pkexec/sudo/activation) — typed ops only  │
 ├──────────────────────────────────────────────────────────────────────┤
 │ resilience-session (login shell) — restart on crash, refuse -c        │
 ├──────────────────────────────────────────────────────────────────────┤
@@ -45,11 +48,24 @@ nix/modules/*.nix ──(nixos-rebuild / ISO build)──► /etc/resilience/sys
 resilience.apps.<id> ─(build-time executable check)► /etc/resilience/apps.toml
 handbook/*.md ───────► /run/current-system/sw/share/resilience/handbook
 user preferences ────► ~/.config/resilience/settings.toml   (0600, theme only)
+resilience.users ────► /etc/resilience/admin.toml (helper config, root-owned)
+mode changes ────────► /var/lib/resilience/modes.toml (root, 0644; overrides)
+audit ───────────────► /var/log/resilience/audit.log (root:wheel 0640) + journal
+diagnostic report ───► ~/Diagnostics/resilience-report-*.txt (0600)
 TUI log ─────────────► ~/.local/state/resilience/tui.log    (rotated at 1 MiB)
 ```
 The TUI only *reads* system files. Anything that changes the system goes
-through Nix (today: an administrator rebuilding; later: a typed privileged
-helper — see §6).
+through Nix (an administrator rebuilding) or through the typed privileged
+helper `resilience-admin` (ADR 0007):
+
+```
+TUI ──confirm──► pkttyagent (user) + pkexec resilience-admin set-mode U M
+                     │ polkit org.resilience.admin.set-mode: auth_admin (wheel password)
+                     ▼
+               resilience-admin (root): validate → modes.toml → gpasswd → audit
+                                         → loginctl terminate-user (demotion)
+boot/switch: activation `users` resets groups → `resilienceModes` → apply-state
+```
 
 ## 4. Security modes
 
@@ -74,7 +90,8 @@ only, bounded by timeouts, skipped without a route (ADR 0004).
 
 | Component | Phase | Sketch |
 |---|---|---|
-| `resilience-privileged` | 2 | systemd service exposing typed operations over varlink/D-Bus (SetMode, ConnectWifi, SetTime, ImportPack, ApplyUpdate), polkit-authorised, audit-logged, every argument validated server-side |
+| More `resilience-admin` operations | 2–8 | ConnectWifi, SetTime, ImportPack, ApplyUpdate, SetDefaultGeneration: one polkit action each, same validation/audit pattern |
+| User-data backup | 2/4 | age-encrypted archives of the home directory on external media, verify, restore into a new folder |
 | `resilience-resource-manager` | 3 | discover/verify (minisign)/install/remove TAR+zstd packs with manifests on external media |
 | Kiwix integration | 3 | `kiwix-serve` on 127.0.0.1 + text browser, or a native ZIM reader |
 | Crypto workflows | 4 | guided age/minisign/GnuPG operations, secrets via stdin/fd |

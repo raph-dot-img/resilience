@@ -4,7 +4,7 @@ Every result below is **PASS**, **FAIL**, **BLOCKED** or **NOT TESTED**.
 A test is only PASS if it was actually executed. "VM" means QEMU/KVM on the
 development host — **no test has been run on physical hardware**.
 
-Last full run: 2026-11-14 on the commit that added this file (`docs: complete Phase 0/1 documentation…`), nixpkgs `f1e5c356`. ISO SHA-256 of that build: `d8e0335c…3e2f6f` (not reproducible bit-for-bit yet: not verified).
+Last full run: 2026-11-14 on branch `feat/phase2-admin-helper` (Phase 2: privileged helper, Users & modes, Recovery), nixpkgs `f1e5c356`. ISO SHA-256 of that build: `3d28aeb2…a9f591` (bit-for-bit reproducibility not verified).
 
 ## How to run
 
@@ -15,11 +15,11 @@ Last full run: 2026-11-14 on the commit that added this file (`docs: complete Ph
 | Screen dump for review | `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` | ~2 s |
 | Evaluate everything | `nix flake check --no-build` | ~30 s |
 | Everything incl. VM tests | `nix flake check -L --max-jobs 1` | ~5 min cold |
-| One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` | ~1–2 min |
+| One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-boot-offline`) | ~1–2 min |
 | ISO boot smoke test | `nix build .#iso -o result-iso && python3 -I tests/iso/smoke.py result-iso/iso/*.iso /tmp/shots [--uefi OVMF.fd]` | ~2 min |
 
 Always pass `--max-jobs 1` to `nix flake check` on the 12 GB development
-host so the two VM tests never run at the same time.
+host so the VM tests never run at the same time.
 
 VM tests read the console through `/dev/vcsuN` (UTF-32) instead of the test
 driver's `get_tty_text()`: the latter decodes 8-bit glyph indices as UTF-8,
@@ -31,8 +31,8 @@ which corrupts text next to box-drawing characters with our console font.
 
 | Suite | Tests | Result |
 |---|---|---|
-| resilience-core: mode, status, network, catalog, config, handbook, notes, launch, proc | 40 | PASS |
-| resilience-tui: navigation, rendering 80×24…200×60, modes, restricted commands, missing programs, confirmations, Ctrl-C, handbook, search, notes, themes, shell gating, wrapping, console glyphs | 17 | PASS |
+| resilience-core: mode, status, network, catalog, config, handbook, notes, launch (incl. env overrides, polkit agent ordering), proc, admin (names, modes, config, refusals, overrides/staleness, group ops, audit lines, timestamps), recovery (generations, report files) | 57 | PASS |
+| resilience-tui: navigation, rendering 80×24…200×60, modes, restricted commands, missing programs, confirmations, Ctrl-C, handbook, search, notes, themes, shell gating, wrapping, console glyphs; Users & modes (consequences, Cancel default, fixed pkexec argv + SHELL + agent, refusals, no administrator, corrupt config); Recovery (health, generations, guide, report 0600 / no overwrite) | 26 | PASS |
 | `cargo clippy --all-targets` | — | PASS (0 warnings) |
 
 ### Nix
@@ -41,8 +41,9 @@ which corrupts text next to box-drawing characters with our console font.
 |---|---|
 | Flake evaluation (`nix flake check --no-build`) | PASS |
 | `eval-live-iso`: live-standard, live-minimal, dev-vm evaluate | PASS |
-| `security-invariants`: 12 invariants × 3 configurations | PASS |
+| `security-invariants`: 16 invariants × 3 configurations | PASS |
 | Invariant checker rejects a deliberately broken configuration (ssh on, root password) | PASS (manual, once) |
+| Invariant checker rejects a privileged autologin account and an extra polkit admin identity | PASS (manual, once; this found that the autologin invariant had been vacuous) |
 | Build-time catalog check (every app command executable) | PASS (part of every system build) |
 | ISO derivation builds (standard) | PASS — 1.48 GB |
 | ISO derivation builds (minimal) | NOT TESTED (evaluates only) |
@@ -80,12 +81,28 @@ which corrupts text next to box-drawing characters with our console font.
 | TUI on tty3 as Stable: terminal shell offered, runs as the user, returns | PASS |
 | Root password locked | covered by `security-invariants` (test VMs deliberately unlock root) |
 
+### VM: `vm-admin` — privileged helper (ADR 0007), driven through the TUI
+
+| Check | Result |
+|---|---|
+| Audit log root:wheel 0640 in 0750 dir; unreadable by Ultra-Stable/Stable, readable by Advanced; state not writable by users; polkit action installed | PASS |
+| `resilience-admin list` works for any user; `set-mode` without root exits 77 (Ultra-Stable and Advanced) | PASS |
+| pkexec with no authentication agent: refused, nothing changes, nothing audited as ok | PASS |
+| Server-side refusals: unmanaged account (root), invalid names (`bob;id`, `../carol`), unknown modes (`root`, `Advanced`), last administrator, autologin account, no-op; extra argument → usage (64); 8 refusals audited | PASS |
+| TUI (Ultra-Stable on tty1): wrong administrator password → polkit refuses, groups unchanged | PASS |
+| TUI: correct administrator password → bob promoted, polkit action `org.resilience.admin.set-mode` shown, audit + journal entry with caller=alice, state recorded | PASS |
+| New rights at next login (bob's TUI shows ADVANCED) | PASS |
+| Demotion terminates all of the account's sessions; returning to the declared mode removes the override | PASS |
+| Recorded override survives a reboot (re-applied after activation, audited) | PASS |
+| pam_faillock: 5 wrong sudo passwords lock the account (correct password refused); `faillock --reset` unlocks | PASS |
+| Override dropped when the Nix declaration changes | unit tests only (needs a second system configuration in the VM) |
+
 ### ISO boot (`tests/iso/smoke.py`, screenshots reviewed by a human/agent)
 
 | Firmware | Result |
 |---|---|
-| Legacy BIOS (SeaBIOS, syslinux) — boots to TUI, offline, menus render | PASS |
-| UEFI (OVMF from pinned nixpkgs, GRUB text mode) — boots to TUI | PASS |
+| Legacy BIOS (SeaBIOS, syslinux) — boots to TUI, offline, menus render, system OPERATIONAL | PASS (re-run with Phase 2 build) |
+| UEFI (OVMF from pinned nixpkgs, GRUB text mode) — boots to TUI | PASS (Phase 0/1 build; not re-run for Phase 2) |
 | Physical hardware | NOT TESTED |
 
 ### Measurements (VM, 2 vCPU, 1.5–2 GiB RAM; reported, not asserted)
@@ -114,3 +131,5 @@ which corrupts text next to box-drawing characters with our console font.
 | 12 | Verify an offline update bundle | BLOCKED — Phase 8 |
 | 13 | Communicate across a local network | BLOCKED — Phase 6 |
 | — | Installer, rollback to previous generation | BLOCKED — no installer yet |
+| — | Recovery section with real generations; diagnostic report on a real system | NOT TESTED in VM (unit/TUI tests with fake profiles only) |
+| — | Backup / restore of user data | BLOCKED — not implemented |

@@ -15,6 +15,9 @@ activity as known on 2026-11-14; re-check before each release.
 | systemd | 260.5 | LGPL-2.1+ | https://systemd.io | yes | init, logind, journald |
 | NetworkManager (nmtui) | 1.56.0 | GPL-2.0+ | https://networkmanager.dev | yes (LAN) | connectivity check disabled; app `nmtui` (Stable+) |
 | sudo | (nixpkgs) | ISC | https://www.sudo.ws | yes | wheel only, password |
+| polkit (pkexec, pkttyagent) | 127 | LGPL-2.0+ | https://github.com/polkit-org/polkit | yes | authorises `resilience-admin set-mode` (auth_admin); text agent on the console |
+| Linux-PAM (pam_faillock, faillock) | 1.7.2 | BSD-3-Clause | https://github.com/linux-pam/linux-pam | yes | rate limiting on login, su, sudo, polkit-1 |
+| shadow (gpasswd) | 4.19.4 | BSD-3-Clause | https://github.com/shadow-maint/shadow | yes | group changes by `resilience-admin` |
 | Terminus console font | (nixpkgs) | OFL-1.1 | https://terminus-font.sourceforge.net | yes | `ter-i16n` |
 | GNU nano | 9.3 | GPL-3.0+ | https://nano-editor.org | yes | editor (Stable+), notes editor (`--restricted` for Ultra-Stable) |
 | Vim | 9.2.1252 | Vim | https://www.vim.org | yes | Stable+ |

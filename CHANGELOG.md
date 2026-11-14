@@ -5,6 +5,32 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `resilience-admin`, the privileged helper (ADR 0007): `list`, `set-mode`,
+  `apply-state`; polkit action `org.resilience.admin.set-mode` (auth_admin),
+  server-side validation, persistent overrides re-applied after activation,
+  audit log `/var/log/resilience/audit.log` + journal.
+- TUI: *Users & security modes* (view all accounts, change a mode with
+  consequences, confirmation and administrator password) and *Recovery &
+  diagnostics* (health, failures, recent errors, generations, diagnostic
+  report export, emergency guide).
+- VM test `vm-admin`; security invariants for polkit admins, faillock and the
+  helper configuration.
+
+### Security
+- PAM faillock on login, su, sudo and polkit-1 (5 failures / 15 min → 5 min).
+- Demoting an account terminates its sessions.
+
+### Fixed
+- The security invariant "autologin account is not privileged" read
+  `services.getty.autologinUser`, which is unused since autologin moved to the
+  tty1 drop-in, so it could never fail; it now checks
+  `resilience.interface.autologinUser`, and a new invariant keeps the getty
+  option unset.
+- pkexec could not complete a successful authentication on a text console
+  (socket-activated polkit helper, upstream polkit issue 17); the TUI now
+  registers `pkttyagent` for itself before running pkexec.
+
 ## [0.1.0] — 2026-11-14 — Phase 0 + Phase 1 prototype
 
 ### Security

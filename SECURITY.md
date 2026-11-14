@@ -16,10 +16,14 @@ safety-critical use.
 - Modes are OS privileges (groups, sudo, polkit, Nix daemon), never UI flags.
   See docs/decisions/0003-security-modes.md.
 - The interface never builds shell commands and never runs privileged code.
+  The only privileged entry point is `resilience-admin`, with fixed typed
+  operations, polkit `auth_admin` (administrator password every time),
+  server-side validation and an audit log (docs/decisions/0007-privileged-helper.md).
 - No background network traffic; no listening services by default.
 - No custom cryptography: only established tools (age, minisign, GnuPG,
   cryptsetup, OpenSSL).
 - Root is locked; administration only through sudo with a password.
+  Password guessing is rate-limited by pam_faillock.
 - Invariants are checked on every `nix flake check`
   (tests/eval/security-invariants.nix).
 
