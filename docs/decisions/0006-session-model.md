@@ -5,6 +5,10 @@ Status: accepted (2026-11-14)
 ## Decision
 - getty on tty1–tty6. tty1 may autologin **only** an Ultra-Stable account
   (assertion), e.g. the live ISO's locked-password `resilience` user.
+  `services.getty.autologinUser` is deliberately **not** used: NixOS applies
+  it to every getty (tty1–6 and serial consoles), which would remove the
+  recovery login prompts. A `getty@tty1` drop-in adds `--autologin` to tty1
+  only (found while testing the dev VM; covered by vm-boot-offline).
 - Login shell `resilience-session` (bash script, `nounset`/`pipefail`, not `-e`):
   refuses arguments, requires a TTY, sets `$SHELL` by mode, runs the TUI and
   on a non-zero exit shows a diagnostic screen and restarts after Enter, with

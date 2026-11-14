@@ -28,7 +28,8 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            (build fails if an app command is not executable)
    │            users.nix       resilience.users.<n>.mode -> groups, login shell,
    │                            nix allowed-users
-   │            interface.nix   getty branding, console font, tty1 autologin option
+   │            interface.nix   getty branding, console font ter-i16n, tty1-only
+   │                            autologin via getty@tty1 drop-in (NOT services.getty.autologinUser)
    │            security.nix    sudo (wheel+password), sysctls, no ssh, no phoning home
    │            networking.nix  NetworkManager (no connectivity check), firewall, no NTP
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
@@ -72,8 +73,10 @@ Runtime flow: getty (tty1 autologin or login prompt) → login shell
 - Rust stable (host: 1.98 via rustup; Nix build: nixpkgs rustc). ratatui 0.30 (crossterm
   backend, re-exported as `ratatui::crossterm` — do not add a separate crossterm dep),
   serde + toml, tracing, thiserror, libc. **No tokio**: threads + timeouts suffice.
-- Only the 8 basic ANSI colours (Linux console has no 256/RGB). Box drawing and
-  `█▀▄` only (present in the console font `ter-v16n`).
+- Only the 8 basic ANSI colours (Linux console has no 256/RGB). Non-ASCII
+  glyphs limited to `▀▄█═║╔╗╚╝─│┌┐└┘░▒▓` (console font `ter-i16n`, CP437
+  repertoire, 256 glyphs so the VT keeps 16 colours). Enforced by the test
+  `only_console_font_glyphs_are_drawn`. ter-v16n lacks ▀▄ and double lines.
 - See `docs/COMPONENTS.md` for every third-party component, version and license.
 
 ## 5. Build
@@ -92,6 +95,10 @@ it concurrently with VM tests.
 
 ## 6. Tests
 
+- VM tests read the screen through `/dev/vcsuN` (helper `tty_text`/`wait_tty`
+  in each test): the driver's `get_tty_text()` mis-decodes CP437 glyphs.
+- ISO: `python3 -I tests/iso/smoke.py ISO OUTDIR [--uefi OVMF.fd]` takes
+  screenshots; look at them (the Read tool displays PNGs).
 - Rust: `cargo test` (unit + TUI behaviour via ratatui TestBackend) and
   `cargo clippy --all-targets` must be clean. `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` prints screens.
 - Nix/VM: `nix flake check` runs everything including VM tests.

@@ -36,8 +36,25 @@ in
       }
     ];
 
+    # services.getty.autologinUser would autologin on EVERY getty (tty1-6
+    # and serial consoles), removing the recovery login prompts. Instead,
+    # tty1 alone gets a drop-in that adds --autologin; the arguments mirror
+    # nixos/modules/services/ttys/getty.nix.
+    systemd.services."getty@tty1" = lib.mkIf (cfg.autologinUser != null) {
+      overrideStrategy = "asDropin";
+      serviceConfig.ExecStart = [
+        ""
+        (lib.concatStringsSep " " [
+          (lib.getExe' pkgs.util-linux "agetty")
+          "--login-program ${config.services.getty.loginProgram}"
+          "--issue-file /etc/issue:/etc/issue.d:/run/issue:/run/issue.d"
+          "--autologin ${lib.escapeShellArg cfg.autologinUser}"
+          "--noclear --keep-baud tty1 115200,38400,9600 $TERM"
+        ])
+      ];
+    };
+
     services.getty = {
-      autologinUser = cfg.autologinUser;
       greetingLine = ''
         \e[1;32m
          █▀█ █▀▀ █▀ █ █   █ █▀▀ █▄ █ █▀▀ █▀▀

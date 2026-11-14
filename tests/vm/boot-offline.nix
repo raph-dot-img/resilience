@@ -71,6 +71,14 @@
         wait_tty("1", "ULTRA-STABLE")
         machine.screenshot("home")
 
+    with subtest("autologin is limited to tty1; tty2 offers a login prompt"):
+        machine.send_key("alt-f2")
+        wait_tty("2", "login: ")
+        print(machine.succeed("loginctl list-sessions --no-legend"))
+        machine.fail("loginctl list-sessions --no-legend | grep -qw tty2")
+        machine.send_key("alt-f1")
+        wait_tty("1", "MAIN MENU")
+
     with subtest("status CLI agrees"):
         out = machine.succeed("runuser -u alice -- resilience status")
         print(out)

@@ -34,3 +34,4 @@ secrets/
 *.swp
 .idea/
 .vscode/
+resilience-dev.qcow2
