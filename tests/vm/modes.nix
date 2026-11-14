@@ -94,6 +94,9 @@
 
     with subtest("stable: Nix daemon yes, sudo no, system configuration no"):
         machine.succeed(as_user("bob", "nix store info"))
+        # Machines with Stable or Advanced accounts keep user namespaces
+        # (Nix build sandbox, ADR 0012).
+        machine.succeed("test \"$(cat /proc/sys/user/max_user_namespaces)\" -gt 0")
         machine.fail(as_user("bob", "sudo -n true"))
         machine.fail(as_user("bob", "echo bob-pw | sudo -S true"))
         machine.fail(as_user("bob", "touch /etc/resilience/x"))

@@ -68,6 +68,17 @@ let
           !c.services.udisks2.enable || !c.services.udisks2.mountOnMedia;
         "backup tool has no privileges" =
           !(c.security.wrappers ? resilience-backup) && !(c.security.wrappers ? resilience);
+        # ADR 0012: an Ultra-Stable-only machine refuses user namespaces.
+        "user namespaces are off when every account is Ultra-Stable" =
+          !(
+            lib.all (u: u.mode == "ultra-stable") (lib.attrValues c.resilience.users)
+            && lib.all (n: c.resilience.users ? ${n}) (lib.attrNames humans)
+          )
+          || (
+            (c.boot.kernel.sysctl."user.max_user_namespaces" or null) == 0
+            # Read by admin.nix as `ultra_stable_only` in admin.toml.
+            && !c.resilience.security.userNamespaces
+          );
         "autologin account is not privileged" =
           autologin == null
           || lib.intersectLists [ "wheel" "resilience-stable" ] c.users.users.${autologin}.extraGroups == [ ];

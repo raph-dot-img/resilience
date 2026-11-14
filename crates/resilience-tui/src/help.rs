@@ -77,9 +77,11 @@ pub fn lines(topic: HelpTopic, mode: Mode) -> Vec<String> {
         HelpTopic::Recovery => &[
             "== RECOVERY ==",
             "  1-4 / Enter            Open the selected item",
-            "  Nothing in this section changes the system or your files.",
-            "  A system rollback (earlier generation, chosen in the boot menu) never touches",
-            "  your personal files; restoring files is a separate operation.",
+            "  In System generations: Enter makes the selected generation start at every",
+            "  boot, after a confirmation and an administrator's password. It takes effect",
+            "  at the next restart. Nothing else in this section changes the system.",
+            "  A system rollback (earlier generation) never touches your personal files;",
+            "  restoring files is a separate operation.",
         ],
         HelpTopic::Backup => &[
             "== BACKUPS & USB STICKS ==",

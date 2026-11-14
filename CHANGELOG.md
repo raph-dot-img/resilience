@@ -37,10 +37,25 @@ versions follow [Semantic Versioning](https://semver.org/).
   passed to nmcli on stdin), reconnect, disconnect and forget Wi-Fi
   networks in every mode; profiles private to the account; open-network
   warning; WEP and 802.1X not offered. VM test `vm-wifi` (simulated radios).
+- *System generations* (ADR 0011): the Recovery list of generations now
+  makes one the default for every boot, with an administrator's password;
+  `resilience-admin set-default-generation N` (polkit action
+  `org.resilience.admin.set-default-generation`, auth_admin) switches the
+  system profile with nix-env and runs that generation's
+  `switch-to-configuration boot`, undoing the profile switch on failure;
+  audited. VM test `vm-generations` (systemd-boot, UEFI, real reboots).
+- Option `resilience.security.userNamespaces` (ADR 0012); `admin.toml`
+  `ultra_stable_only`: on Ultra-Stable-only machines `set-mode` refuses to
+  raise an account and `apply-state` drops earlier raising overrides.
+- The helper ignores Ctrl-C, Ctrl-Z and hang-up once a request is
+  validated, so a change is never left half-done or unaudited.
 - `/etc/resilience/system.toml` gained `[tools]` (absolute paths, checked at
   build time).
 
 ### Security
+- User namespaces are refused to every process on Ultra-Stable-only
+  machines, including the live system (`user.max_user_namespaces = 0`; the
+  Nix sandbox is off there, nobody can build). Kept elsewhere (ADR 0012).
 - NetworkManager's polkit defaults let any active console session switch
   networking off, share a hotspot or enable connectivity checks without a
   password, including Ultra-Stable accounts. An allowlist now limits accounts

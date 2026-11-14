@@ -97,6 +97,7 @@ lock_file = "{0}/lock"
 gpasswd = "/bin/gpasswd"
 loginctl = "/bin/loginctl"
 timedatectl = "/bin/timedatectl"
+nix_env = "/bin/nix-env"
 helper = "/store/bin/resilience-admin"
 pkexec = "/run/wrappers/bin/pkexec"
 pkttyagent = "/store/bin/pkttyagent"
@@ -123,6 +124,7 @@ description = "Carol the admin"
         admin_config: sys.join("admin.toml"),
         group_file: sys.join("group"),
         profiles: sys.join("profiles"),
+        store: sys.join("store"),
         booted_system: sys.join("booted"),
         running_system: sys.join("current"),
     }
@@ -564,8 +566,13 @@ fn dump_screens() {
     a.modal = None;
     open(&mut a, Builtin::Recovery);
     println!("{}\n", render(&mut a, 80, 24));
+    make_generations(&a);
     press(&mut a, KeyCode::Char('2'));
+    press(&mut a, KeyCode::Down);
     println!("{}\n", render(&mut a, 80, 24));
+    press(&mut a, KeyCode::Enter);
+    println!("{}\n", render(&mut a, 80, 24));
+    a.modal = None;
     open(&mut a, Builtin::Backup);
     println!("{}\n", render(&mut a, 80, 24));
     press(&mut a, KeyCode::Enter);
@@ -822,20 +829,170 @@ fn recovery_section_shows_health_generations_and_guide() {
     assert!(matches!(a.view(), View::Pager { title, .. } if title.contains("HEALTH")));
     press(&mut a, KeyCode::Esc);
     press(&mut a, KeyCode::Char('2'));
-    match a.view() {
-        View::Pager { text, .. } => {
-            assert!(text.contains("No generations are recorded"), "{text}");
-            assert!(text.contains("boot menu"), "{text}");
-            assert!(text.contains("never your personal files"), "{text}");
-        }
-        other => panic!("expected pager, got {other:?}"),
-    }
+    assert!(matches!(a.view(), View::Generations { gens, .. } if gens.is_empty()));
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("No generations are recorded"), "{screen}");
+    // Nothing to select, so Enter does nothing.
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    assert!(a.modal.is_none());
     press(&mut a, KeyCode::Esc);
     press(&mut a, KeyCode::Char('4'));
     assert!(
         matches!(a.view(), View::Pager { text, .. } if text.contains("When something goes wrong")),
         "{:?}",
         a.view()
+    );
+}
+
+/// Three generations in the test store: 3 is booted and the default, 2 is
+/// an older complete system, 1 has no switch-to-configuration.
+fn make_generations(a: &App) {
+    use std::os::unix::fs::symlink;
+    for n in 1..=3u64 {
+        let sys = a.paths.store.join(format!("{n}abc-nixos-system-26.05.{n}"));
+        std::fs::create_dir_all(sys.join("bin")).expect("mkdir");
+        std::fs::write(sys.join("nixos-version"), format!("26.05.{n}\n")).expect("w");
+        if n > 1 {
+            std::fs::write(sys.join("bin/switch-to-configuration"), "").expect("w");
+        }
+        symlink(&sys, a.paths.profiles.join(format!("system-{n}-link"))).expect("ln");
+        if n == 3 {
+            symlink(&sys, &a.paths.booted_system).expect("ln");
+            symlink(&sys, &a.paths.running_system).expect("ln");
+        }
+    }
+    symlink("system-3-link", a.paths.profiles.join("system")).expect("ln");
+}
+
+fn open_generations(a: &mut App) {
+    open(a, Builtin::Recovery);
+    press(a, KeyCode::Char('2'));
+    assert!(
+        matches!(a.view(), View::Generations { .. }),
+        "{:?}",
+        a.view()
+    );
+}
+
+#[test]
+fn generations_are_listed_with_their_state() {
+    let mut a = app(Mode::UltraStable, "gens-list");
+    make_generations(&a);
+    open_generations(&mut a);
+    for (w, h) in [(80, 24), (60, 20), (40, 12), (120, 40)] {
+        assert_console_glyphs(&render(&mut a, w, h));
+    }
+    let s = render(&mut a, 100, 30);
+    assert!(s.contains("SYSTEM GENERATIONS"), "{s}");
+    assert!(s.contains("started, default"), "{s}");
+    assert!(s.contains("26.05.3"), "{s}");
+    assert!(s.contains("never your personal files"), "{s}");
+    // Enter on the current default only explains.
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { body, error: false, .. })
+            if body.contains("already the default")),
+        "{:?}",
+        a.modal
+    );
+    press(&mut a, KeyCode::Esc);
+    // Generation 1 is not a complete system: refused before any password.
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { body, error: true, .. })
+            if body.contains("not a complete system")),
+        "{:?}",
+        a.modal
+    );
+}
+
+#[test]
+fn making_an_older_generation_the_default_confirms_then_runs_the_helper() {
+    let mut a = app(Mode::UltraStable, "gens-set");
+    make_generations(&a);
+    open_generations(&mut a);
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    match &a.modal {
+        Some(Modal::Confirm {
+            title,
+            body,
+            action,
+            yes_focused,
+            ..
+        }) => {
+            assert_eq!(title, "DEFAULT GENERATION");
+            assert!(!yes_focused, "the safe choice is the default");
+            assert!(body.contains("generation 2"), "{body}");
+            assert!(body.contains("older system software"), "{body}");
+            assert!(
+                body.contains("Nothing changes until the next restart"),
+                "{body}"
+            );
+            assert_eq!(*action, Pending::SetDefaultGeneration { number: 2 });
+        }
+        other => panic!("expected confirmation, got {other:?}"),
+    }
+    assert_console_glyphs(&render(&mut a, 80, 24));
+    // Enter on the default button cancels.
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    assert!(a.modal.is_none());
+
+    press(&mut a, KeyCode::Enter);
+    match press(&mut a, KeyCode::Char('y')) {
+        Effect::Run(r) => {
+            assert_eq!(
+                r.argv,
+                vec![
+                    "/run/wrappers/bin/pkexec".to_string(),
+                    "/store/bin/resilience-admin".into(),
+                    "set-default-generation".into(),
+                    "2".into(),
+                ]
+            );
+            assert!(r.pause_after);
+            assert_eq!(r.polkit_agent.as_deref(), Some("/store/bin/pkttyagent"));
+            assert_eq!(r.env[0].0, "SHELL");
+            // The helper switched the profile; the list shows it on return.
+            let p = a.paths.profiles.join("system");
+            std::fs::remove_file(&p).expect("rm");
+            std::os::unix::fs::symlink("system-2-link", &p).expect("ln");
+            a.after_run(&r.label, &Ok(std::process::ExitStatus::default()));
+            let s = render(&mut a, 100, 30);
+            assert!(s.contains("   2  ") && s.contains("default"), "{s}");
+            let View::Generations { gens, .. } = a.view() else {
+                panic!("still on the list")
+            };
+            assert!(
+                gens.iter()
+                    .find(|g| g.number == 2)
+                    .is_some_and(|g| g.default)
+            );
+        }
+        other => panic!("expected run, got {other:?}"),
+    }
+}
+
+#[test]
+fn no_administrator_means_no_default_generation_change() {
+    let mut a = app(Mode::UltraStable, "gens-noadmin");
+    make_generations(&a);
+    let cfg = std::fs::read_to_string(&a.paths.admin_config).expect("r");
+    std::fs::write(
+        &a.paths.admin_config,
+        cfg.replace("declared_mode = \"advanced\"", "declared_mode = \"stable\""),
+    )
+    .expect("w");
+    std::fs::write(&a.paths.group_file, "").expect("w");
+    open_generations(&mut a);
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { title, .. }) if title == "NO ADMINISTRATOR"),
+        "{:?}",
+        a.modal
     );
 }
 

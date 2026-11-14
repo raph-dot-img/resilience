@@ -689,12 +689,21 @@ Broken:not-a-uuid:802-11-wireless:no
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let uuid = "3c1f6a2e-7d5b-4e9a-b2a1-1e2d3c4b5a69";
-        connect(
-            &fake.display().to_string(),
-            uuid,
-            Some("hunter2: ok!".into()),
-        )
-        .expect("ok");
+        // Executing a script just written can fail with ETXTBSY while another
+        // test thread forks (rust-lang/rust#114554); retry briefly.
+        let mut result = Err(String::new());
+        for _ in 0..5 {
+            result = connect(
+                &fake.display().to_string(),
+                uuid,
+                Some("hunter2: ok!".into()),
+            );
+            if result.is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        result.expect("ok");
         let argv = std::fs::read_to_string(dir.join("argv")).expect("argv");
         let stdin = std::fs::read_to_string(dir.join("stdin")).expect("stdin");
         assert!(!argv.contains("hunter2"), "{argv}");

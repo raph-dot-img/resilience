@@ -18,7 +18,7 @@ test in docs/TESTING.md actually ran and passed (VM only so far).
 - 🟡 Text boot presentation: quiet kernel, systemd status on failure,
   branded getty and BIOS menu; UEFI GRUB still uses default colours
 
-## Phase 2 — User and security architecture 🟡
+## Phase 2 — User and security architecture ✅
 - ✅ Three modes as real privileges (groups, sudo, Nix daemon, polkit defaults)
 - ✅ Account separation, private homes, locked root, permission VM tests
 - ✅ Evaluation-time security invariants
@@ -36,10 +36,13 @@ test in docs/TESTING.md actually ran and passed (VM only so far).
 - ✅ Wi-Fi for every account from the TUI (unprivileged nmcli, private
   profiles, password via stdin); NetworkManager polkit allowlist for accounts
   without its group (ADR 0010)
-- ⬜ Further helper operations: make a generation the default
+- ✅ Making an earlier generation the default from the TUI:
+  `resilience-admin set-default-generation`, own polkit action (auth_admin),
+  boot only, undo on failure, audit (ADR 0011)
 - ✅ Removable media for every account (udisks2, removable drives only) and
   encrypted backup/check/restore of the home folder (age, ADR 0008)
-- ⬜ Review `unprivileged_userns_clone` for Ultra-Stable-only machines
+- ✅ User namespaces reviewed: refused to everyone on Ultra-Stable-only
+  machines (live system), kept for the Nix sandbox elsewhere (ADR 0012)
 
 ## Phase 3 — Productivity and knowledge 🟡
 - ✅ Nano, Vim, Midnight Commander, calculator, units, calendar, notes, handbook

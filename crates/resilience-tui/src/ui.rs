@@ -29,6 +29,7 @@ use crate::theme::Theme;
 use resilience_core::admin::{AccountRow, Source};
 use resilience_core::backup::{self, BackupFile};
 use resilience_core::media::Volume;
+use resilience_core::recovery;
 use resilience_core::wifi::{self, Network, Overview};
 
 const LOGO: [&str; 2] = [
@@ -175,6 +176,7 @@ fn footer_hints(view: &View) -> &'static str {
         View::Users { .. } => "Enter Change mode  r Refresh  Esc Back  F1 Help",
         View::ChooseMode { .. } => "Up/Down Choose  Enter Continue  Esc Cancel",
         View::Recovery { .. } => "1-4/Enter Open  Esc Back  F1 Help",
+        View::Generations { .. } => "Enter Make default  r Refresh  Esc Back  F1 Help",
         View::Media { .. } => "Enter Open  e Eject  r Refresh  Esc Back  F1 Help",
         View::Wifi { .. } => "Enter Join  d Disconnect  f Forget  r Scan  w Wi-Fi on  Esc Back",
         View::Backups { .. } => "Enter Back up/Restore  c Check  e Eject  Esc Back  F1 Help",
@@ -310,6 +312,7 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         View::Users { rows, error, list } => draw_users(f, app, area, rows, error.as_deref(), list),
         View::ChooseMode { row, list } => draw_choose_mode(f, app, area, row, list),
         View::Recovery { list } => draw_recovery(f, app, area, list),
+        View::Generations { gens, list } => draw_generations(f, app, area, gens, list),
         View::Wifi {
             overview,
             error,
@@ -1140,6 +1143,96 @@ fn draw_recovery(f: &mut Frame, app: &App, area: Rect, list: &mut ListState) {
     if let Some(r) = list.selected().and_then(|i| RecoveryItem::ALL.get(i)) {
         details(f, &t, d, vec![Line::from(r.description())]);
     }
+}
+
+/// Short state of a generation for the list: "started, default".
+fn generation_marks(g: &recovery::Generation) -> String {
+    let mut marks = Vec::new();
+    if g.booted {
+        marks.push("started");
+    } else if g.running {
+        marks.push("active");
+    }
+    if g.default {
+        marks.push("default");
+    }
+    marks.join(", ")
+}
+
+fn draw_generations(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    gens: &[recovery::Generation],
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    if gens.is_empty() {
+        let p = Paragraph::new(
+            "No generations are recorded on this machine. This is normal on the live \
+             system, which always starts the same way.",
+        )
+        .wrap(Wrap { trim: false })
+        .block(block("SYSTEM GENERATIONS", &t));
+        f.render_widget(p, area);
+        return;
+    }
+    let items: Vec<ListItem> = gens
+        .iter()
+        .map(|g| {
+            ListItem::new(format!(
+                "{:>4}  {:<10}  {}",
+                g.number,
+                g.created
+                    .map(|c| date_time(c).chars().take(10).collect::<String>())
+                    .unwrap_or_else(|| "?".into()),
+                generation_marks(g)
+            ))
+        })
+        .collect();
+    let [l, d] = two_panes(area);
+    draw_list(f, &t, l, "SYSTEM GENERATIONS", items, list, "");
+    let Some(g) = list.selected().and_then(|i| gens.get(i)) else {
+        return;
+    };
+    let state = match (g.booted, g.running, g.default) {
+        (true, _, true) => "running, default",
+        (true, _, false) => "running, not default",
+        (false, true, _) => "active, not restarted",
+        (false, false, true) => "default at next start",
+        (false, false, false) => "in the boot menu",
+    };
+    let mut lines = vec![
+        kv(&t, "Generation", g.number.to_string()),
+        kv(
+            &t,
+            "Created",
+            g.created.map(date_time).unwrap_or_else(|| "?".into()),
+        ),
+        kv(
+            &t,
+            "Version",
+            g.nixos_version.clone().unwrap_or_else(|| "?".into()),
+        ),
+        kv(&t, "Kernel", g.kernel.clone().unwrap_or_else(|| "?".into())),
+        kv(&t, "State", state),
+        Line::from(""),
+    ];
+    let hint = if g.default {
+        "This generation starts when the computer starts. To try another one once, \
+         choose it in the boot menu while the computer starts."
+    } else {
+        "Enter makes this generation start at every boot (administrator password). \
+         To try it once instead: restart, then choose it in the boot menu (sometimes \
+         under 'NixOS - All configurations')."
+    };
+    lines.push(Line::from(hint));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Generations contain system software and settings only, never your personal files.",
+        t.dim,
+    )));
+    details(f, &t, d, lines);
 }
 
 fn draw_media(

@@ -37,6 +37,7 @@ const MAX_NOTICES: usize = 100;
 /// Label of the run request that changes a security mode (see `after_run`).
 pub const SET_MODE_LABEL: &str = "Change security mode";
 pub const SET_TIME_LABEL: &str = "Set the clock";
+pub const SET_DEFAULT_GENERATION_LABEL: &str = "Default generation";
 /// Labels of the backup tool runs (see `after_run`).
 pub const BACKUP_LABEL: &str = "Backup of your files";
 pub const CHECK_LABEL: &str = "Check a backup";
@@ -49,6 +50,8 @@ pub struct Paths {
     pub admin_config: PathBuf,
     pub group_file: PathBuf,
     pub profiles: PathBuf,
+    /// The Nix store; system generations must be closures in it.
+    pub store: PathBuf,
     pub booted_system: PathBuf,
     pub running_system: PathBuf,
 }
@@ -59,6 +62,7 @@ impl Default for Paths {
             admin_config: admin::ADMIN_CONFIG_PATH.into(),
             group_file: "/etc/group".into(),
             profiles: recovery::PROFILES_DIR.into(),
+            store: "/nix/store".into(),
             booted_system: "/run/booted-system".into(),
             running_system: "/run/current-system".into(),
         }
@@ -97,8 +101,9 @@ impl RecoveryItem {
                 "Overall state, services that failed, and recent error messages from this boot."
             }
             RecoveryItem::Generations => {
-                "Every earlier version of the system is kept. Shows them and how to start one \
-                 from the boot menu. Your personal files are not affected by a system rollback."
+                "Every earlier version of the system is kept. Shows them, how to start one \
+                 from the boot menu, and makes one the default (administrator password). \
+                 Your personal files are not affected by a system rollback."
             }
             RecoveryItem::Report => {
                 "Saves a plain-text report (status, failures, generations, interface log) in \
@@ -349,6 +354,11 @@ pub enum View {
     Recovery {
         list: ListState,
     },
+    /// System generations, newest first; Enter makes one the default.
+    Generations {
+        gens: Vec<recovery::Generation>,
+        list: ListState,
+    },
     /// Removable volumes.
     Media {
         volumes: Vec<Volume>,
@@ -386,6 +396,10 @@ pub enum Pending {
     /// Seconds since the epoch, validated by `clock::check_bounds`.
     SetTime {
         utc: i64,
+    },
+    /// Make this generation the default at every boot.
+    SetDefaultGeneration {
+        number: u64,
     },
     Backup {
         mount: PathBuf,
@@ -781,7 +795,7 @@ impl App {
             View::Network { .. } => HelpTopic::Network,
             View::Settings { .. } => HelpTopic::Settings,
             View::Users { .. } | View::ChooseMode { .. } => HelpTopic::Users,
-            View::Recovery { .. } => HelpTopic::Recovery,
+            View::Recovery { .. } | View::Generations { .. } => HelpTopic::Recovery,
             View::Media { .. } | View::Backups { .. } => HelpTopic::Backup,
             View::Wifi { .. } => HelpTopic::Network,
             View::Search { .. } => HelpTopic::Search,
@@ -1035,6 +1049,19 @@ impl App {
                     _ => nav(list, volumes.len(), key),
                 }
             }
+            View::Generations { gens, list } => match key.code {
+                KeyCode::Char('r') => {
+                    *gens = self.load_generations();
+                    clamp_selection(list, gens.len());
+                }
+                _ if is_activate(key) => {
+                    if let Some(g) = list.selected().and_then(|i| gens.get(i)).cloned() {
+                        self.confirm_default_generation(&g);
+                    }
+                }
+                _ if is_back(key) => return (None, Effect::None),
+                _ => nav(list, gens.len(), key),
+            },
             View::Wifi {
                 overview,
                 error,
@@ -1422,6 +1449,7 @@ impl App {
         let (title, body, confirm) = match &action {
             Pending::SetMode { .. }
             | Pending::SetTime { .. }
+            | Pending::SetDefaultGeneration { .. }
             | Pending::JoinWifi { .. }
             | Pending::ForgetWifi { .. }
             | Pending::Backup { .. }
@@ -1616,6 +1644,9 @@ impl App {
             Pending::Logout => return Effect::Quit,
             Pending::SetMode { user, to } => return self.set_mode_effect(&user, to),
             Pending::SetTime { utc } => return self.set_time_effect(utc),
+            Pending::SetDefaultGeneration { number } => {
+                return self.set_default_generation_effect(number);
+            }
             Pending::JoinWifi { net } => {
                 self.create_and_join(&net, None);
                 return Effect::None;
@@ -1690,6 +1721,15 @@ impl App {
         }
         if [BACKUP_LABEL, CHECK_LABEL, RESTORE_LABEL].contains(&label) {
             self.reload_backups();
+        }
+        if label == SET_DEFAULT_GENERATION_LABEL {
+            let fresh = self.load_generations();
+            for v in &mut self.stack {
+                if let View::Generations { gens, list } = v {
+                    *gens = fresh.clone();
+                    clamp_selection(list, gens.len());
+                }
+            }
         }
         self.reload_notes();
         self.refresh_fast();
@@ -2484,11 +2524,12 @@ impl App {
                     scroll: 0,
                 })
             }
-            RecoveryItem::Generations => Some(View::Pager {
-                title: "SYSTEM GENERATIONS".into(),
-                text: self.generations_text(),
-                scroll: 0,
-            }),
+            RecoveryItem::Generations => {
+                let gens = self.load_generations();
+                let mut list = ListState::default();
+                list.select((!gens.is_empty()).then_some(0));
+                Some(View::Generations { gens, list })
+            }
             RecoveryItem::Report => {
                 self.export_report();
                 None
@@ -2551,6 +2592,97 @@ impl App {
             );
         }
         t
+    }
+
+    pub fn load_generations(&self) -> Vec<recovery::Generation> {
+        recovery::generations(
+            &self.paths.profiles,
+            &self.paths.booted_system,
+            &self.paths.running_system,
+        )
+    }
+
+    /// Explain what making `g` the default means, then ask. The checks
+    /// here only give clear messages; the helper repeats all of them.
+    fn confirm_default_generation(&mut self, g: &recovery::Generation) {
+        let gens = self.load_generations();
+        if let Err(r) = recovery::plan_set_default(&gens, &g.number.to_string(), &self.paths.store)
+        {
+            self.modal = Some(Modal::Message {
+                title: "NOT POSSIBLE".into(),
+                body: format!("{}.", capitalise(&r.to_string())),
+                error: !matches!(r, recovery::DefaultRefusal::AlreadyDefault(_)),
+            });
+            return;
+        }
+        if !self.has_administrator("Changing the default generation") {
+            return;
+        }
+        let newest = gens.iter().map(|g| g.number).max().unwrap_or(g.number);
+        let mut body = format!(
+            "Start generation {} ({}, created {}) at every start of the computer?\n\n",
+            g.number,
+            g.nixos_version.as_deref().unwrap_or("unknown version"),
+            g.created
+                .map(crate::ui::date_time)
+                .unwrap_or_else(|| "?".into()),
+        );
+        if g.number < newest {
+            body.push_str(
+                "This goes back to older system software and older system settings. \
+                 Your personal files are not touched. Newer generations stay in the \
+                 boot menu and can be made the default again.\n\n",
+            );
+        }
+        body.push_str(
+            "Nothing changes until the next restart. An administrator must type \
+             their password next; the change is recorded in the audit log.",
+        );
+        self.modal = Some(Modal::Confirm {
+            title: "DEFAULT GENERATION".into(),
+            body,
+            confirm: "Continue".into(),
+            action: Pending::SetDefaultGeneration { number: g.number },
+            yes_focused: false,
+        });
+    }
+
+    /// The fixed argv: `pkexec <helper> set-default-generation <N>`.
+    fn set_default_generation_effect(&mut self, number: u64) -> Effect {
+        let cfg = match std::fs::read_to_string(&self.paths.admin_config)
+            .map_err(|e| e.to_string())
+            .and_then(|t| AdminConfig::parse(&t))
+        {
+            Ok(c) => c,
+            Err(e) => {
+                self.notify(
+                    Level::Error,
+                    format!("changing the default generation is unavailable: {e}"),
+                );
+                return Effect::None;
+            }
+        };
+        tracing::warn!(generation = number, "default generation change requested");
+        Effect::Run(RunRequest {
+            label: SET_DEFAULT_GENERATION_LABEL.into(),
+            argv: vec![
+                cfg.pkexec.to_string_lossy().into_owned(),
+                cfg.helper.to_string_lossy().into_owned(),
+                "set-default-generation".into(),
+                number.to_string(),
+            ],
+            extra_args: Vec::new(),
+            env: vec![(
+                "SHELL".into(),
+                cfg.session_shell.to_string_lossy().into_owned(),
+            )],
+            polkit_agent: Some(cfg.pkttyagent.to_string_lossy().into_owned()),
+            pause_after: true,
+            banner: Some(format!(
+                "DEFAULT GENERATION {number}. An administrator must now type their \
+                 password. To cancel, press Ctrl-C while the password is asked."
+            )),
+        })
     }
 
     pub fn generations_text(&self) -> String {

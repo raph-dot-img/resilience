@@ -45,6 +45,45 @@ pub fn run_with_input(argv: &[&str], input: &[u8], timeout: Duration) -> Option<
     run_inner(argv, Some(input), timeout)
 }
 
+/// Run `argv` with a cleared environment (only `env` is set), stdin closed
+/// and stdout/stderr inherited, so a long operation shows its progress on
+/// the caller's terminal. Returns the exit code; `None` if the program could
+/// not start, was killed by a signal, or exceeded `timeout`. The program
+/// runs in its own process group (so keyboard signals do not reach it), and
+/// on timeout the whole group is killed, including programs it started.
+/// Used by the privileged helper for tools whose output can be long.
+pub fn run_visible(argv: &[&str], env: &[(&str, &str)], timeout: Duration) -> Option<i32> {
+    use std::os::unix::process::CommandExt;
+    let (program, args) = argv.split_first()?;
+    let mut child = Command::new(program)
+        .args(args)
+        .env_clear()
+        .envs(env.iter().copied())
+        .stdin(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .ok()?;
+    let pgid = child.id() as libc::pid_t;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => return st.code(),
+            Ok(None) if Instant::now() >= deadline => {
+                // SAFETY: kill(2) on our child's own process group (its
+                // pgid is its pid, set at spawn); no memory is involved.
+                unsafe {
+                    libc::kill(-pgid, libc::SIGKILL);
+                }
+                let _ = child.wait();
+                tracing::warn!(program, "helper command timed out");
+                return None;
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(_) => return None,
+        }
+    }
+}
+
 fn run_inner(argv: &[&str], input: Option<&[u8]>, timeout: Duration) -> Option<Output> {
     let (program, args) = argv.split_first()?;
     let mut child = Command::new(program)
@@ -108,6 +147,63 @@ mod tests {
         assert_eq!(o.code, Some(2));
         assert!(!o.success());
         assert_eq!(o.stderr, "oops\n");
+    }
+
+    #[test]
+    fn visible_runs_with_a_clean_environment() {
+        // HOME is set for cargo test (also in the Nix build sandbox).
+        assert!(std::env::var_os("HOME").is_some());
+        let code = run_visible(
+            &["/bin/sh", "-c", "test -z \"$HOME\" && test \"$KEEP\" = yes"],
+            &[("KEEP", "yes")],
+            Duration::from_secs(5),
+        );
+        assert_eq!(code, Some(0));
+        assert_eq!(
+            run_visible(&["/bin/sh", "-c", "exit 4"], &[], Duration::from_secs(5)),
+            Some(4)
+        );
+        let start = Instant::now();
+        assert_eq!(
+            run_visible(
+                &["/bin/sh", "-c", "while :; do :; done"],
+                &[],
+                Duration::from_millis(200)
+            ),
+            None
+        );
+        assert!(start.elapsed() < Duration::from_secs(5));
+        // A grandchild is killed with it (whole process group).
+        let dir = std::env::temp_dir().join(format!("resilience-pg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let marker = dir.join("late");
+        let script = format!("(sleep 1 && : > {}) & wait", marker.display());
+        let path = std::env::var("PATH").unwrap_or_default();
+        assert_eq!(
+            run_visible(
+                &["/bin/sh", "-c", &script],
+                &[("PATH", path.as_str())],
+                Duration::from_millis(200)
+            ),
+            None
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            assert!(!marker.exists(), "grandchild survived the timeout");
+            thread::sleep(Duration::from_millis(50));
+        }
+        // Positive control: without a timeout the same script does write it.
+        assert_eq!(
+            run_visible(
+                &["/bin/sh", "-c", &script],
+                &[("PATH", path.as_str())],
+                Duration::from_secs(10)
+            ),
+            Some(0)
+        );
+        assert!(marker.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

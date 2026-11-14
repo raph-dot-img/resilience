@@ -86,6 +86,8 @@ pub struct AdminConfig {
     pub loginctl: PathBuf,
     /// systemd's timedatectl: sets the system clock and the hardware clock.
     pub timedatectl: PathBuf,
+    /// Nix's nix-env: switches the system profile to another generation.
+    pub nix_env: PathBuf,
     /// The helper itself and pkexec, for the TUI to build the fixed argv.
     pub helper: PathBuf,
     pub pkexec: PathBuf,
@@ -97,6 +99,11 @@ pub struct AdminConfig {
     /// Account logged in automatically on tty1; must stay Ultra-Stable.
     #[serde(default)]
     pub autologin_user: Option<String>,
+    /// The machine is configured for Ultra-Stable accounts only (user
+    /// namespaces and the Nix sandbox are off, ADR 0012): no account may be
+    /// raised above Ultra-Stable, and earlier overrides that did are dropped.
+    #[serde(default)]
+    pub ultra_stable_only: bool,
     #[serde(default)]
     pub users: BTreeMap<String, ManagedUser>,
 }
@@ -111,6 +118,7 @@ impl AdminConfig {
             &cfg.gpasswd,
             &cfg.loginctl,
             &cfg.timedatectl,
+            &cfg.nix_env,
             &cfg.helper,
             &cfg.pkttyagent,
             &cfg.pkexec,
@@ -192,6 +200,7 @@ pub fn stale_overrides(cfg: &AdminConfig, state: &ModeState) -> Vec<String> {
             cfg.users
                 .get(name.as_str())
                 .is_none_or(|u| u.declared_mode != o.declared)
+                || (cfg.ultra_stable_only && o.mode != Mode::UltraStable)
         })
         .map(|(name, _)| name.clone())
         .collect()
@@ -205,6 +214,7 @@ pub enum Refusal {
     AutologinMustStayUltraStable(String),
     LastAdministrator(String),
     Unchanged(String, Mode),
+    UltraStableOnly(String),
 }
 
 impl fmt::Display for Refusal {
@@ -223,6 +233,11 @@ impl fmt::Display for Refusal {
                 "'{u}' is the last Advanced account; demoting it would leave no administrator"
             ),
             Refusal::Unchanged(u, m) => write!(f, "'{u}' is already in {m} mode"),
+            Refusal::UltraStableOnly(u) => write!(
+                f,
+                "this computer is set up for Ultra-Stable accounts only, so '{u}' cannot get \
+                 more rights; an administrator must change the system configuration"
+            ),
         }
     }
 }
@@ -256,6 +271,9 @@ pub fn plan_set_mode(
         effective_mode(cfg, state, user).ok_or_else(|| Refusal::UnknownUser(user.into()))?;
     if from == to {
         return Err(Refusal::Unchanged(user.into(), to));
+    }
+    if to != Mode::UltraStable && cfg.ultra_stable_only {
+        return Err(Refusal::UltraStableOnly(user.into()));
     }
     if to != Mode::UltraStable && cfg.autologin_user.as_deref() == Some(user) {
         return Err(Refusal::AutologinMustStayUltraStable(user.into()));
@@ -475,11 +493,13 @@ mod tests {
             gpasswd: "/bin/gpasswd".into(),
             loginctl: "/bin/loginctl".into(),
             timedatectl: "/bin/timedatectl".into(),
+            nix_env: "/bin/nix-env".into(),
             helper: "/bin/resilience-admin".into(),
             pkexec: "/run/wrappers/bin/pkexec".into(),
             pkttyagent: "/bin/pkttyagent".into(),
             session_shell: "/run/current-system/sw/bin/resilience-session".into(),
             autologin_user: autologin.map(String::from),
+            ultra_stable_only: false,
             users: users
                 .iter()
                 .map(|(n, m)| {
@@ -535,6 +555,7 @@ mod tests {
             gpasswd = "/nix/store/x/bin/gpasswd"
             loginctl = "/nix/store/y/bin/loginctl"
             timedatectl = "/nix/store/y/bin/timedatectl"
+            nix_env = "/nix/store/n/bin/nix-env"
             helper = "/nix/store/z/bin/resilience-admin"
             pkexec = "/run/wrappers/bin/pkexec"
             pkttyagent = "/nix/store/w/bin/pkttyagent"
@@ -583,6 +604,35 @@ mod tests {
         assert_eq!(
             stale_overrides(&cfg(&[], None), &s),
             vec!["bob".to_string()]
+        );
+    }
+
+    #[test]
+    fn ultra_stable_only_machines_never_raise_an_account() {
+        // carol (declared Advanced) raised alice; the configuration later
+        // made the machine Ultra-Stable-only (ADR 0012).
+        let mixed = cfg(
+            &[("alice", Mode::UltraStable), ("carol", Mode::Advanced)],
+            None,
+        );
+        let mut s = ModeState::default();
+        let ch = plan_set_mode(&mixed, &s, "alice", Mode::Advanced).expect("allowed");
+        record(&mut s, &mixed, &ch, "carol", "t");
+        let mut only = cfg(&[("alice", Mode::UltraStable)], None);
+        assert!(
+            stale_overrides(&only, &s).is_empty(),
+            "declaration unchanged"
+        );
+        only.ultra_stable_only = true;
+        assert_eq!(stale_overrides(&only, &s), vec!["alice".to_string()]);
+        assert_eq!(
+            plan_set_mode(&only, &ModeState::default(), "alice", Mode::Stable),
+            Err(Refusal::UltraStableOnly("alice".into()))
+        );
+        assert!(
+            Refusal::UltraStableOnly("alice".into())
+                .to_string()
+                .contains("Ultra-Stable accounts only")
         );
     }
 

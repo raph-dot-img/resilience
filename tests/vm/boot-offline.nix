@@ -65,6 +65,18 @@
         print("system state:", state)
         machine.succeed("systemctl list-units --state=failed --plain --no-legend | tee /dev/stderr | (! grep -q .)")
 
+    with subtest("Ultra-Stable-only machine: no user namespaces for anyone (ADR 0012)"):
+        machine.succeed("test \"$(cat /proc/sys/user/max_user_namespaces)\" = 0")
+        rc, out = machine.execute("runuser -u alice -- unshare --user true 2>&1")
+        assert rc != 0 and "No space left on device" in out, (rc, out)
+        machine.fail("unshare --user true")
+        # Nothing on the system needed them: no failed unit (checked above).
+        # ...and no account can be raised at runtime (no Nix sandbox here).
+        machine.succeed("grep -qx 'ultra_stable_only = true' /etc/resilience/admin.toml")
+        helper = machine.succeed("sed -n 's/^helper = \"\\(.*\\)\"$/\\1/p' /etc/resilience/admin.toml").strip()
+        rc, out = machine.execute(f"{helper} set-mode alice stable 2>&1")
+        assert rc == 2 and "Ultra-Stable accounts only" in out, (rc, out)
+
     with subtest("TUI starts on tty1 and reports offline"):
         wait_tty("1", "MAIN MENU")
         wait_tty("1", "OFFLINE")

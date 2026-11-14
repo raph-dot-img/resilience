@@ -70,6 +70,12 @@ TUI ──confirm──► pkttyagent + pkexec resilience-admin set-time YYYY-MM
                      ▼
                resilience-admin (root): strict UTC, 2025 ≤ t < 2100 → audit
                                          → timedatectl set-time @t (clock + RTC)
+TUI ──confirm──► pkttyagent + pkexec resilience-admin set-default-generation N
+                     │ polkit org.resilience.admin.set-default-generation: auth_admin (ADR 0011)
+                     ▼
+               resilience-admin (root): N exists, not default, closure in /nix/store
+                 → nix-env --switch-generation N → <gen N>/bin/switch-to-configuration boot
+                 (clean env; on failure the profile is switched back) → audit
 boot/switch: activation `users` resets groups → `resilienceModes` → apply-state
 ```
 
@@ -85,6 +91,10 @@ Mode = Unix group membership, computed at runtime (ADR 0003):
 | Nix daemon | refused | yes | yes |
 | Network config | own Wi-Fi profiles from the TUI only (polkit allowlist, ADR 0010) | nmtui, nmcli (networkmanager group) | nmtui, nmcli |
 | Restricted variants (htop --readonly, ncdu -rr, nano --restricted) | yes | no | no |
+
+User namespaces (ADR 0012) are a machine-wide kernel setting: refused to
+everyone when every account is Ultra-Stable (live system), available
+otherwise (Nix sandbox).
 
 ## 5. Networking state model
 
@@ -107,7 +117,7 @@ polkit: no networkmanager/wheel group ⇒ only scan, network-control,
 
 | Component | Phase | Sketch |
 |---|---|---|
-| More `resilience-admin` operations | 2–8 | ConnectWifi, SetTime, ImportPack, ApplyUpdate, SetDefaultGeneration: one polkit action each, same validation/audit pattern |
+| More `resilience-admin` operations | 3–8 | ImportPack, ApplyUpdate: one polkit action each, same validation/audit pattern |
 | `resilience-resource-manager` | 3 | discover/verify (minisign)/install/remove TAR+zstd packs with manifests on external media |
 | Kiwix integration | 3 | `kiwix-serve` on 127.0.0.1 + text browser, or a native ZIM reader |
 | Crypto workflows | 4 | guided age/minisign/GnuPG operations, secrets via stdin/fd |

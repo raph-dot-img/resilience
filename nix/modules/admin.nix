@@ -1,8 +1,9 @@
 # The privileged helper `resilience-admin` (ADR 0007).
 #
 # * One typed operation per polkit action; no generic command runner.
-#   `set-mode` and `set-time` (ADR 0009) require an administrator's password
-#   every time (auth_admin, never auth_admin_keep), whoever asks.
+#   `set-mode`, `set-time` (ADR 0009) and `set-default-generation` (ADR 0011)
+#   require an administrator's password every time (auth_admin, never
+#   auth_admin_keep), whoever asks.
 # * Configuration the helper trusts is generated here and root-owned
 #   (/etc/resilience/admin.toml); it never reads the caller's environment.
 # * Mode changes persist in /var/lib/resilience/modes.toml and are
@@ -30,10 +31,13 @@ let
       gpasswd = "${pkgs.shadow}/bin/gpasswd";
       loginctl = "${config.systemd.package}/bin/loginctl";
       timedatectl = "${config.systemd.package}/bin/timedatectl";
+      nix_env = "${config.nix.package}/bin/nix-env";
       inherit helper;
       pkexec = "${config.security.wrapperDir}/pkexec";
       pkttyagent = "${lib.getBin config.security.polkit.package}/bin/pkttyagent";
       session_shell = "/run/current-system/sw${cfg.sessionPackage.shellPath}";
+      # ADR 0012: no Nix sandbox, so no account may be raised at runtime.
+      ultra_stable_only = !cfg.security.userNamespaces;
       users = lib.mapAttrs (_: u: {
         declared_mode = u.mode;
         inherit (u) description;
@@ -73,6 +77,17 @@ let
         </defaults>
         <annotate key="org.freedesktop.policykit.exec.path">${helper}</annotate>
         <annotate key="org.freedesktop.policykit.exec.argv1">set-time</annotate>
+      </action>
+      <action id="org.resilience.admin.set-default-generation">
+        <description>Choose the system generation started by default</description>
+        <message>Changing the default system generation requires an administrator password</message>
+        <defaults>
+          <allow_any>auth_admin</allow_any>
+          <allow_inactive>auth_admin</allow_inactive>
+          <allow_active>auth_admin</allow_active>
+        </defaults>
+        <annotate key="org.freedesktop.policykit.exec.path">${helper}</annotate>
+        <annotate key="org.freedesktop.policykit.exec.argv1">set-default-generation</annotate>
       </action>
     </policyconfig>
   '';

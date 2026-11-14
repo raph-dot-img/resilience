@@ -3,7 +3,10 @@
 //!
 //! Nothing here needs privileges or changes the system. System rollback
 //! (choosing an earlier generation in the boot menu) and user-data restore
-//! are deliberately separate features (MASTER-PROMPT §20).
+//! are deliberately separate features (MASTER-PROMPT §20). Making an earlier
+//! generation the permanent default is done by the privileged helper
+//! (`resilience-admin set-default-generation`, ADR 0011); the rules it
+//! applies are the pure [`plan_set_default`] below.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -31,6 +34,8 @@ pub struct Generation {
     pub booted: bool,
     /// The generation currently active (differs from booted after a switch).
     pub running: bool,
+    /// Has `bin/switch-to-configuration`, so it can be made the default.
+    pub switchable: bool,
 }
 
 /// `system-12-link` → 12.
@@ -82,12 +87,95 @@ pub fn generations(profiles: &Path, booted: &Path, running: &Path) -> Vec<Genera
                 default: default_name.as_deref() == Some(name.as_str()),
                 booted: booted.as_ref() == Some(&target),
                 running: running.as_ref() == Some(&target),
+                switchable: target.join("bin/switch-to-configuration").is_file(),
                 target,
             })
         })
         .collect();
     out.sort_by_key(|g| std::cmp::Reverse(g.number));
     out
+}
+
+/// The system profile whose generations the helper may switch between.
+pub fn system_profile(profiles: &Path) -> PathBuf {
+    profiles.join("system")
+}
+
+/// A generation number as typed: decimal digits only, no sign, no leading
+/// zero, at most 9 digits (NixOS numbers generations from 1).
+pub fn parse_generation_number(s: &str) -> Option<u64> {
+    if s.is_empty() || s.len() > 9 || s.starts_with('0') || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok()
+}
+
+/// Why a generation cannot be made the default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DefaultRefusal {
+    BadNumber,
+    NoGenerations,
+    NoSuchGeneration(u64),
+    AlreadyDefault(u64),
+    NotASystem(u64),
+}
+
+impl std::fmt::Display for DefaultRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BadNumber => write!(f, "a generation is given by its number, such as 12"),
+            Self::NoGenerations => write!(
+                f,
+                "this machine records no system generations (the live system has none)"
+            ),
+            Self::NoSuchGeneration(n) => write!(f, "there is no generation {n}"),
+            Self::AlreadyDefault(n) => write!(f, "generation {n} is already the default"),
+            Self::NotASystem(n) => write!(
+                f,
+                "generation {n} is not a complete system and cannot be started"
+            ),
+        }
+    }
+}
+
+/// What the helper will do: point the system profile at `number` (it was
+/// `previous`) and install the boot menu from `target`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefaultPlan {
+    pub number: u64,
+    pub previous: Option<u64>,
+    pub target: PathBuf,
+}
+
+/// Check a request to make generation `requested` the default for every
+/// boot. `store` is the Nix store directory (`/nix/store`): the generation
+/// must be a system closure there, with `bin/switch-to-configuration`.
+pub fn plan_set_default(
+    gens: &[Generation],
+    requested: &str,
+    store: &Path,
+) -> Result<DefaultPlan, DefaultRefusal> {
+    let number = parse_generation_number(requested).ok_or(DefaultRefusal::BadNumber)?;
+    if gens.is_empty() {
+        return Err(DefaultRefusal::NoGenerations);
+    }
+    let g = gens
+        .iter()
+        .find(|g| g.number == number)
+        .ok_or(DefaultRefusal::NoSuchGeneration(number))?;
+    if g.default {
+        return Err(DefaultRefusal::AlreadyDefault(number));
+    }
+    // A direct child of the store, never a path inside another one.
+    let in_store = g.target.parent() == Some(store);
+    if !in_store || !g.switchable {
+        return Err(DefaultRefusal::NotASystem(number));
+    }
+    Ok(DefaultPlan {
+        number,
+        previous: gens.iter().find(|g| g.default).map(|g| g.number),
+        target: g.target.clone(),
+    })
 }
 
 /// Parse `systemctl show` output (`Key=Value` lines).
@@ -257,8 +345,81 @@ mod tests {
         assert!(g[0].booted && !g[0].default && !g[0].running);
         assert!(g[1].default && !g[1].booted);
         assert_eq!(g[2].nixos_version.as_deref(), Some("26.05.1"));
+        assert!(!g[0].switchable);
         assert!(generations(&d.join("nope"), &d, &d).is_empty());
         let _ = fs::remove_dir_all(&d);
+    }
+
+    fn generation(number: u64, target: &str, default: bool, switchable: bool) -> Generation {
+        Generation {
+            number,
+            target: target.into(),
+            created: None,
+            nixos_version: None,
+            kernel: None,
+            default,
+            booted: false,
+            running: false,
+            switchable,
+        }
+    }
+
+    #[test]
+    fn generation_numbers() {
+        assert_eq!(parse_generation_number("12"), Some(12));
+        assert_eq!(parse_generation_number("1"), Some(1));
+        for bad in [
+            "",
+            "0",
+            "012",
+            "-1",
+            "+1",
+            "1 ",
+            " 1",
+            "1e3",
+            "1234567890",
+            "../1",
+            "٣",
+        ] {
+            assert_eq!(parse_generation_number(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn plans_a_new_default() {
+        let store = Path::new("/nix/store");
+        let gens = vec![
+            generation(3, "/nix/store/ccc-nixos-system", true, true),
+            generation(2, "/nix/store/bbb-nixos-system", false, true),
+            generation(1, "/nix/store/aaa-nixos-system", false, false),
+            generation(4, "/tmp/evil", false, true),
+            generation(5, "/nix/store/x-y/sub", false, true),
+        ];
+        assert_eq!(
+            plan_set_default(&gens, "2", store),
+            Ok(DefaultPlan {
+                number: 2,
+                previous: Some(3),
+                target: "/nix/store/bbb-nixos-system".into()
+            })
+        );
+        use DefaultRefusal::*;
+        assert_eq!(plan_set_default(&gens, "3", store), Err(AlreadyDefault(3)));
+        assert_eq!(plan_set_default(&gens, "1", store), Err(NotASystem(1)));
+        assert_eq!(plan_set_default(&gens, "4", store), Err(NotASystem(4)));
+        assert_eq!(plan_set_default(&gens, "5", store), Err(NotASystem(5)));
+        assert_eq!(
+            plan_set_default(&gens, "9", store),
+            Err(NoSuchGeneration(9))
+        );
+        assert_eq!(plan_set_default(&gens, "02", store), Err(BadNumber));
+        assert_eq!(plan_set_default(&[], "2", store), Err(NoGenerations));
+        // No current default (broken profile link): still possible, no undo.
+        let none = vec![generation(2, "/nix/store/bbb-nixos-system", false, true)];
+        assert_eq!(
+            plan_set_default(&none, "2", store).map(|p| p.previous),
+            Ok(None)
+        );
     }
 
     #[test]

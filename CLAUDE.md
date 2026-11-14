@@ -26,32 +26,34 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │            core.nix        options: resilience.{edition,apps,probe,package...}
    │                            generates /etc/resilience/{system,apps}.toml
    │                            (build fails if an app command is not executable)
-   │            admin.nix       privileged helper: /etc/resilience/admin.toml, polkit
-   │                            actions org.resilience.admin.{set-mode,set-time} (auth_admin),
+   │            admin.nix       privileged helper: /etc/resilience/admin.toml, polkit actions
+   │                            org.resilience.admin.{set-mode,set-time,set-default-generation} (auth_admin),
    │                            tmpfiles for state/audit, activation `apply-state`
    │            media.nix       udisks2 (removable media; its polkit defaults, no overrides)
    │            users.nix       resilience.users.<n>.mode -> groups, login shell,
    │                            nix allowed-users
    │            interface.nix   getty branding, console font ter-i16n, tty1-only
    │                            autologin via getty@tty1 drop-in (NOT services.getty.autologinUser)
-   │            security.nix    sudo (wheel+password), pam_faillock, sysctls, no ssh
+   │            security.nix    sudo (wheel+password), pam_faillock, sysctls, no ssh,
+   │                            user namespaces off on Ultra-Stable-only machines (ADR 0012)
    │            networking.nix  NetworkManager (no connectivity check), polkit allowlist for
    │                            accounts without its group (ADR 0010), firewall, no NTP
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
    ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
    ├─ packages: resilience, resilience-session, resilience-handbook, iso, iso-minimal, vm
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
-              vm-backup, vm-wifi, security-invariants, eval-live-iso
+              vm-backup, vm-wifi, vm-generations, security-invariants, eval-live-iso
 
 crates/resilience-core  library: status, network (passive + on-demand probe),
                         mode detection, catalog, config, handbook, notes, launch, proc,
                         admin (pure mode-change rules), clock (time parsing/bounds),
-                        recovery (generations, report),
+                        recovery (generations, default-generation rules, report),
                         media (lsblk parsing, udisksctl mount/eject), backup (tar|zstd|age
                         pipeline, checksum, restore into ~/Restored), wifi (nmcli parsing,
                         private profiles, password via stdin)
 crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR 0007):
-                        list | set-mode USER MODE | set-time UTC | apply-state
+                        list | set-mode USER MODE | set-time UTC |
+                        set-default-generation N | apply-state
 crates/resilience-backup binary `resilience-backup` (UNPRIVILEGED, ADR 0008):
                         create MOUNT | check FILE | restore FILE
 crates/resilience-tui   binary `resilience`: app.rs (state machine, returns Effects),
@@ -78,6 +80,13 @@ Backup flow: TUI Backups & USB sticks → lsblk lists removable drives only →
 reads the passphrase from /dev/tty itself) → `*.partial` renamed when done +
 `.sha256`. Restore: checksum first, then into a NEW ~/Restored/backup-<stamp>.
 Tool paths: `[tools]` in /etc/resilience/system.toml (checked at build).
+
+Default generation flow: TUI Recovery → System generations (list) → Enter →
+confirm (Cancel default) → pkttyagent + `pkexec <helper> set-default-generation
+N` → helper: plan_set_default (exists, not default, closure in /nix/store with
+switch-to-configuration) → `nix-env -p …/system --switch-generation N` →
+`<gen>/bin/switch-to-configuration boot` (clean env; profile switched back on
+failure) → audit. Never `switch`: the running system is untouched.
 
 Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
 with `connection.permissions user:U`, no secret → thread: `nmcli connection
@@ -143,6 +152,12 @@ it concurrently with VM tests.
   appears literally in the grep's own command line: `grep 'secre[t]'`.
 - pkttyagent asks "Choose identity" when several Advanced accounts exist;
   VM tests must answer it (see `authenticate_as_carol` in vm-admin).
+- Generations in VM tests: `virtualisation.useBootLoader` + `useEFIBoot` +
+  systemd-boot; a second toplevel via `extendModules` (guarded by a test
+  option so it does not nest) in `system.extraDependencies`, installed with
+  `nix-env --set` + `switch-to-configuration boot`; `machine.shutdown()` +
+  `start()` keeps the disk. TUI lists wrap around: use End/Home, not
+  repeated Down. See vm-generations.
 - pkexec in VM tests: run it under `setsid -w` when no agent is wanted,
   otherwise its text agent writes into the driver's terminal protocol.
 - USB sticks in VM tests: `-device qemu-xhci,id=xhci` + QEMU monitor
@@ -239,12 +254,13 @@ needlessly. Watch `free -h` during VM tests.
 
 ## 14. Current implementation status (2026-11-14)
 
-Phase 0 (foundation) and Phase 1 (core) done; Phase 2 mostly done:
+Phase 0 (foundation), Phase 1 (core) and Phase 2 done:
 privileged helper with set-mode, TUI Users & security modes, TUI Recovery &
 diagnostics, faillock (ADR 0007); removable media + encrypted backups (ADR
 0008); Date & time via `set-time` (ADR 0009); Wi-Fi for every account and
-the NetworkManager polkit allowlist (ADR 0010). Remaining in Phase 2: the
-default-generation helper operation, the unprivileged_userns review. See ROADMAP.md.
+the NetworkManager polkit allowlist (ADR 0010); making an earlier generation
+the default via `set-default-generation` (ADR 0011); user namespaces off on
+Ultra-Stable-only machines (ADR 0012). See ROADMAP.md.
 Done: flake, modules, editions (minimal/standard), live ISO config, dev VM,
 TUI (main menu, status panel, categories, search, help, settings/themes,
 notes, handbook, network diagnostics, system status, notifications, power and
@@ -260,8 +276,8 @@ See docs/TESTING.md for what has actually been executed and passed.
 - pkexec's built-in text agent fails on success with NixOS 26.05's
   socket-activated polkit helper ("No session for cookie"); always register
   `pkttyagent` first (launch::run_with_polkit_agent).
-- Making an older generation the permanent default is not implemented
-  (boot menu only). Backups are full copies (no incremental), no rotation;
+- Default generation: tested with systemd-boot (UEFI) only; GRUB untested.
+  Deleting old generations is not offered. Backups are full copies (no incremental), no rotation;
   LUKS-encrypted sticks are not supported.
 - Wi-Fi: no hidden, 802.1X or WEP networks; a wrong password is reported
   only after the 45 s timeout (NetworkManager keeps retrying with it).
@@ -275,8 +291,7 @@ See docs/TESTING.md for what has actually been executed and passed.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Next: finish Phase 2 (default-generation helper
-operation), then Phase 3 (Kiwix, resource packs; reuse media.rs for USB).
+See ROADMAP.md. Next: Phase 3 (Kiwix, resource packs; reuse media.rs for USB).
 
 ## 17. Important decisions (docs/decisions/)
 
@@ -290,6 +305,8 @@ operation), then Phase 3 (Kiwix, resource packs; reuse media.rs for USB).
 - 0008 Removable media via udisks2 (no overrides), unprivileged age-encrypted backups, restore into a new folder
 - 0009 Clock set via helper `set-time` (own auth_admin action, bounds, audit) → timedatectl
 - 0010 Wi-Fi as the user via nmcli (private profiles, password on stdin); NM polkit allowlist without its group
+- 0011 Default generation via helper `set-default-generation` (nix-env + that generation's switch-to-configuration boot)
+- 0012 User namespaces: off (max_user_namespaces=0, no Nix sandbox) when every account is Ultra-Stable
 
 ## 18. How to continue safely
 

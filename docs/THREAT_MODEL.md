@@ -69,11 +69,17 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 | T26 | Clock moved to hide log entries, shorten faillock lock-outs or (later) accept expired signatures | Only via `resilience-admin set-time` with an administrator's password every time (own polkit action, auth_admin); strict UTC format and bounds 2025 ≤ t < 2100 checked in the helper; audited with the previous time; no polkit rule relaxes timedated; no NTP in the background | Implemented (vm-admin, unit tests, security-invariants). Root and Advanced users can still use `date`/`timedatectl` directly |
 | T27 | Ultra-Stable account disrupts or reconfigures networking (switches it off, hotspot, connectivity checks = background traffic) through NetworkManager's permissive polkit defaults for active sessions | polkit allowlist for accounts without the networkmanager group: only wifi.scan, network-control, settings.modify.own, enable-disable-wifi; everything else NO (ADR 0010) | Implemented (vm-wifi pkcheck on the TUI process, security-invariants). Before 2026-11-14 these defaults applied unnoticed |
 | T28 | Wi-Fi password exposed | Typed in the TUI (masked), passed to nmcli on stdin (`passwd-file /dev/stdin`), never argv/env/logs/files we write; stored by NetworkManager root 0600; profile private to the account | Implemented (vm-wifi, unit test with fake nmcli) |
+| T29 | Old, vulnerable or broken generation made permanent, or the boot menu left broken | Only via `resilience-admin set-default-generation` with an administrator's password every time (own polkit action, auth_admin); number validated, generation must exist and be a system closure in /nix/store; `boot` only (running system unchanged); profile switched back if writing the boot menu fails; audited; clean environment for nix-env and switch-to-configuration | Implemented (vm-generations, unit tests). Tested with systemd-boot (UEFI) only |
+| T30 | Kernel privilege escalation through user namespaces | `user.max_user_namespaces = 0` on Ultra-Stable-only machines (live system), checked by an invariant; kept elsewhere for the Nix sandbox (ADR 0012) | Implemented (vm-boot-offline, vm-modes, security-invariants). Not restricted on mixed machines |
 
 ## 5. Known gaps (honest list)
 
-- The privileged helper offers `set-mode` and `set-time` so far. The time
-  zone can only be changed in the Nix configuration.
+- The privileged helper offers `set-mode`, `set-time` and
+  `set-default-generation` so far. The time zone can only be changed in the
+  Nix configuration.
+- Making an older generation the default brings back its older software,
+  including fixed vulnerabilities (ADR 0011); the confirmation says so, and
+  only an administrator's password allows it.
 - Ultra-Stable accounts keep NetworkManager's `network-control` (they can
   disconnect any connection, including an administrator's Ethernet) and
   `settings.modify.own` (profiles for themselves with any settings, e.g. a
@@ -87,8 +93,11 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 - No full-disk encryption (no installer yet). No Secure Boot integration.
 - Launched third-party programs may contain their own shell escapes; this
   is acceptable only because accounts have no privileges (T2).
-- `kernel.unprivileged_userns_clone` is not restricted (needed by the Nix
-  sandbox for Stable users); reconsider for Ultra-Stable-only machines.
+- User namespaces stay available on machines with Stable or Advanced
+  accounts (the Nix sandbox needs them), so Ultra-Stable accounts there can
+  create them too. Ultra-Stable-only machines, including the live system,
+  refuse them to everyone (ADR 0012). The mainline kernel has no
+  `unprivileged_userns_clone` switch.
 - Backup checksums are not signatures: someone who can rewrite a stick can
   replace both files. age's authentication still detects tampering at restore
   time, but cannot tell an attacker's validly encrypted archive (made with a

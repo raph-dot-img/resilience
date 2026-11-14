@@ -4,7 +4,7 @@ Every result below is **PASS**, **FAIL**, **BLOCKED** or **NOT TESTED**.
 A test is only PASS if it was actually executed. "VM" means QEMU/KVM on the
 development host — **no test has been run on physical hardware**.
 
-Last full run (`nix flake check -L --max-jobs 1`, all VM tests): 2026-11-14 on the Phase 2 commits (privileged helper, Users & modes, Recovery, backups, Date & time, Wi-Fi), nixpkgs `f1e5c356`. ISO not rebuilt since the helper build (SHA-256 `3d28aeb2…a9f591`) (bit-for-bit reproducibility not verified).
+Last full run (`nix flake check -L --max-jobs 1`, all VM tests): 2026-11-14 on the Phase 2 commits (privileged helper, Users & modes, Recovery, backups, Date & time, Wi-Fi, default generation, user namespaces), nixpkgs `f1e5c356`. ISO not rebuilt since the helper build (SHA-256 `3d28aeb2…a9f591`) (bit-for-bit reproducibility not verified).
 
 ## How to run
 
@@ -15,7 +15,7 @@ Last full run (`nix flake check -L --max-jobs 1`, all VM tests): 2026-11-14 on t
 | Screen dump for review | `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` | ~2 s |
 | Evaluate everything | `nix flake check --no-build` | ~30 s |
 | Everything incl. VM tests | `nix flake check -L --max-jobs 1` | ~5 min cold |
-| One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-backup`, `vm-wifi`, `vm-boot-offline`) | ~1–2 min |
+| One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-backup`, `vm-wifi`, `vm-generations`, `vm-boot-offline`) | ~1–2 min |
 | ISO boot smoke test | `nix build .#iso -o result-iso && python3 -I tests/iso/smoke.py result-iso/iso/*.iso /tmp/shots [--uefi OVMF.fd]` | ~2 min |
 
 Always pass `--max-jobs 1` to `nix flake check` on the 12 GB development
@@ -31,8 +31,8 @@ which corrupts text next to box-drawing characters with our console font.
 
 | Suite | Tests | Result |
 |---|---|---|
-| resilience-core: mode, status, network, catalog, config, handbook, notes, launch (incl. env overrides, polkit agent ordering), proc, admin (names, modes, config, refusals, overrides/staleness, group ops, audit lines, timestamps), recovery (generations, report files), media (lsblk parsing/escapes, removable-only selection, device validation, udisks errors), backup (names, checksums, listing, size estimate, pipeline failure cause, **real age round trip**: encrypt, check, restore, no overwrite, wrong key, damaged with/without checksum), clock (local and strict UTC parsing, impossible dates, bounds, zone names), wifi (nmcli terse escapes, security kinds, scan dedupe/sort/saved match, profiles, private profile argv without secret, password only on stdin with a fake nmcli, password rules, failure hints) | 83 | PASS (round trip needs age in PATH: runs in the Nix build; SKIPPED on a host without age) |
-| resilience-tui: navigation, rendering 80×24…200×60, modes, restricted commands, missing programs, confirmations, Ctrl-C, handbook, search, notes, themes, shell gating, wrapping, console glyphs; Users & modes (consequences, Cancel default, fixed pkexec argv + SHELL + agent, refusals, no administrator, corrupt config); Recovery (health, generations, guide, report 0600 / no overwrite); Backups & USB sticks (internal disk never listed, unusable devices, mount via `--no-user-interaction`, Cancel default, backup/check/restore argv, eject busy / safe, lsblk failure); Date & time (prefilled, input filter, errors kept in the dialog, Cancel default, local→UTC argv, no administrator); Wi-Fi (list at 80×24, password dialog masked, nothing created before confirm / on Esc, private profile, secret on stdin only, wrong password → nothing saved, saved network without password, refused saved password → dialog, forget + Cancel default, admin profile not deletable, open warning, 802.1X/WEP refused, polkit refusal, radio off, no adapter, no nmcli) | 41 | PASS |
+| resilience-core: mode, status, network, catalog, config, handbook, notes, launch (incl. env overrides, polkit agent ordering), proc (incl. `run_visible`: clean environment, timeout kills the whole process group, with a positive control), admin (names, modes, config, refusals, overrides/staleness, Ultra-Stable-only machines, group ops, audit lines, timestamps), recovery (generations, generation numbers, default-generation rules: existing, not default, closure directly in the store with switch-to-configuration; report files), media (lsblk parsing/escapes, removable-only selection, device validation, udisks errors), backup (names, checksums, listing, size estimate, pipeline failure cause, **real age round trip**: encrypt, check, restore, no overwrite, wrong key, damaged with/without checksum), clock (local and strict UTC parsing, impossible dates, bounds, zone names), wifi (nmcli terse escapes, security kinds, scan dedupe/sort/saved match, profiles, private profile argv without secret, password only on stdin with a fake nmcli, password rules, failure hints) | 87 | PASS (round trip needs age in PATH: runs in the Nix build; SKIPPED on a host without age) |
+| resilience-tui: navigation, rendering 80×24…200×60, modes, restricted commands, missing programs, confirmations, Ctrl-C, handbook, search, notes, themes, shell gating, wrapping, console glyphs; Users & modes (consequences, Cancel default, fixed pkexec argv + SHELL + agent, refusals, no administrator, corrupt config); Recovery (health, guide, report 0600 / no overwrite); System generations (list and states at all sizes, empty list, current default and incomplete generation explained, confirmation with Cancel default, fixed pkexec argv + SHELL + agent, list refreshed after the helper, no administrator); Backups & USB sticks (internal disk never listed, unusable devices, mount via `--no-user-interaction`, Cancel default, backup/check/restore argv, eject busy / safe, lsblk failure); Date & time (prefilled, input filter, errors kept in the dialog, Cancel default, local→UTC argv, no administrator); Wi-Fi (list at 80×24, password dialog masked, nothing created before confirm / on Esc, private profile, secret on stdin only, wrong password → nothing saved, saved network without password, refused saved password → dialog, forget + Cancel default, admin profile not deletable, open warning, 802.1X/WEP refused, polkit refusal, radio off, no adapter, no nmcli) | 44 | PASS |
 | `cargo clippy --all-targets` | — | PASS (0 warnings) |
 
 ### Nix
@@ -41,7 +41,8 @@ which corrupts text next to box-drawing characters with our console font.
 |---|---|
 | Flake evaluation (`nix flake check --no-build`) | PASS |
 | `eval-live-iso`: live-standard, live-minimal, dev-vm evaluate | PASS |
-| `security-invariants`: 21 invariants × 3 configurations | PASS |
+| `security-invariants`: 22 invariants × 3 configurations | PASS |
+| Invariant checker rejects a live configuration with user namespaces forced on | PASS (manual, once) |
 | Invariant checker rejects a deliberately broken configuration (ssh on, root password) | PASS (manual, once) |
 | Invariant checker rejects a privileged autologin account and an extra polkit admin identity | PASS (manual, once; this found that the autologin invariant had been vacuous) |
 | Build-time catalog check (every app command executable) | PASS (part of every system build) |
@@ -55,6 +56,7 @@ which corrupts text next to box-drawing characters with our console font.
 |---|---|---|
 | 1 | Boot with no network cable (no NIC at all) | PASS |
 | — | systemd reaches `running`, no failed units | PASS |
+| — | Ultra-Stable-only machine (ADR 0012): `user.max_user_namespaces` = 0, `unshare --user` fails for alice (ENOSPC) and root, no unit failed; `ultra_stable_only = true` in admin.toml and `set-mode alice stable` refused | PASS |
 | 4 | TUI starts on tty1 (autologin), shows OFFLINE and ULTRA-STABLE | PASS |
 | — | Autologin limited to tty1; tty2 shows a login prompt, no tty2 session | PASS |
 | — | `resilience status` reports mode and network correctly | PASS |
@@ -77,6 +79,7 @@ which corrupts text next to box-drawing characters with our console font.
 | Ultra-Stable: cannot write /etc or the store, stop units, read other homes | PASS |
 | Ultra-Stable: `nmcli networking off` refused — **only from a session-less `runuser`**; the console session is covered by vm-wifi (before ADR 0010 it was in fact allowed there) | PASS (scope corrected 2026-11-14) |
 | Stable: Nix daemon allowed; sudo refused; cannot write /etc or stop units | PASS |
+| Machine with Stable/Advanced accounts keeps user namespaces (`max_user_namespaces` > 0) | PASS |
 | Advanced: sudo works with the password, refuses a wrong one (`sudo -k`) | PASS |
 | 3 | Isolated LAN without gateway/DNS detected as LOCAL LINK, gateway none | PASS |
 | TUI on tty2 as Ultra-Stable: search for "shell" finds nothing; logout works | PASS |
@@ -140,6 +143,23 @@ Two simulated radios (`mac80211_hwsim`): `wlan0` is a WPA2 access point
 | Disconnect (`d`), reconnect without a password dialog | PASS |
 | Forget: profile file removed, disconnected | PASS |
 | Physical Wi-Fi adapters, WPA3-only, open networks, hidden networks, roaming, weak signal | NOT TESTED |
+
+### VM: `vm-generations` — default generation (ADR 0011), systemd-boot on UEFI, driven through the TUI
+
+Generation 1 is the image's system; generation 2 is the same system plus a
+marker file, installed in the test with `nix-env --set` and
+`switch-to-configuration boot`, as `nixos-rebuild boot` does.
+
+| Check | Result |
+|---|---|
+| Setup: generation 2 becomes the default (`loader.conf`), reboot into it (marker present) | PASS |
+| Helper: as alice exit 77; `0`, `01`, `-1`, `abc`, `1;id`, `../system-1-link`, `99`, `2` (already default) refused with exit 2 and the right reason; extra argument → usage; 8 refusals audited; nothing changed | PASS |
+| polkit: `pkcheck` on the TUI process → challenge (2); `pkaction`: auth_admin for any/inactive/active (not `_keep`) | PASS |
+| TUI (Ultra-Stable, Recovery → System generations): list shows `started, default`; confirmation; wrong administrator password → profile and boot menu unchanged, no `result=ok` | PASS |
+| TUI: carol's password → "Generation 1 is now started by default"; profile → `system-1-link`, `loader.conf` → generation 1; running system unchanged; audit `caller=alice … from=2 to=1 result=ok` + journal; list refreshed | PASS |
+| Reboot: generation 1 runs (no marker), generation 2 and its boot entry kept, system `running` | PASS |
+| Root (as with sudo) makes generation 2 the default again; audited `caller=root` | PASS |
+| Ctrl-C during the operation, boot-loader timeout, concurrent `nixos-rebuild`, GRUB/BIOS, physical hardware | NOT TESTED |
 
 ### ISO boot (`tests/iso/smoke.py`, screenshots reviewed by a human/agent)
 
