@@ -71,6 +71,9 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 | T28 | Wi-Fi password exposed | Typed in the TUI (masked), passed to nmcli on stdin (`passwd-file /dev/stdin`), never argv/env/logs/files we write; stored by NetworkManager root 0600; profile private to the account | Implemented (vm-wifi, unit test with fake nmcli) |
 | T29 | Old, vulnerable or broken generation made permanent, or the boot menu left broken | Only via `resilience-admin set-default-generation` with an administrator's password every time (own polkit action, auth_admin); number validated, generation must exist and be a system closure in /nix/store; `boot` only (running system unchanged); profile switched back if writing the boot menu fails; audited; clean environment for nix-env and switch-to-configuration | Implemented (vm-generations, unit tests). Tested with systemd-boot (UEFI) only |
 | T30 | Kernel privilege escalation through user namespaces | `user.max_user_namespaces = 0` on Ultra-Stable-only machines (live system), checked by an invariant; kept elsewhere for the Nix sandbox (ADR 0012) | Implemented (vm-boot-offline, vm-modes, security-invariants). Not restricted on mixed machines |
+| T31 | Malicious, damaged or substituted resource pack (mirror, network, USB stick) | Catalog in the root-owned system configuration pins each file's size and SHA-256; the store installs only on an exact match (mismatch or extra bytes: deleted); HTTPS only, also after redirects; files from sticks checked the same way (ADR 0013) | Implemented (vm-packs: tampered download refused, stick checked; unit tests) |
+| T32 | Pack installation used to gain privileges or damage the system | No root: `resilience-pack-store` runs as the unprivileged `resilience-packs` account via `pkexec --user` (refuses any other uid), with an administrator's password every time (own action, auth_admin); typed arguments (catalog ids, plain `.zim` names); content never parsed, only hashed; O_NOFOLLOW, regular files only, lock, free-space margin; journal log | Implemented (vm-packs, unit tests) |
+| T33 | Shell or Internet access from the offline library for Ultra-Stable accounts | lynx with `-restrictions=… -localhost` (no shell escape, no external programs, no typed address, no remote host); kiwix-serve on 127.0.0.1 only, `--blockexternal`, one file, stopped with the browser | Implemented (vm-packs: `!` refused, no shell process, loopback only). Usability measure, not a sandbox |
 
 ## 5. Known gaps (honest list)
 
@@ -93,6 +96,13 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 - No full-disk encryption (no installer yet). No Secure Boot integration.
 - Launched third-party programs may contain their own shell escapes; this
   is acceptable only because accounts have no privileges (T2).
+- Resource packs are opened by libzim/kiwix-serve and rendered by lynx as
+  the user; a pack that matches the catalog is trusted to the degree the
+  catalog is. `resilience-library open` also opens any `.zim` file the user
+  names (their own risk, as with any document). While a pack is open, other
+  local accounts can read it through the loopback port (public content).
+- The pack catalog ages with the system: Kiwix deletes old files, so some
+  packs can then only be installed from a stick until a system update.
 - User namespaces stay available on machines with Stable or Advanced
   accounts (the Nix sandbox needs them), so Ultra-Stable accounts there can
   create them too. Ultra-Stable-only machines, including the live system,

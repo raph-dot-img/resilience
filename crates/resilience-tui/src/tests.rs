@@ -13,8 +13,8 @@ use resilience_core::config::{SystemConfig, ThemeName, ToolPaths, UserSettings};
 use resilience_core::mode::{Detected, Mode};
 
 use crate::app::{
-    App, BACKUP_LABEL, Builtin, CHECK_LABEL, Effect, Entry, Modal, Paths, Pending, RESTORE_LABEL,
-    Startup, View,
+    App, BACKUP_LABEL, Builtin, CHECK_LABEL, Effect, Entry, Modal, PACKS_LABEL, PackRow, Paths,
+    Pending, RESTORE_LABEL, Startup, View,
 };
 use crate::ui;
 
@@ -120,6 +120,7 @@ description = "Carol the admin"
         "wheel:x:1:carol\nresilience-stable:x:990:bob,carol\nnetworkmanager:x:57:bob,carol\n",
     )
     .expect("write group");
+    write_packs(&sys);
     Paths {
         admin_config: sys.join("admin.toml"),
         group_file: sys.join("group"),
@@ -127,7 +128,65 @@ description = "Carol the admin"
         store: sys.join("store"),
         booted_system: sys.join("booted"),
         running_system: sys.join("current"),
+        packs_config: sys.join("packs.toml"),
     }
+}
+
+/// A catalog of three packs in `sys/packs.toml`: "wiki-en" (installed),
+/// "medicine-en" (half downloaded) and "wiki-fr" (absent), plus an older
+/// version of wiki-en still on disk.
+fn write_packs(sys: &Path) {
+    let dir = sys.join("packs");
+    std::fs::create_dir_all(dir.join(".staging")).expect("mkdir");
+    let entry = |id: &str, title: &str, cat: &str, lang: &str, file: &str, size: u64| {
+        format!(
+            "[[pack]]\nid = \"{id}\"\ntitle = \"{title}\"\ndescription = \"About {id}\"\n\
+             category = \"{cat}\"\nlanguage = \"{lang}\"\nfile = \"{file}\"\nsize = {size}\n\
+             sha256 = \"{}\"\nurls = [\"https://example.org/{file}\"]\nlicense = \"CC-BY-SA-4.0\"\n\
+             source = \"Test\"\n",
+            "a".repeat(64)
+        )
+    };
+    let text = format!(
+        "dir = \"{}\"\nstore_user = \"resilience-packs\"\nstore = \"/store/bin/resilience-pack-store\"\n\
+         pkexec = \"/run/wrappers/bin/pkexec\"\npkttyagent = \"/store/bin/pkttyagent\"\n\
+         curl = \"/store/bin/curl\"\nsha256sum = \"/store/bin/sha256sum\"\n\
+         kiwix_serve = \"/store/bin/kiwix-serve\"\nbrowser = [\"/store/bin/lynx\"]\n\
+         session_shell = \"/run/current-system/sw/bin/resilience-session\"\n{}{}{}",
+        dir.display(),
+        entry(
+            "wiki-en",
+            "Wikipedia (English)",
+            "encyclopedia",
+            "en",
+            "wiki_en_2026-09.zim",
+            10
+        ),
+        entry(
+            "medicine-en",
+            "Medicine (English)",
+            "health",
+            "en",
+            "med_en_2026-10.zim",
+            4000
+        ),
+        entry(
+            "wiki-fr",
+            "Wikipedia (French)",
+            "encyclopedia",
+            "fr",
+            "wiki_fr_2026-10.zim",
+            3000
+        ),
+    );
+    std::fs::write(sys.join("packs.toml"), text).expect("write packs.toml");
+    std::fs::write(dir.join("wiki_en_2026-09.zim"), b"0123456789").expect("w");
+    std::fs::write(dir.join("wiki_en_2026-03.zim"), b"old").expect("w");
+    std::fs::write(
+        dir.join(".staging/med_en_2026-10.zim.part"),
+        vec![0u8; 1000],
+    )
+    .expect("w");
 }
 
 /// Fake `lsblk` and `udisksctl`: an internal disk, a USB stick (mounted
@@ -578,6 +637,24 @@ fn dump_screens() {
     press(&mut a, KeyCode::Enter);
     println!("{}\n", render(&mut a, 80, 24));
     press(&mut a, KeyCode::Enter);
+    println!("{}\n", render(&mut a, 80, 24));
+    while a.stack.len() > 1 {
+        press(&mut a, KeyCode::Esc);
+    }
+    a.modal = None;
+    open(&mut a, Builtin::Packs);
+    press(&mut a, KeyCode::Char(' '));
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Char(' '));
+    println!("{}\n", render(&mut a, 80, 24));
+    press(&mut a, KeyCode::Enter);
+    println!("{}\n", render(&mut a, 80, 24));
+    a.modal = None;
+    a.net.level = resilience_core::network::LinkLevel::Routed;
+    press(&mut a, KeyCode::Char('d'));
+    println!("{}\n", render(&mut a, 80, 24));
+    a.modal = None;
+    open(&mut a, Builtin::Library);
     println!("{}\n", render(&mut a, 80, 24));
 }
 
@@ -1743,4 +1820,325 @@ fn wifi_off_or_missing_is_explained() {
     open(&mut c, Builtin::Wifi);
     let s = render(&mut c, 80, 24);
     assert!(s.contains("not installed"), "{s}");
+}
+
+// ----- offline library and resource packs (ADR 0013) -----------------------
+
+fn pack_rows(a: &App) -> Vec<PackRow> {
+    let View::Packs { s, .. } = a.view() else {
+        panic!("not on the packs view")
+    };
+    s.rows()
+}
+
+fn selected_row(a: &App) -> PackRow {
+    let View::Packs { s, list } = a.view() else {
+        panic!("not on the packs view")
+    };
+    s.rows()[list.selected().expect("a row is selected")]
+}
+
+/// Move the packs selection to the row of catalog pack `i` (or other file).
+fn select_row(a: &mut App, want: PackRow) {
+    for _ in 0..20 {
+        if selected_row(a) == want {
+            return;
+        }
+        press(a, KeyCode::Down);
+    }
+    panic!("row {want:?} not reachable");
+}
+
+#[test]
+fn packs_screen_groups_by_category_and_skips_headers() {
+    let mut a = app(Mode::UltraStable, "packs-rows");
+    open(&mut a, Builtin::Packs);
+    let rows = pack_rows(&a);
+    use resilience_core::packs::PackCategory::*;
+    assert_eq!(
+        rows,
+        vec![
+            PackRow::Header(Encyclopedia),
+            PackRow::Pack(0),
+            PackRow::Pack(2),
+            PackRow::Header(Health),
+            PackRow::Pack(1),
+            PackRow::OthersHeader,
+            PackRow::Other(0),
+        ]
+    );
+    // The selection never rests on a header, and wraps around.
+    assert_eq!(selected_row(&a), PackRow::Pack(0));
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Down);
+    assert_eq!(selected_row(&a), PackRow::Pack(1));
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Down);
+    assert_eq!(selected_row(&a), PackRow::Pack(0));
+    press(&mut a, KeyCode::Up);
+    assert_eq!(selected_row(&a), PackRow::Other(0));
+
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("-- ENCYCLOPEDIA --"), "{screen}");
+    assert!(screen.contains("[*] Wikipedia (English)"), "{screen}");
+    assert!(screen.contains("installed"), "{screen}");
+    assert!(screen.contains("[ ] Medicine (English)"), "{screen}");
+    assert!(screen.contains("25% done"), "{screen}");
+    assert!(screen.contains("old version"), "{screen}");
+    assert_console_glyphs(&screen);
+
+    // Language filter: en only, then fr only, then everything again.
+    press(&mut a, KeyCode::Char('f'));
+    assert!(!pack_rows(&a).contains(&PackRow::Pack(2)));
+    assert!(render(&mut a, 80, 24).contains("language: en"));
+    press(&mut a, KeyCode::Char('f'));
+    let rows = pack_rows(&a);
+    assert!(rows.contains(&PackRow::Pack(2)) && !rows.contains(&PackRow::Pack(0)));
+    assert_eq!(selected_row(&a), PackRow::Pack(2));
+    press(&mut a, KeyCode::Char('f'));
+    assert_eq!(pack_rows(&a).len(), 7);
+}
+
+#[test]
+fn ticking_packs_and_downloading_runs_the_library_with_a_fixed_argv() {
+    let mut a = app(Mode::UltraStable, "packs-download");
+    open(&mut a, Builtin::Packs);
+    // Nothing ticked: an explanation.
+    press(&mut a, KeyCode::Char('d'));
+    assert!(matches!(&a.modal, Some(Modal::Message { title, .. }) if title == "NOTHING SELECTED"));
+    a.modal = None;
+    // Tick: wiki-en (installed -> remove), wiki-fr (add), medicine (resume).
+    press(&mut a, KeyCode::Char(' '));
+    select_row(&mut a, PackRow::Pack(2));
+    press(&mut a, KeyCode::Char(' '));
+    select_row(&mut a, PackRow::Pack(1));
+    press(&mut a, KeyCode::Char(' '));
+    select_row(&mut a, PackRow::Other(0));
+    press(&mut a, KeyCode::Char(' '));
+    press(&mut a, KeyCode::Char(' ')); // and untick again
+    // A partial download cycles: continue, throw away, nothing, continue.
+    select_row(&mut a, PackRow::Pack(1));
+    press(&mut a, KeyCode::Char(' '));
+    assert!(render(&mut a, 80, 24).contains("[-] Medicine (English)"));
+    assert!(render(&mut a, 80, 24).contains("discard"));
+    press(&mut a, KeyCode::Char(' '));
+    assert!(render(&mut a, 80, 24).contains("[ ] Medicine (English)"));
+    press(&mut a, KeyCode::Char(' '));
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("[-] Wikipedia (English)"), "{screen}");
+    assert!(screen.contains("[+] Wikipedia (French)"), "{screen}");
+    // 3000 + (4000 - 1000 already received).
+    assert!(screen.contains("Add 2 (5.9 KiB)  Remove 1"), "{screen}");
+
+    // Offline: refused with a way out.
+    a.net.level = resilience_core::network::LinkLevel::LocalLink;
+    press(&mut a, KeyCode::Char('d'));
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { title, body, .. })
+            if title == "NO INTERNET CONNECTION" && body.contains("USB stick")),
+        "{:?}",
+        a.modal
+    );
+    a.modal = None;
+
+    a.net.level = resilience_core::network::LinkLevel::Routed;
+    press(&mut a, KeyCode::Char('d'));
+    let Some(Modal::Confirm { body, action, .. }) = &a.modal else {
+        panic!("expected a confirmation, got {:?}", a.modal)
+    };
+    assert!(body.contains("+ Wikipedia (French)"), "{body}");
+    assert!(body.contains("- Wikipedia (English)"), "{body}");
+    assert!(body.contains("administrator"), "{body}");
+    assert_eq!(
+        action,
+        &Pending::ChangePacks {
+            get: vec!["medicine-en".into(), "wiki-fr".into()],
+            remove: vec!["wiki_en_2026-09.zim".into()],
+            from: None,
+        }
+    );
+    // Cancel is the default.
+    press(&mut a, KeyCode::Enter);
+    assert!(a.modal.is_none());
+    press(&mut a, KeyCode::Char('d'));
+    let Effect::Run(req) = press(&mut a, KeyCode::Char('y')) else {
+        panic!("expected a run")
+    };
+    assert_eq!(req.label, PACKS_LABEL);
+    assert_eq!(
+        req.argv,
+        [
+            "resilience-library",
+            "change",
+            "--remove",
+            "wiki_en_2026-09.zim",
+            "--get",
+            "medicine-en",
+            "--get",
+            "wiki-fr"
+        ]
+    );
+    assert_eq!(
+        req.polkit_agent, None,
+        "the library registers its own agent"
+    );
+    assert!(req.pause_after);
+
+    // Afterwards the screen is re-read and the ticks are cleared.
+    let dir = a.home.join("sys/packs");
+    std::fs::remove_file(dir.join("wiki_en_2026-09.zim")).expect("rm");
+    std::fs::write(dir.join("wiki_fr_2026-10.zim"), vec![1u8; 3000]).expect("w");
+    a.after_run(PACKS_LABEL, &Ok(std::process::ExitStatus::default()));
+    let View::Packs { s, .. } = a.view() else {
+        panic!("still on the packs view")
+    };
+    assert!(s.marked.is_empty());
+    use resilience_core::packs::PackState;
+    assert_eq!(s.inv.states[0], PackState::Absent);
+    assert_eq!(s.inv.states[2], PackState::Installed);
+}
+
+#[test]
+fn packs_from_a_usb_stick() {
+    let mut a = app(Mode::UltraStable, "packs-usb");
+    open(&mut a, Builtin::Packs);
+    // u: the stick list, then Enter mounts the stick through udisks.
+    press(&mut a, KeyCode::Char('u'));
+    assert!(matches!(
+        a.view(),
+        View::Media {
+            for_packs: true,
+            ..
+        }
+    ));
+    assert!(render(&mut a, 80, 24).contains("COPY PACKS FROM A USB STICK"));
+    press(&mut a, KeyCode::Enter); // the stick is the only usable volume, first
+    assert!(udisks_log(&a).contains("mount --no-user-interaction --block-device /dev/sda1"));
+    // The fake mount point is empty: nothing found, back on the packs view.
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { title, .. }) if title == "NO PACKS ON THIS STICK"),
+        "{:?}",
+        a.modal
+    );
+    assert!(matches!(a.view(), View::Packs { .. }));
+    a.modal = None;
+
+    // A stick with wiki-fr in Resilience-packs/ and medicine (wrong size).
+    let stick = a.home.join("stick");
+    std::fs::create_dir_all(stick.join("Resilience-packs")).expect("mkdir");
+    std::fs::write(
+        stick.join("Resilience-packs/wiki_fr_2026-10.zim"),
+        vec![0u8; 3000],
+    )
+    .expect("w");
+    std::fs::write(stick.join("med_en_2026-10.zim"), vec![0u8; 12]).expect("w");
+    // Nothing ticked: every pack found that is not installed is offered.
+    a.packs_from_mount(&stick);
+    let Some(Modal::Confirm { body, action, .. }) = &a.modal else {
+        panic!("expected a confirmation, got {:?}", a.modal)
+    };
+    assert!(body.contains("Copy from the USB stick"), "{body}");
+    assert_eq!(
+        action,
+        &Pending::ChangePacks {
+            get: vec!["wiki-fr".into()],
+            remove: vec![],
+            from: Some(stick.clone()),
+        }
+    );
+    // Ticked packs that are not on the stick are named.
+    a.modal = None;
+    select_row(&mut a, PackRow::Pack(1));
+    press(&mut a, KeyCode::Char(' '));
+    select_row(&mut a, PackRow::Pack(2));
+    press(&mut a, KeyCode::Char(' '));
+    a.packs_from_mount(&stick);
+    let Some(Modal::Confirm { body, .. }) = &a.modal else {
+        panic!("expected a confirmation")
+    };
+    assert!(
+        body.contains("Not on this stick: Medicine (English)"),
+        "{body}"
+    );
+    let Effect::Run(req) = press(&mut a, KeyCode::Char('y')) else {
+        panic!("expected a run")
+    };
+    assert_eq!(
+        req.argv,
+        [
+            "resilience-library".to_string(),
+            "change".into(),
+            "--from".into(),
+            stick.display().to_string(),
+            "--get".into(),
+            "wiki-fr".into()
+        ]
+    );
+}
+
+#[test]
+fn library_lists_installed_packs_and_opens_them_in_the_browser() {
+    let mut a = app(Mode::UltraStable, "library");
+    open(&mut a, Builtin::Library);
+    let View::Library { items, .. } = a.view() else {
+        panic!("not on the library view")
+    };
+    let titles: Vec<&str> = items.iter().map(|i| i.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        ["Wikipedia (English)", "Wikipedia (English) (older version)"]
+    );
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("OFFLINE LIBRARY"), "{screen}");
+    assert_console_glyphs(&screen);
+    let dir = a.home.join("sys/packs");
+    let Effect::Run(req) = press(&mut a, KeyCode::Enter) else {
+        panic!("expected a run")
+    };
+    assert_eq!(
+        req.argv,
+        [
+            "resilience-library".to_string(),
+            "open".into(),
+            dir.join("wiki_en_2026-09.zim").display().to_string()
+        ]
+    );
+    // s: search the full text; the words are one argument, never a shell.
+    press(&mut a, KeyCode::Char('s'));
+    assert!(matches!(a.modal, Some(Modal::PackSearch { .. })));
+    press(&mut a, KeyCode::Enter); // empty: nothing happens
+    assert!(matches!(a.modal, Some(Modal::PackSearch { .. })));
+    for c in "boil; water".chars() {
+        press(&mut a, KeyCode::Char(c));
+    }
+    let Effect::Run(req) = press(&mut a, KeyCode::Enter) else {
+        panic!("expected a run")
+    };
+    assert_eq!(
+        req.argv[3..],
+        ["--search".to_string(), "boil; water".into()]
+    );
+    // p: straight to the packs screen.
+    press(&mut a, KeyCode::Char('p'));
+    assert!(matches!(a.view(), View::Packs { .. }));
+}
+
+#[test]
+fn library_entries_are_hidden_without_a_catalog() {
+    let mut a = app(Mode::UltraStable, "no-packs");
+    assert!(
+        a.entries(Category::Knowledge)
+            .contains(&Entry::Builtin(Builtin::Packs))
+    );
+    std::fs::remove_file(&a.paths.packs_config).expect("rm");
+    let e = a.entries(Category::Knowledge);
+    assert!(!e.contains(&Entry::Builtin(Builtin::Packs)));
+    assert!(!e.contains(&Entry::Builtin(Builtin::Library)));
+    assert!(a.search("resource packs").is_empty());
+    a.paths.packs_config = a.home.join("missing.toml");
+    let (v, e) = a.activate(Entry::Builtin(Builtin::Library));
+    assert!(v.is_none() && e == Effect::None);
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { title, .. }) if title == "RESOURCE PACKS UNAVAILABLE")
+    );
 }

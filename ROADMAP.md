@@ -46,8 +46,9 @@ test in docs/TESTING.md actually ran and passed (VM only so far).
 
 ## Phase 3 — Productivity and knowledge 🟡
 - ✅ Nano, Vim, Midnight Commander, calculator, units, calendar, notes, handbook
-- ⬜ Kiwix: `kiwix-serve` (localhost) + evaluated text browser, search & links tested
-- ⬜ Resource-pack manager (docs/RESOURCE_PACKS.md), USB discovery
+- ✅ Kiwix: `kiwix-serve` (127.0.0.1, one file) + lynx (restricted), links and full-text search tested (ADR 0013)
+- ✅ Resource packs: choose by category/language with sizes, download (resumable) or copy from USB, hash-pinned catalog, unprivileged store (ADR 0013)
+- ⬜ Read packs directly from a stick on the live system (no installation)
 - ⬜ First offline guides with provenance; man/NixOS docs pack
 - ⬜ Document viewing (pdftotext), CSV tool, file search in the TUI
 

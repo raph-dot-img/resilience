@@ -15,7 +15,7 @@ Last full run (`nix flake check -L --max-jobs 1`, all VM tests): 2026-11-14 on t
 | Screen dump for review | `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` | ~2 s |
 | Evaluate everything | `nix flake check --no-build` | ~30 s |
 | Everything incl. VM tests | `nix flake check -L --max-jobs 1` | ~5 min cold |
-| One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-backup`, `vm-wifi`, `vm-generations`, `vm-boot-offline`) | ~1–2 min |
+| One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-backup`, `vm-wifi`, `vm-generations`, `vm-packs`, `vm-boot-offline`) | ~1–2 min |
 | ISO boot smoke test | `nix build .#iso -o result-iso && python3 -I tests/iso/smoke.py result-iso/iso/*.iso /tmp/shots [--uefi OVMF.fd]` | ~2 min |
 
 Always pass `--max-jobs 1` to `nix flake check` on the 12 GB development
@@ -31,8 +31,9 @@ which corrupts text next to box-drawing characters with our console font.
 
 | Suite | Tests | Result |
 |---|---|---|
-| resilience-core: mode, status, network, catalog, config, handbook, notes, launch (incl. env overrides, polkit agent ordering), proc (incl. `run_visible`: clean environment, timeout kills the whole process group, with a positive control), admin (names, modes, config, refusals, overrides/staleness, Ultra-Stable-only machines, group ops, audit lines, timestamps), recovery (generations, generation numbers, default-generation rules: existing, not default, closure directly in the store with switch-to-configuration; report files), media (lsblk parsing/escapes, removable-only selection, device validation, udisks errors), backup (names, checksums, listing, size estimate, pipeline failure cause, **real age round trip**: encrypt, check, restore, no overwrite, wrong key, damaged with/without checksum), clock (local and strict UTC parsing, impossible dates, bounds, zone names), wifi (nmcli terse escapes, security kinds, scan dedupe/sort/saved match, profiles, private profile argv without secret, password only on stdin with a fake nmcli, password rules, failure hints) | 87 | PASS (round trip needs age in PATH: runs in the Nix build; SKIPPED on a host without age) |
-| resilience-tui: navigation, rendering 80×24…200×60, modes, restricted commands, missing programs, confirmations, Ctrl-C, handbook, search, notes, themes, shell gating, wrapping, console glyphs; Users & modes (consequences, Cancel default, fixed pkexec argv + SHELL + agent, refusals, no administrator, corrupt config); Recovery (health, guide, report 0600 / no overwrite); System generations (list and states at all sizes, empty list, current default and incomplete generation explained, confirmation with Cancel default, fixed pkexec argv + SHELL + agent, list refreshed after the helper, no administrator); Backups & USB sticks (internal disk never listed, unusable devices, mount via `--no-user-interaction`, Cancel default, backup/check/restore argv, eject busy / safe, lsblk failure); Date & time (prefilled, input filter, errors kept in the dialog, Cancel default, local→UTC argv, no administrator); Wi-Fi (list at 80×24, password dialog masked, nothing created before confirm / on Esc, private profile, secret on stdin only, wrong password → nothing saved, saved network without password, refused saved password → dialog, forget + Cancel default, admin profile not deletable, open warning, 802.1X/WEP refused, polkit refusal, radio off, no adapter, no nmcli) | 44 | PASS |
+| resilience-core: mode, status, network, catalog, config, handbook, notes, launch (incl. env overrides, polkit agent ordering), proc (incl. `run_visible`: clean environment, timeout kills the whole process group, with a positive control), admin (names, modes, config, refusals, overrides/staleness, Ultra-Stable-only machines, group ops, audit lines, timestamps), recovery (generations, generation numbers, default-generation rules: existing, not default, closure directly in the store with switch-to-configuration; report files), media (lsblk parsing/escapes, removable-only selection, device validation, udisks errors), backup (names, checksums, listing, size estimate, pipeline failure cause, **real age round trip**: encrypt, check, restore, no overwrite, wrong key, damaged with/without checksum), clock (local and strict UTC parsing, impossible dates, bounds, zone names), wifi (nmcli terse escapes, security kinds, scan dedupe/sort/saved match, profiles, private profile argv without secret, password only on stdin with a fake nmcli, password rules, failure hints), packs (ids, file names, https-only URLs, version stems, strict catalog, plan/outcome lines, chunk framing limits, receive with resume, wrong offset skipped in step, mismatch and extra bytes deleted, sender vanishing keeps the bytes, full-size part restarted, free-space margin, other versions, safe removal (symlink refused), packs found on a stick, reader URLs) | 96 | PASS (round trip needs age in PATH: runs in the Nix build; SKIPPED on a host without age) |
+| resilience-library and resilience-pack-store: strict store arguments (ids, file names, at most 64), library arguments, chunked copy stops at the size, loopback listener owner from /proc/net/tcp | 3 | PASS |
+| resilience-tui: navigation, rendering 80×24…200×60, modes, restricted commands, missing programs, confirmations, Ctrl-C, handbook, search, notes, themes, shell gating, wrapping, console glyphs; Users & modes (consequences, Cancel default, fixed pkexec argv + SHELL + agent, refusals, no administrator, corrupt config); Recovery (health, guide, report 0600 / no overwrite); System generations (list and states at all sizes, empty list, current default and incomplete generation explained, confirmation with Cancel default, fixed pkexec argv + SHELL + agent, list refreshed after the helper, no administrator); Backups & USB sticks (internal disk never listed, unusable devices, mount via `--no-user-interaction`, Cancel default, backup/check/restore argv, eject busy / safe, lsblk failure); Date & time (prefilled, input filter, errors kept in the dialog, Cancel default, local→UTC argv, no administrator); Wi-Fi (list at 80×24, password dialog masked, nothing created before confirm / on Esc, private profile, secret on stdin only, wrong password → nothing saved, saved network without password, refused saved password → dialog, forget + Cancel default, admin profile not deletable, open warning, 802.1X/WEP refused, polkit refusal, radio off, no adapter, no nmcli); Resource packs (grouped by category, headers skipped, wrap-around, states and percentages, language filter, ticks [+]/[-], partial download continue/discard cycle, totals, offline refusal, confirmation with Cancel default, fixed `resilience-library change` argv, refresh after the run, stick chosen and mounted, packs found on a stick, missing ones named); Offline library (installed and older versions, open and search argv as single arguments, hidden without a catalog, also from search) | 49 | PASS |
 | `cargo clippy --all-targets` | — | PASS (0 warnings) |
 
 ### Nix
@@ -41,7 +42,7 @@ which corrupts text next to box-drawing characters with our console font.
 |---|---|
 | Flake evaluation (`nix flake check --no-build`) | PASS |
 | `eval-live-iso`: live-standard, live-minimal, dev-vm evaluate | PASS |
-| `security-invariants`: 22 invariants × 3 configurations | PASS |
+| `security-invariants`: 24 invariants × 3 configurations | PASS |
 | Invariant checker rejects a live configuration with user namespaces forced on | PASS (manual, once) |
 | Invariant checker rejects a deliberately broken configuration (ssh on, root password) | PASS (manual, once) |
 | Invariant checker rejects a privileged autologin account and an extra polkit admin identity | PASS (manual, once; this found that the autologin invariant had been vacuous) |
@@ -161,6 +162,24 @@ marker file, installed in the test with `nix-env --set` and
 | Root (as with sudo) makes generation 2 the default again; audited `caller=root` | PASS |
 | Ctrl-C during the operation, boot-loader timeout, concurrent `nixos-rebuild`, GRUB/BIOS, physical hardware | NOT TESTED |
 
+### VM: `vm-packs` — resource packs and the offline library (ADR 0013), driven through the TUI
+
+Two machines: an HTTPS mirror (nginx, test certificate, 256 KiB/s) and the
+Resilience machine (alice Ultra-Stable on tty1, carol Advanced). The test
+ZIM file is built with `zimwriterfs` during the build.
+
+| Check | Result |
+|---|---|
+| Store: packs directory `resilience-packs` 0755; the store refuses alice and root ("must run as resilience-packs"), bad ids (usage) and unknown ids; alice cannot write there; `pkaction` auth_admin for any/inactive/active; `pkcheck` on the TUI → challenge | PASS |
+| TUI: catalog grouped by category with sizes; language filter | PASS |
+| USB: stick hot-plugged, `u`, mounted through udisks, pack found in `Resilience-packs/`, confirmation, polkit prompt shows the exact store command line, carol's password → "installed and checked"; file `resilience-packs` 0644, SHA-256 equal to the catalog; journal `op=get … result=ok` | PASS |
+| Library: notice shown, pack opened in lynx, kiwix-serve on 127.0.0.1 only, link followed, `!` → "Spawning is currently disabled" and no shell process, `g` refused; server stopped after quitting; full-text search finds the marker word | PASS |
+| Wrong administrator password → "Not authorised", nothing staged | PASS |
+| Download interrupted with Ctrl-C (part kept, between 0 and the size), shown as "% done", resumed ("continuing from"), mirror log shows `206 bytes=<part>-`, SHA-256 equal, part removed | PASS |
+| Mirror serves other bytes for a pack → "not the expected file", nothing installed or staged, journal `result=mismatch` | PASS |
+| Ticked installed pack removed with the administrator's password; other packs kept; system `running` | PASS |
+| Real Kiwix downloads, multi-GiB packs, stick removed during a copy, two concurrent changes, physical hardware | NOT TESTED |
+
 ### ISO boot (`tests/iso/smoke.py`, screenshots reviewed by a human/agent)
 
 | Firmware | Result |
@@ -188,11 +207,11 @@ marker file, installed in the test with `nix-env --set` and
 | # | Scenario | Status |
 |---|---|---|
 | 2 | Boot with Wi-Fi unavailable | NOT TESTED as a boot scenario (vm-wifi uses simulated radios; logic shared with #1) |
-| 6 | Search locally installed resources (resource packs) | BLOCKED — resource packs not implemented |
+| 6 | Search locally installed resources (resource packs) | PASS (vm-packs: full-text search in an installed pack) |
 | 7 | Open installed maps | BLOCKED — maps not implemented |
 | 9 | Cryptographic operations | BLOCKED — Phase 4 |
 | 10 | Access local files (file manager) | NOT TESTED in VM (mc launch untested) |
-| 11 | Import a resource pack from USB | BLOCKED — Phase 3 |
+| 11 | Import a resource pack from USB | PASS (vm-packs, QEMU usb-storage) |
 | 12 | Verify an offline update bundle | BLOCKED — Phase 8 |
 | 13 | Communicate across a local network | BLOCKED — Phase 6 |
 | — | Installer, rollback to previous generation | BLOCKED — no installer yet |

@@ -113,20 +113,38 @@ polkit: no networkmanager/wheel group ⇒ only scan, network-control,
         settings.modify.own, enable-disable-wifi; all else NO
 ```
 
-## 6. Planned components (not implemented)
+## 6. Resource packs and the offline library (ADR 0013)
+
+```
+/etc/resilience/packs.toml (root, from resilience.packs.catalog: file, size, SHA-256, https URLs)
+TUI Resource packs ── tick [+]/[-] ── d (route needed) / u (stick via udisks)
+  └─► resilience-library change [--from M] [--remove F]… [--get ID]…   (as the user)
+        pkttyagent + pkexec --user resilience-packs resilience-pack-store change …
+        store ──stdout──► "send ID OFFSET" | "skip ID REASON" … "ready"
+        library: curl -q --proto =https [--continue-at N] | file on the stick
+        library ──stdin──► [u32 len][bytes]… [0] per pack
+        store: append .staging/F.part + sha256sum (old bytes + new) ──► match: rename
+               into /var/lib/resilience/packs (resilience-packs, 0644); mismatch: delete;
+               early end: keep for next time ──stdout──► "done ID …"
+TUI Offline library ── Enter / s WORDS
+  └─► resilience-library open FILE [--search WORDS]
+        kiwix-serve --address=127.0.0.1 --port=<free> --blockexternal --attachToProcess
+        lynx -restrictions=<all but redirects> -localhost http://localhost:P/content/<book>/ ; stopped
+```
+
+## 7. Planned components (not implemented)
 
 | Component | Phase | Sketch |
 |---|---|---|
-| More `resilience-admin` operations | 3–8 | ImportPack, ApplyUpdate: one polkit action each, same validation/audit pattern |
-| `resilience-resource-manager` | 3 | discover/verify (minisign)/install/remove TAR+zstd packs with manifests on external media |
-| Kiwix integration | 3 | `kiwix-serve` on 127.0.0.1 + text browser, or a native ZIM reader |
+| More `resilience-admin` operations | 8 | ApplyUpdate: one polkit action, same validation/audit pattern |
+| Packs read from a stick | 3 | open a catalog pack directly from a mounted stick (live system) |
 | Crypto workflows | 4 | guided age/minisign/GnuPG operations, secrets via stdin/fd |
 | Maps | 5 | MBTiles/GeoPackage rendering with block characters |
 | Local messaging | 6 | evaluate Reticulum (rns, in nixpkgs) before writing anything |
 | Installer | 8 | text installer, explicit disk confirmation, optional LUKS |
 | Offline updates | 8 | `nix copy` closures + signed manifest on removable media |
 
-## 7. Resource budget (to be measured — see ROADMAP)
+## 8. Resource budget (to be measured — see ROADMAP)
 
 Targets, not measurements: idle RAM < 200 MiB without optional services; TUI
 RSS < 15 MiB; boot to TUI < 20 s on SSD; no periodic wakeups from our code

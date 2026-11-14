@@ -30,6 +30,10 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            org.resilience.admin.{set-mode,set-time,set-default-generation} (auth_admin),
    │                            tmpfiles for state/audit, activation `apply-state`
    │            media.nix       udisks2 (removable media; its polkit defaults, no overrides)
+   │            packs.nix       resource packs (ADR 0013): /etc/resilience/packs.toml (catalog with
+   │                            pinned size+SHA-256, default nix/packs/kiwix.nix), system user
+   │                            resilience-packs owns /var/lib/resilience/packs, polkit action
+   │                            org.resilience.packs.change (auth_admin), lynx restrictions
    │            users.nix       resilience.users.<n>.mode -> groups, login shell,
    │                            nix allowed-users
    │            interface.nix   getty branding, console font ter-i16n, tty1-only
@@ -42,7 +46,7 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
    ├─ packages: resilience, resilience-session, resilience-handbook, iso, iso-minimal, vm
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
-              vm-backup, vm-wifi, vm-generations, security-invariants, eval-live-iso
+              vm-backup, vm-wifi, vm-generations, vm-packs, security-invariants, eval-live-iso
 
 crates/resilience-core  library: status, network (passive + on-demand probe),
                         mode detection, catalog, config, handbook, notes, launch, proc,
@@ -50,12 +54,17 @@ crates/resilience-core  library: status, network (passive + on-demand probe),
                         recovery (generations, default-generation rules, report),
                         media (lsblk parsing, udisksctl mount/eject), backup (tar|zstd|age
                         pipeline, checksum, restore into ~/Restored), wifi (nmcli parsing,
-                        private profiles, password via stdin)
+                        private profiles, password via stdin), packs (catalog, inventory,
+                        stdin chunk framing, receive+hash, remove, reader URLs)
 crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR 0007):
                         list | set-mode USER MODE | set-time UTC |
                         set-default-generation N | apply-state
 crates/resilience-backup binary `resilience-backup` (UNPRIVILEGED, ADR 0008):
                         create MOUNT | check FILE | restore FILE
+crates/resilience-library binaries (ADR 0013): `resilience-library` (as the user: list |
+                        change [--from M] [--remove F].. [--get ID].. | open FILE [--search W])
+                        and `resilience-pack-store` (as resilience-packs via pkexec --user,
+                        never root: change; stdin bytes only hashed, never parsed)
 crates/resilience-tui   binary `resilience`: app.rs (state machine, returns Effects),
                         ui.rs (rendering), theme.rs, help.rs, tests.rs
 nix/packages/resilience-session  login shell: runs TUI, restarts after crash, refuses -c
@@ -87,6 +96,16 @@ N` → helper: plan_set_default (exists, not default, closure in /nix/store with
 switch-to-configuration) → `nix-env -p …/system --switch-generation N` →
 `<gen>/bin/switch-to-configuration boot` (clean env; profile switched back on
 failure) → audit. Never `switch`: the running system is untouched.
+
+Resource packs flow: TUI Knowledge → Resource packs (Space ticks [+]/[-], f
+language, d download, u USB stick) → confirm → `resilience-library change …`
+in the foreground → pkttyagent + `pkexec --user resilience-packs
+<store> change …` (one admin password) → store prints `send ID OFFSET`/`skip`
+lines → library streams curl (HTTPS only, --continue-at) or the stick file as
+[u32 len][bytes] chunks → store appends to .staging/F.part, sha256sum over
+old+new bytes, rename only on match; early end keeps the part (resume).
+Reading: Offline library → `resilience-library open FILE` → kiwix-serve
+127.0.0.1:<free port> + lynx with every restriction (`-restrictions=…`, not `all`) and `-localhost`.
 
 Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
 with `connection.permissions user:U`, no secret → thread: `nmcli connection
@@ -158,6 +177,11 @@ it concurrently with VM tests.
   `nix-env --set` + `switch-to-configuration boot`; `machine.shutdown()` +
   `start()` keeps the disk. TUI lists wrap around: use End/Home, not
   repeated Down. See vm-generations.
+- Resource packs in VM tests: never commit `.zim` files (gitignored); build a
+  test ZIM with `zimwriterfs` at build time and append its catalog entry to
+  `config.resilience.packs.configFile` (mkForce the etc file). A second node
+  serves HTTPS with a test certificate (`security.pki.certificateFiles`) and
+  `limit_rate` to interrupt a download. See vm-packs.
 - pkexec in VM tests: run it under `setsid -w` when no agent is wanted,
   otherwise its text agent writes into the driver's terminal protocol.
 - USB sticks in VM tests: `-device qemu-xhci,id=xhci` + QEMU monitor
@@ -254,7 +278,8 @@ needlessly. Watch `free -h` during VM tests.
 
 ## 14. Current implementation status (2026-11-14)
 
-Phase 0 (foundation), Phase 1 (core) and Phase 2 done:
+Phase 0 (foundation), Phase 1 (core) and Phase 2 done; Phase 3 in progress
+(resource packs and the offline library done, ADR 0013). Phase 2:
 privileged helper with set-mode, TUI Users & security modes, TUI Recovery &
 diagnostics, faillock (ADR 0007); removable media + encrypted backups (ADR
 0008); Date & time via `set-time` (ADR 0009); Wi-Fi for every account and
@@ -285,13 +310,17 @@ See docs/TESTING.md for what has actually been executed and passed.
   those programs; they are usability measures, not a sandbox.
 - Emergency/rescue shell requires root, which is locked, by design: layered
   recovery (TUI Recovery, other ttys + Advanced/sudo, generations, live ISO).
-- No resource packs, Kiwix, maps, crypto workflows, comms or SDR yet.
+- Resource packs: installing needs an administrator (none on the live ISO);
+  packs cannot yet be read directly from a stick; Kiwix deletes old files,
+  so ageing catalog entries become USB-only. No maps, crypto workflows,
+  comms or SDR yet.
 - Power profiles not implemented (schedutil governor only). Not measured yet.
 - Not tested on physical hardware.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Next: Phase 3 (Kiwix, resource packs; reuse media.rs for USB).
+See ROADMAP.md. Next: rest of Phase 3 (packs read from a stick on the live
+system, guides with provenance, document viewing, CSV, file search).
 
 ## 17. Important decisions (docs/decisions/)
 
@@ -307,6 +336,7 @@ See ROADMAP.md. Next: Phase 3 (Kiwix, resource packs; reuse media.rs for USB).
 - 0010 Wi-Fi as the user via nmcli (private profiles, password on stdin); NM polkit allowlist without its group
 - 0011 Default generation via helper `set-default-generation` (nix-env + that generation's switch-to-configuration boot)
 - 0012 User namespaces: off (max_user_namespaces=0, no Nix sandbox) when every account is Ultra-Stable
+- 0013 Resource packs: hash-pinned catalog, unprivileged store via pkexec --user, kiwix-serve + restricted lynx
 
 ## 18. How to continue safely
 

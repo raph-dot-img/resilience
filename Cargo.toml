@@ -5,6 +5,7 @@ members = [
   "crates/resilience-tui",
   "crates/resilience-admin",
   "crates/resilience-backup",
+  "crates/resilience-library",
 ]
 
 [workspace.package]

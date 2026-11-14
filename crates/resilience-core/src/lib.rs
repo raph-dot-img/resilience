@@ -20,6 +20,7 @@ pub mod media;
 pub mod mode;
 pub mod network;
 pub mod notes;
+pub mod packs;
 pub mod proc;
 pub mod recovery;
 pub mod status;

@@ -79,6 +79,19 @@ let
             # Read by admin.nix as `ultra_stable_only` in admin.toml.
             && !c.resilience.security.userNamespaces
           );
+        # ADR 0013: packs are written by an unprivileged system account only.
+        "pack store is an unprivileged system account" =
+          !c.resilience.packs.enable
+          || (
+            c.users.users.resilience-packs.isSystemUser
+            && c.users.users.resilience-packs.extraGroups == [ ]
+            && c.users.users.resilience-packs.group == "resilience-packs"
+            && !(c.security.wrappers ? resilience-pack-store)
+            && !(c.security.wrappers ? resilience-library)
+          );
+        "installed packs are writable by the pack store only" =
+          !c.resilience.packs.enable
+          || lib.elem "d ${c.resilience.packs.dir} 0755 resilience-packs resilience-packs -" c.systemd.tmpfiles.rules;
         "autologin account is not privileged" =
           autologin == null
           || lib.intersectLists [ "wheel" "resilience-stable" ] c.users.users.${autologin}.extraGroups == [ ];

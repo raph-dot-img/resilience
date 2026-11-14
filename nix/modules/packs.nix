@@ -1,0 +1,230 @@
+# Resource packs: large offline content chosen by the user (ADR 0013).
+#
+# * The catalog (default: nix/packs/kiwix.nix) pins every file's size and
+#   SHA-256. It is generated into the root-owned /etc/resilience/packs.toml,
+#   which is the only thing the store trusts.
+# * Installed packs live in `dir`, owned by the unprivileged system account
+#   `resilience-packs`. Only `resilience-pack-store` writes there, started by
+#   `pkexec --user resilience-packs` after an administrator's password
+#   (polkit action org.resilience.packs.change, auth_admin, never _keep).
+#   It never runs as root and never parses the content.
+# * Reading: kiwix-serve on 127.0.0.1 for one file at a time, and lynx with
+#   every restriction on (no shell escape, no saving, no other address).
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+
+let
+  inherit (lib) mkOption types;
+  cfg = config.resilience.packs;
+  toml = pkgs.formats.toml { };
+  store = "${config.resilience.package}/bin/resilience-pack-store";
+  library = "${config.resilience.package}/bin/resilience-library";
+
+  packModule = {
+    options = {
+      id = mkOption {
+        type = types.strMatching "[a-z0-9][a-z0-9-]{0,63}";
+        description = "Stable identifier across versions.";
+      };
+      title = mkOption { type = types.str; };
+      description = mkOption { type = types.str; };
+      category = mkOption {
+        type = types.enum [
+          "encyclopedia"
+          "dictionary"
+          "health"
+          "practical"
+          "travel"
+          "computing"
+        ];
+      };
+      language = mkOption {
+        type = types.strMatching "[a-z]{2,3}";
+        description = "ISO 639 code of the content's language.";
+      };
+      file = mkOption {
+        type = types.strMatching "[A-Za-z0-9][A-Za-z0-9._-]*\\.zim";
+        description = "File name, as published (e.g. on download.kiwix.org).";
+      };
+      size = mkOption {
+        type = types.ints.positive;
+        description = "Exact size in bytes.";
+      };
+      sha256 = mkOption {
+        type = types.strMatching "[0-9a-f]{64}";
+        description = "SHA-256 of the file. Only a file with this hash is installed.";
+      };
+      urls = mkOption {
+        type = types.listOf (types.strMatching "https://[^[:space:]]+");
+        default = [ ];
+        description = "Download addresses, tried in order. Empty: USB sticks only.";
+      };
+      license = mkOption { type = types.str; };
+      source = mkOption { type = types.str; };
+      notice = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Shown before the content opens (e.g. medical packs).";
+      };
+    };
+  };
+
+  # Lynx settings beyond its defaults; restrictions are on the command line.
+  lynxCfg = pkgs.writeText "resilience-lynx.cfg" ''
+    INCLUDE:${pkgs.lynx}/etc/lynx.cfg
+    CHARACTER_SET:utf-8
+    SET_COOKIES:FALSE
+    ACCEPT_ALL_COOKIES:FALSE
+    NO_REFERER_HEADER:TRUE
+    MAKE_LINKS_FOR_ALL_IMAGES:FALSE
+    SHOW_CURSOR:TRUE
+  '';
+
+  lynxRestrictions = [
+    "bookmark"
+    "bookmark_exec"
+    "change_exec_perms"
+    "chdir"
+    "dired_support"
+    "disk_save"
+    "dotfiles"
+    "download"
+    "editor"
+    "exec"
+    "exec_frozen"
+    "file_url"
+    "goto"
+    "jump"
+    "lynxcfg_xinfo"
+    "lynxcgi"
+    "mail"
+    "multibook"
+    "news_post"
+    "option_save"
+    "print"
+    "shell"
+    "suspend"
+    "useragent"
+    "inside_ftp"
+    "outside_ftp"
+    "inside_news"
+    "outside_news"
+    "inside_rlogin"
+    "outside_rlogin"
+    "inside_telnet"
+    "outside_telnet"
+    "telnet_port"
+  ];
+
+  packsConfigUnchecked = toml.generate "resilience-packs.toml" {
+    dir = cfg.dir;
+    store_user = "resilience-packs";
+    inherit store;
+    pkexec = "${config.security.wrapperDir}/pkexec";
+    pkttyagent = "${lib.getBin config.security.polkit.package}/bin/pkttyagent";
+    curl = "${lib.getBin pkgs.curl}/bin/curl";
+    sha256sum = "${pkgs.coreutils}/bin/sha256sum";
+    kiwix_serve = "${pkgs.kiwix-tools}/bin/kiwix-serve";
+    browser = [
+      (lib.getExe pkgs.lynx)
+      "-cfg=${lynxCfg}"
+      # Every restriction except those that only concern old protocols;
+      # not `all`, which also refuses the server's redirects.
+      "-restrictions=${lib.concatStringsSep "," lynxRestrictions}"
+      "-localhost"
+      "-noreferer"
+      "-display_charset=utf-8"
+    ];
+    session_shell = "/run/current-system/sw${config.resilience.sessionPackage.shellPath}";
+    pack = map (p: lib.filterAttrs (_: v: v != null) p) cfg.catalog;
+  };
+
+  # The same parser as the store checks the file at build time.
+  packsConfig = pkgs.runCommand "resilience-packs-checked.toml" { } ''
+    ${library} check-config ${packsConfigUnchecked}
+    cp ${packsConfigUnchecked} $out
+  '';
+
+  policy = pkgs.writeTextDir "share/polkit-1/actions/org.resilience.packs.policy" ''
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+      "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+    <policyconfig>
+      <vendor>Resilience OS</vendor>
+      <action id="org.resilience.packs.change">
+        <description>Install or remove resource packs</description>
+        <message>Installing or removing resource packs requires an administrator password. Request: $(command_line)</message>
+        <defaults>
+          <allow_any>auth_admin</allow_any>
+          <allow_inactive>auth_admin</allow_inactive>
+          <allow_active>auth_admin</allow_active>
+        </defaults>
+        <annotate key="org.freedesktop.policykit.exec.path">${store}</annotate>
+      </action>
+    </policyconfig>
+  '';
+in
+{
+  options.resilience.packs = {
+    enable = mkOption {
+      type = types.bool;
+      default = true;
+      description = "Offer resource packs (offline library) in the interface.";
+    };
+    dir = mkOption {
+      type = types.strMatching "/[^[:space:]]+";
+      default = "/var/lib/resilience/packs";
+      description = "Where installed packs are kept, shared by every account.";
+    };
+    configFile = mkOption {
+      type = types.package;
+      readOnly = true;
+      internal = true;
+      description = "The generated and checked /etc/resilience/packs.toml.";
+    };
+    catalog = mkOption {
+      type = types.listOf (types.submodule packModule);
+      default = import ../packs/kiwix.nix;
+      defaultText = lib.literalExpression "import ./nix/packs/kiwix.nix";
+      description = ''
+        Packs offered for download or installation from a USB stick. Only a
+        file with exactly this size and SHA-256 is installed.
+      '';
+    };
+  };
+
+  config = lib.mkIf cfg.enable {
+    resilience.packs.configFile = packsConfig;
+
+    assertions = [
+      {
+        assertion = lib.allUnique (map (p: p.id) cfg.catalog);
+        message = "resilience.packs.catalog: pack ids must be unique";
+      }
+      {
+        assertion = lib.allUnique (map (p: p.file) cfg.catalog);
+        message = "resilience.packs.catalog: pack files must be unique";
+      }
+    ];
+
+    users.users.resilience-packs = {
+      isSystemUser = true;
+      group = "resilience-packs";
+      description = "Resilience resource packs";
+      home = "/var/empty";
+    };
+    users.groups.resilience-packs = { };
+
+    systemd.tmpfiles.rules = [
+      "d ${cfg.dir} 0755 resilience-packs resilience-packs -"
+      "d ${cfg.dir}/.staging 0755 resilience-packs resilience-packs -"
+    ];
+
+    environment.etc."resilience/packs.toml".source = packsConfig;
+    environment.systemPackages = [ policy ];
+  };
+}

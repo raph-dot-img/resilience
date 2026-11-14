@@ -67,78 +67,97 @@ pub fn run_foreground(
     status
 }
 
-/// Run `argv` (a `pkexec` command) with polkit's text agent `pkttyagent`
-/// registered for this process, so the administrator's password is asked on
-/// the terminal.
+/// polkit's text agent `pkttyagent`, registered for this process while the
+/// value lives, so that an administrator's password is asked on the
+/// terminal for `pkexec` commands this process starts.
 ///
 /// pkexec's built-in agent cannot complete a successful authentication
 /// when polkit uses its socket-activated helper (the helper reports pkexec's
 /// effective uid 0, polkitd expects the calling user; upstream polkit issue
 /// 17). pkttyagent runs as the user, so the uids match. pkexec checks the
-/// authorisation of its parent, which is this process.
+/// authorisation of its parent, which must be this process.
+pub struct PolkitAgent {
+    child: std::process::Child,
+}
+
+impl PolkitAgent {
+    pub fn start(agent: &str) -> io::Result<PolkitAgent> {
+        let mut fds = [0 as libc::c_int; 2];
+        // SAFETY: pipe2 writes two descriptors into the provided array.
+        if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let (read_fd, write_fd) = (fds[0], fds[1]);
+        // SAFETY: getpid cannot fail.
+        let pid = unsafe { libc::getpid() };
+        let mut cmd = Command::new(agent);
+        cmd.args([
+            "--process".to_string(),
+            pid.to_string(),
+            "--notify-fd".to_string(),
+            write_fd.to_string(),
+            "--fallback".to_string(),
+        ]);
+        // SAFETY: between fork and exec, only fcntl (async-signal-safe) is
+        // called to let the child inherit the write end of the pipe.
+        unsafe {
+            cmd.pre_exec(move || {
+                if libc::fcntl(write_fd, libc::F_SETFD, 0) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let spawned = cmd.spawn();
+        // SAFETY: the parent no longer needs the write end.
+        unsafe { libc::close(write_fd) };
+        let mut child = match spawned {
+            Ok(c) => c,
+            Err(e) => {
+                // SAFETY: closing a descriptor we own.
+                unsafe { libc::close(read_fd) };
+                return Err(e);
+            }
+        };
+        // pkttyagent closes the notify fd once it is registered: wait for EOF.
+        let mut pfd = libc::pollfd {
+            fd: read_fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: poll on one valid descriptor with a 5 s timeout.
+        let ready = unsafe { libc::poll(&mut pfd, 1, 5000) };
+        // SAFETY: closing a descriptor we own.
+        unsafe { libc::close(read_fd) };
+        if ready == 1 {
+            Ok(PolkitAgent { child })
+        } else {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the polkit authentication agent did not start",
+            ))
+        }
+    }
+}
+
+impl Drop for PolkitAgent {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Run `argv` (a `pkexec` command) in the foreground with [`PolkitAgent`]
+/// registered for this process.
 pub fn run_with_polkit_agent(
     agent: &str,
     argv: &[String],
     env: &[(String, String)],
 ) -> io::Result<ExitStatus> {
-    let mut fds = [0 as libc::c_int; 2];
-    // SAFETY: pipe2 writes two descriptors into the provided array.
-    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let (read_fd, write_fd) = (fds[0], fds[1]);
-    // SAFETY: getpid cannot fail.
-    let pid = unsafe { libc::getpid() };
-    let mut cmd = Command::new(agent);
-    cmd.args([
-        "--process".to_string(),
-        pid.to_string(),
-        "--notify-fd".to_string(),
-        write_fd.to_string(),
-        "--fallback".to_string(),
-    ]);
-    // SAFETY: between fork and exec, only fcntl (async-signal-safe) is called
-    // to let the child inherit the write end of the pipe.
-    unsafe {
-        cmd.pre_exec(move || {
-            if libc::fcntl(write_fd, libc::F_SETFD, 0) != 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
-    let spawned = cmd.spawn();
-    // SAFETY: the parent no longer needs the write end.
-    unsafe { libc::close(write_fd) };
-    let mut child = match spawned {
-        Ok(c) => c,
-        Err(e) => {
-            // SAFETY: closing a descriptor we own.
-            unsafe { libc::close(read_fd) };
-            return Err(e);
-        }
-    };
-    // pkttyagent closes the notify fd once it is registered: wait for EOF.
-    let mut pfd = libc::pollfd {
-        fd: read_fd,
-        events: libc::POLLIN,
-        revents: 0,
-    };
-    // SAFETY: poll on one valid descriptor with a 5 s timeout.
-    let ready = unsafe { libc::poll(&mut pfd, 1, 5000) };
-    // SAFETY: closing a descriptor we own.
-    unsafe { libc::close(read_fd) };
-    let result = if ready == 1 {
-        run_foreground(argv, &[], env)
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            "the polkit authentication agent did not start",
-        ))
-    };
-    let _ = child.kill();
-    let _ = child.wait();
-    result
+    let _agent = PolkitAgent::start(agent)?;
+    run_foreground(argv, &[], env)
 }
 
 #[cfg(test)]

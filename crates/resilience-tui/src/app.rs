@@ -30,6 +30,10 @@ use resilience_core::wifi::{self, Network, Overview};
 
 use crate::theme::Theme;
 
+#[path = "library.rs"]
+mod library;
+pub use library::{LibItem, PackRow, PacksScreen};
+
 const FAST_REFRESH: Duration = Duration::from_secs(5);
 const SLOW_REFRESH: Duration = Duration::from_secs(30);
 const TOAST_DURATION: Duration = Duration::from_secs(6);
@@ -42,6 +46,9 @@ pub const SET_DEFAULT_GENERATION_LABEL: &str = "Default generation";
 pub const BACKUP_LABEL: &str = "Backup of your files";
 pub const CHECK_LABEL: &str = "Check a backup";
 pub const RESTORE_LABEL: &str = "Restore a backup";
+/// Labels of the offline library runs (see `after_run`).
+pub const LIBRARY_LABEL: &str = "Offline library";
+pub const PACKS_LABEL: &str = "Resource packs";
 
 /// System files the interface reads. Real paths by default; tests point
 /// them into a temporary directory.
@@ -54,6 +61,8 @@ pub struct Paths {
     pub store: PathBuf,
     pub booted_system: PathBuf,
     pub running_system: PathBuf,
+    /// Catalog of resource packs (ADR 0013); absent when packs are disabled.
+    pub packs_config: PathBuf,
 }
 
 impl Default for Paths {
@@ -65,6 +74,7 @@ impl Default for Paths {
             store: "/nix/store".into(),
             booted_system: "/run/booted-system".into(),
             running_system: "/run/current-system".into(),
+            packs_config: resilience_core::packs::PACKS_CONFIG_PATH.into(),
         }
     }
 }
@@ -118,6 +128,8 @@ impl RecoveryItem {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     Handbook,
+    Library,
+    Packs,
     Notes,
     Network,
     Wifi,
@@ -136,8 +148,10 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 16] = [
+    pub const ALL: [Builtin; 18] = [
         Builtin::Handbook,
+        Builtin::Library,
+        Builtin::Packs,
         Builtin::Notes,
         Builtin::Network,
         Builtin::Wifi,
@@ -158,6 +172,8 @@ impl Builtin {
     pub fn name(self) -> &'static str {
         match self {
             Builtin::Handbook => "Resilience Handbook",
+            Builtin::Library => "Offline library",
+            Builtin::Packs => "Resource packs: choose what to get",
             Builtin::Notes => "Notes",
             Builtin::Network => "Network status & diagnostics",
             Builtin::Wifi => "Wi-Fi networks",
@@ -180,6 +196,16 @@ impl Builtin {
         match self {
             Builtin::Handbook => {
                 "The built-in user guide: first steps, security modes, recovery. Works fully offline."
+            }
+            Builtin::Library => {
+                "Read the resource packs installed on this computer (encyclopedias, \
+                 dictionaries, health and practical guides), with full-text search. \
+                 Works without any network."
+            }
+            Builtin::Packs => {
+                "See every resource pack available, its size and language, and tick the \
+                 ones you want: download them when online, or copy them from a USB stick. \
+                 Installing or removing needs an administrator's password."
             }
             Builtin::Notes => {
                 "Write and keep personal text notes. Notes are private files in your Notes folder."
@@ -222,7 +248,7 @@ impl Builtin {
 
     pub fn category(self) -> Category {
         match self {
-            Builtin::Handbook => Category::Knowledge,
+            Builtin::Handbook | Builtin::Library | Builtin::Packs => Category::Knowledge,
             Builtin::Notes => Category::Productivity,
             Builtin::Network | Builtin::Wifi => Category::Networking,
             _ => Category::System,
@@ -239,6 +265,14 @@ impl Builtin {
     fn keywords(self) -> &'static str {
         match self {
             Builtin::Handbook => "help guide manual documentation docs",
+            Builtin::Library => {
+                "library kiwix zim wikipedia encyclopedia dictionary wiktionary read offline \
+                 medicine health travel wikivoyage articles"
+            }
+            Builtin::Packs => {
+                "packs resource download install usb kiwix zim wikipedia encyclopedia \
+                 dictionary content get add remove"
+            }
             Builtin::Notes => "write text memo journal",
             Builtin::Network => "wifi ethernet internet offline online dns",
             Builtin::Wifi => {
@@ -296,6 +330,7 @@ pub enum HelpTopic {
     Users,
     Recovery,
     Backup,
+    Library,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -359,10 +394,21 @@ pub enum View {
         gens: Vec<recovery::Generation>,
         list: ListState,
     },
-    /// Removable volumes.
+    /// Removable volumes; `for_packs`: chosen to copy resource packs from.
     Media {
         volumes: Vec<Volume>,
         error: Option<String>,
+        list: ListState,
+        for_packs: bool,
+    },
+    /// Installed resource packs; Enter reads one.
+    Library {
+        items: Vec<LibItem>,
+        list: ListState,
+    },
+    /// The catalog of resource packs with the user's ticks.
+    Packs {
+        s: Box<PacksScreen>,
         list: ListState,
     },
     /// Nearby Wi-Fi networks (NetworkManager, as the user).
@@ -415,6 +461,13 @@ pub enum Pending {
     Restore {
         file: PathBuf,
     },
+    /// Install (`get`, pack ids) and remove (`remove`, file names) packs,
+    /// downloading or copying from the stick mounted at `from`.
+    ChangePacks {
+        get: Vec<String>,
+        remove: Vec<String>,
+        from: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug)]
@@ -443,6 +496,8 @@ pub enum Modal {
         value: String,
         error: Option<String>,
     },
+    /// Words to search for in one pack.
+    PackSearch { item: LibItem, value: String },
     /// Type a new local date and time.
     SetTime {
         value: String,
@@ -687,9 +742,11 @@ impl App {
     /// Entries offered in a category for the current mode: built-ins first.
     pub fn entries(&self, cat: Category) -> Vec<Entry> {
         let mode = self.mode();
+        let packs = self.paths.packs_config.exists();
         Builtin::ALL
             .iter()
             .filter(|b| b.category() == cat && mode.allows(b.min_mode()))
+            .filter(|b| packs || !matches!(b, Builtin::Library | Builtin::Packs))
             .map(|b| Entry::Builtin(*b))
             .chain(
                 self.catalog
@@ -737,10 +794,12 @@ impl App {
             .filter(|c| c.title().to_lowercase().contains(&q))
             .map(SearchHit::Category)
             .collect();
+        let packs = self.paths.packs_config.exists();
         hits.extend(
             Builtin::ALL
                 .iter()
                 .filter(|b| mode.allows(b.min_mode()))
+                .filter(|b| packs || !matches!(b, Builtin::Library | Builtin::Packs))
                 .filter(|b| {
                     [b.name(), b.description(), b.keywords()]
                         .iter()
@@ -798,6 +857,7 @@ impl App {
             View::Recovery { .. } | View::Generations { .. } => HelpTopic::Recovery,
             View::Media { .. } | View::Backups { .. } => HelpTopic::Backup,
             View::Wifi { .. } => HelpTopic::Network,
+            View::Library { .. } | View::Packs { .. } => HelpTopic::Library,
             View::Search { .. } => HelpTopic::Search,
         }
     }
@@ -1024,8 +1084,20 @@ impl App {
                 volumes,
                 error,
                 list,
+                for_packs,
             } => {
                 let selected = list.selected().and_then(|i| volumes.get(i)).cloned();
+                if *for_packs && is_activate(key) {
+                    if let Some(v) = selected
+                        && let Some(mount) = self.mount_volume(&v)
+                    {
+                        self.packs_from_mount(&mount);
+                        return (None, Effect::None);
+                    }
+                    (*volumes, *error) = self.load_volumes();
+                    clamp_selection(list, volumes.len());
+                    return (Some(view), Effect::None);
+                }
                 match key.code {
                     KeyCode::Char('r') => {
                         (*volumes, *error) = self.load_volumes();
@@ -1146,6 +1218,57 @@ impl App {
                     },
                     _ if is_back(key) => return (None, Effect::None),
                     _ => nav(list, files.len() + 1, key),
+                }
+            }
+            View::Library { items, list } => {
+                let selected = list.selected().and_then(|i| items.get(i)).cloned();
+                match key.code {
+                    KeyCode::Char('s') => {
+                        if let Some(item) = selected {
+                            self.modal = Some(Modal::PackSearch {
+                                item,
+                                value: String::new(),
+                            });
+                        }
+                    }
+                    KeyCode::Char('p') => next = self.open_packs(),
+                    KeyCode::Char('r') => self.reload_packs_in(items, list),
+                    _ if is_activate(key) => {
+                        if let Some(item) = selected {
+                            effect = self.open_pack_effect(&item, None);
+                        }
+                    }
+                    _ if is_back(key) => return (None, Effect::None),
+                    _ => nav(list, items.len(), key),
+                }
+            }
+            View::Packs { s, list } => {
+                let rows = s.rows();
+                let row = list.selected().and_then(|i| rows.get(i)).copied();
+                match key.code {
+                    KeyCode::Char(' ') => {
+                        if let Some(r) = row {
+                            s.toggle(r);
+                        }
+                    }
+                    KeyCode::Char('d') => self.confirm_download(s),
+                    KeyCode::Char('u') => next = self.choose_pack_stick(),
+                    KeyCode::Char('f') => {
+                        s.next_language();
+                        list.select(Some(0));
+                        library::fix_selection(list, &s.rows());
+                    }
+                    KeyCode::Char('r') => {
+                        s.refresh();
+                        library::fix_selection(list, &s.rows());
+                    }
+                    KeyCode::Enter => {
+                        if let Some(r) = row {
+                            self.pack_details(s, r);
+                        }
+                    }
+                    _ if is_back(key) => return (None, Effect::None),
+                    _ => library::nav_rows(list, &rows, key),
                 }
             }
             View::Search { query, hits, list } => match key.code {
@@ -1349,6 +1472,8 @@ impl App {
                 }),
                 Effect::None,
             ),
+            Builtin::Library => (self.open_library(), Effect::None),
+            Builtin::Packs => (self.open_packs(), Effect::None),
             Builtin::Backup => {
                 let (volumes, error) = self.load_volumes();
                 let sel = (!volumes.is_empty()).then_some(0);
@@ -1357,6 +1482,7 @@ impl App {
                         volumes,
                         error,
                         list: ListState::default().with_selected(sel),
+                        for_packs: false,
                     }),
                     Effect::None,
                 )
@@ -1453,7 +1579,8 @@ impl App {
             | Pending::JoinWifi { .. }
             | Pending::ForgetWifi { .. }
             | Pending::Backup { .. }
-            | Pending::Restore { .. } => return,
+            | Pending::Restore { .. }
+            | Pending::ChangePacks { .. } => return,
             Pending::Logout => (
                 "LOG OUT",
                 "End this session? Programs you started from here will be closed.",
@@ -1598,6 +1725,28 @@ impl App {
                     Effect::None
                 }
             },
+            Modal::PackSearch { item, mut value } => match key.code {
+                KeyCode::Esc => Effect::None,
+                KeyCode::Enter if !value.trim().is_empty() => {
+                    self.open_pack_effect(&item, Some(value.trim()))
+                }
+                KeyCode::Backspace => {
+                    value.pop();
+                    self.modal = Some(Modal::PackSearch { item, value });
+                    Effect::None
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if value.chars().count() < 80 {
+                        value.push(c);
+                    }
+                    self.modal = Some(Modal::PackSearch { item, value });
+                    Effect::None
+                }
+                _ => {
+                    self.modal = Some(Modal::PackSearch { item, value });
+                    Effect::None
+                }
+            },
             Modal::SetTime {
                 mut value,
                 zone,
@@ -1661,6 +1810,9 @@ impl App {
             Pending::Restore { file } => {
                 return self.backup_tool_effect(RESTORE_LABEL, "restore", &file);
             }
+            Pending::ChangePacks { get, remove, from } => {
+                return self.change_packs_effect(&get, &remove, from.as_deref());
+            }
             Pending::Reboot => "reboot",
             Pending::PowerOff => "poweroff",
         };
@@ -1721,6 +1873,19 @@ impl App {
         }
         if [BACKUP_LABEL, CHECK_LABEL, RESTORE_LABEL].contains(&label) {
             self.reload_backups();
+        }
+        if label == PACKS_LABEL {
+            // Back to the packs screen (from the stick list), refreshed.
+            while matches!(
+                self.view(),
+                View::Media {
+                    for_packs: true,
+                    ..
+                }
+            ) {
+                self.stack.pop();
+            }
+            self.reload_packs();
         }
         if label == SET_DEFAULT_GENERATION_LABEL {
             let fresh = self.load_generations();
@@ -2337,6 +2502,7 @@ impl App {
                 volumes,
                 error,
                 list,
+                ..
             } = view
             {
                 *volumes = v.clone();
@@ -2355,6 +2521,40 @@ impl App {
                 *files = backup::list_backups(mount);
                 clamp_selection(list, files.len() + 1);
             }
+        }
+    }
+
+    /// Mount (if needed) a volume; explains any problem in a message.
+    fn mount_volume(&mut self, v: &Volume) -> Option<PathBuf> {
+        if let Some(p) = &v.problem {
+            self.modal = Some(Modal::Message {
+                title: "CANNOT USE THIS DEVICE".into(),
+                body: format!("'{}' cannot be used here: {p}.", v.display_name()),
+                error: true,
+            });
+            return None;
+        }
+        match media::mount(&self.sys.tools.lsblk, &self.sys.tools.udisksctl, v) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                self.notify(
+                    Level::Error,
+                    format!("cannot open {}: {e}", v.display_name()),
+                );
+                self.modal = Some(Modal::Message {
+                    title: "CANNOT OPEN THE STICK".into(),
+                    body: format!("'{}' could not be opened:\n\n{e}", v.display_name()),
+                    error: true,
+                });
+                None
+            }
+        }
+    }
+
+    fn reload_packs_in(&mut self, items: &mut Vec<LibItem>, list: &mut ListState) {
+        if let Ok(c) = resilience_core::packs::PackConfig::load(&self.paths.packs_config) {
+            *items = library::library_items(&c);
+            clamp_selection(list, items.len());
         }
     }
 

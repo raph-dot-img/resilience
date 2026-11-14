@@ -10,6 +10,19 @@ versions follow [Semantic Versioning](https://semver.org/).
   `LICENSE` added. Bundled software keeps its own license.
 
 ### Added
+- *Offline library* and *Resource packs* (ADR 0013, Phase 3): a catalog of
+  20 Kiwix packs (Wikipedia, Wiktionary, medicine, practical guides,
+  Wikivoyage, computing; English and French) with pinned sizes and
+  SHA-256. In the TUI, tick packs by category and language, see sizes and
+  free space, then download them (resumable, HTTPS only) or copy them from
+  a USB stick, with one administrator password; remove packs and older
+  versions. Packs are written by `resilience-pack-store` as the
+  unprivileged `resilience-packs` account (pkexec --user, polkit action
+  `org.resilience.packs.change`), installed only if the hash matches.
+  Reading: kiwix-serve on 127.0.0.1 and lynx with all restrictions, with
+  full-text search. New tool `resilience-library`; handbook page "The
+  offline library"; VM test `vm-packs` (HTTPS mirror, USB stick, Ctrl-C
+  and resume, tampered file, wrong password, removal).
 - `resilience-admin`, the privileged helper (ADR 0007): `list`, `set-mode`,
   `apply-state`; polkit action `org.resilience.admin.set-mode` (auth_admin),
   server-side validation, persistent overrides re-applied after activation,

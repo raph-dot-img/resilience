@@ -69,6 +69,8 @@ pub struct ToolPaths {
     pub backup: String,
     /// NetworkManager's command-line client (Wi-Fi, ADR 0010).
     pub nmcli: String,
+    /// The offline library `resilience-library` (resource packs, ADR 0013).
+    pub library: String,
 }
 
 impl Default for ToolPaths {
@@ -82,6 +84,7 @@ impl Default for ToolPaths {
             sha256sum: "sha256sum".into(),
             backup: "resilience-backup".into(),
             nmcli: "nmcli".into(),
+            library: "resilience-library".into(),
         }
     }
 }

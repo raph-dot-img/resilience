@@ -1,78 +1,63 @@
-# Resource packs — design (not implemented yet)
+# Resource packs
 
-Status: **design draft for Phase 3.** Nothing in this document exists in
-code yet. Large content (Wikipedia ZIMs, maps, guides) is never put in the
-ISO or in Git; it is delivered as resource packs on external media.
+Status: **implemented for Kiwix ZIM files** (Phase 3, ADR 0013). This page
+describes what exists; the decision record has the reasoning and the
+alternatives.
 
-## Goals
+## What a pack is
 
-Discover, verify, install, update, remove and index packs **without
-Internet**; a corrupt or malicious pack must be rejected without affecting
-other installed resources.
+One file (today: a Kiwix ZIM file) declared in the system configuration
+with its exact size and SHA-256:
 
-## Format
-
-A pack is two files side by side:
-
-```
-wikipedia-en-mini-2026-10.rpack          TAR archive, zstd-compressed (.tar.zst content)
-wikipedia-en-mini-2026-10.rpack.minisig  minisign signature of the .rpack file
-```
-
-Archive layout:
-```
-manifest.toml       first member
-LICENSES/…          license texts
-content/…           payload (e.g. *.zim, *.mbtiles, *.md)
-```
-
-`manifest.toml`:
-```toml
-format = 1
-id = "wikipedia-en-mini"          # [a-z0-9-]
-version = "2026-10"
-type = "knowledge"                # knowledge | geography | field-guide | documentation
-title = "Wikipedia (English, mini)"
-description = "…"
-installed_size = 1234567890       # bytes, checked against free space first
-requires = []                     # other pack ids
-min_resilience = "0.3.0"
-[provenance]
-source = "https://download.kiwix.org/zim/wikipedia/…"
-retrieved = "2026-10-12"
-upstream_checksum = "sha256:…"
-[license]
-spdx = "CC-BY-SA-4.0"
-attribution = "Wikipedia contributors"
-[[files]]
-path = "content/wikipedia_en_mini.zim"
-sha256 = "…"
-size = 1234567890
+```nix
+resilience.packs.catalog = [
+  {
+    id = "wikivoyage-en";                         # stable across versions
+    title = "Wikivoyage (English): travel guide, text only";
+    description = "Places to go, getting around, staying safe.";
+    category = "travel";   # encyclopedia dictionary health practical travel computing
+    language = "en";
+    file = "wikivoyage_en_all_nopic_2026-09.zim";
+    size = 272495142;
+    sha256 = "4305c505…";
+    urls = [ "https://download.kiwix.org/zim/wikivoyage/wikivoyage_en_all_nopic_2026-09.zim" ];
+    license = "CC-BY-SA-4.0";
+    source = "Wikivoyage contributors; packaged by Kiwix (download.kiwix.org)";
+    notice = null;                                # shown before opening
+  }
+];
 ```
 
-## Verification — integrity vs authenticity
+The default catalog is `nix/packs/kiwix.nix`. Sizes and hashes come from
+Kiwix's metalinks (`<url>.meta4`). To add a pack: take the file's size and
+SHA-256 from its `.meta4` (or `stat -c %s` and `sha256sum` of a copy you
+trust), check that it reads well in lynx, and add an entry. A pack with no
+`urls` can only be installed from a USB stick.
 
-1. **Authenticity**: `minisign -V` against publisher public keys pinned in
-   the system configuration (`resilience.packs.trustedKeys`). Unsigned or
-   unknown-key packs are refused by default; an Advanced user may explicitly
-   accept them with a warning.
-2. **Integrity**: SHA-256 of every file against the signed manifest, during
-   extraction into a private staging directory.
+## Where things are
 
-A checksum alone never establishes who published a pack.
+| Path | What |
+|---|---|
+| `/etc/resilience/packs.toml` | the catalog and tool paths (root, read-only) |
+| `/var/lib/resilience/packs/` | installed packs, owner `resilience-packs`, 0755 |
+| `/var/lib/resilience/packs/.staging/` | unfinished downloads (`<file>.part`) |
+| journal, identifier `resilience-pack-store` | every install and removal |
 
-## Safe installation
+## Commands
 
-- Stream-extract into `/var/lib/resilience/packs/.staging/<id>` (root-owned,
-  via the privileged helper); reject absolute paths, `..`, symlinks, hard
-  links, device nodes, and files not listed in the manifest.
-- Check free space before extracting; atomic rename into place; the previous
-  version stays until the new one is verified.
-- Index (search metadata) rebuilt per pack, so one bad pack cannot corrupt
-  others' indexes.
+```text
+resilience-library list
+resilience-library change [--from MOUNT] [--remove FILE]... [--get ID]...
+resilience-library open FILE [--search WORDS]
+```
 
-## Planned packs
+`change` asks for an administrator's password (pkexec, action
+`org.resilience.packs.change`) and runs `resilience-pack-store` as
+`resilience-packs`. The store protocol (stdin chunks, plan lines) is
+documented in `crates/resilience-core/src/packs.rs`.
 
-Essential, Knowledge, Geography (per region), Field Guides, Extended
-Documentation, Complete (a set of the others). Medical and safety guides
-carry their source, date and a prominent limitation notice.
+## Not yet
+
+- Reading packs directly from a stick without installing them (live system).
+- Maps (Phase 5), documentation packs of our own, signed packs that can be
+  updated without a system update (Phase 8).

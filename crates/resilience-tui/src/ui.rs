@@ -22,7 +22,8 @@ use resilience_core::network::{LinkLevel, ProbeOutcome};
 use resilience_core::status::format_uptime;
 
 use crate::app::{
-    App, Entry, Level, MODES, Modal, RecoveryItem, SearchHit, View, category_description, level_tag,
+    App, Entry, Level, LibItem, MODES, Modal, PackRow, PacksScreen, RecoveryItem, SearchHit, View,
+    category_description, level_tag,
 };
 use crate::help;
 use crate::theme::Theme;
@@ -180,6 +181,8 @@ fn footer_hints(view: &View) -> &'static str {
         View::Media { .. } => "Enter Open  e Eject  r Refresh  Esc Back  F1 Help",
         View::Wifi { .. } => "Enter Join  d Disconnect  f Forget  r Scan  w Wi-Fi on  Esc Back",
         View::Backups { .. } => "Enter Back up/Restore  c Check  e Eject  Esc Back  F1 Help",
+        View::Library { .. } => "Enter Read  s Search in it  p Get packs  Esc Back  F1 Help",
+        View::Packs { .. } => "Space Tick  d Download  u From USB  f Language  Enter Details  Esc",
     }
 }
 
@@ -322,7 +325,10 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
             volumes,
             error,
             list,
-        } => draw_media(f, app, area, volumes, error.as_deref(), list),
+            for_packs,
+        } => draw_media(f, app, area, volumes, error.as_deref(), list, *for_packs),
+        View::Library { items, list } => draw_library(f, app, area, items, list),
+        View::Packs { s, list } => draw_packs(f, app, area, s, list),
         View::Backups {
             volume,
             mount,
@@ -1242,15 +1248,21 @@ fn draw_media(
     volumes: &[Volume],
     error: Option<&str>,
     list: &mut ListState,
+    for_packs: bool,
 ) {
     let t = app.theme;
+    let title = if for_packs {
+        "COPY PACKS FROM A USB STICK"
+    } else {
+        "BACKUPS & USB STICKS"
+    };
     if let Some(e) = error {
         let p = Paragraph::new(format!(
             "The list of USB sticks could not be read.\n\n{e}\n\nPress r to try again."
         ))
         .wrap(Wrap { trim: false })
         .style(t.error)
-        .block(block("BACKUPS & USB STICKS", &t));
+        .block(block(title, &t));
         f.render_widget(p, area);
         return;
     }
@@ -1276,7 +1288,7 @@ fn draw_media(
         f,
         &t,
         l,
-        "BACKUPS & USB STICKS",
+        title,
         items,
         list,
         "No USB stick or memory card found. Plug one in, wait a few seconds, then press r.",
@@ -1307,6 +1319,10 @@ fn draw_media(
                     format!("[!!] Cannot be used: {p}."),
                     t.warn,
                 ))),
+                None if for_packs => lines.push(Line::from(
+                    "Enter opens it and looks for resource packs on it (at its top level \
+                     or in a folder named Resilience-packs).",
+                )),
                 None => lines.push(Line::from(
                     "Enter opens it: make a backup, check or restore one. Press e before \
                      unplugging it.",
@@ -1317,6 +1333,156 @@ fn draw_media(
         None => vec![Line::from(
             "Backups protect your files if this computer is lost or broken. Keep two \
              copies, on different sticks, in different places.",
+        )],
+    };
+    details(f, &t, d, lines);
+}
+
+fn draw_library(f: &mut Frame, app: &App, area: Rect, items: &[LibItem], list: &mut ListState) {
+    let t = app.theme;
+    let rows: Vec<ListItem> = items
+        .iter()
+        .map(|i| {
+            let tag = i.category.map_or("Other", |c| c.label());
+            ListItem::new(format!(
+                "{:<12.12} {:<46.46} {:>9}",
+                tag,
+                i.title,
+                human_bytes(i.size)
+            ))
+        })
+        .collect();
+    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(6)]).areas(area);
+    draw_list(
+        f,
+        &t,
+        l,
+        "OFFLINE LIBRARY",
+        rows,
+        list,
+        "No resource packs are installed yet. Press p to choose packs to download, or to \
+         copy from a USB stick (an administrator's password is needed).",
+    );
+    let lines = match list.selected().and_then(|i| items.get(i)) {
+        Some(i) => vec![
+            Line::from(Span::styled(i.title.clone(), t.accent)),
+            Line::from(i.description.clone()),
+            Line::from(Span::styled(
+                "Enter reads it in the text browser: arrows move between links, Enter or \
+                 Right follows one, Left goes back, q quits.",
+                t.dim,
+            )),
+        ],
+        None => vec![Line::from(
+            "Resource packs are large offline collections: encyclopedias, dictionaries, \
+             health and practical guides. Everything here works without a network.",
+        )],
+    };
+    details(f, &t, d, lines);
+}
+
+fn draw_packs(f: &mut Frame, app: &App, area: Rect, s: &PacksScreen, list: &mut ListState) {
+    let t = app.theme;
+    let [top, l, d] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(5),
+        Constraint::Length(6),
+    ])
+    .areas(area);
+    let plan = s.plan();
+    let mut summary = vec![Span::styled(
+        format!(
+            "Add {} ({})  Remove {}  ",
+            plan.get.len(),
+            human_bytes(plan.add_bytes),
+            plan.remove.len()
+        ),
+        t.base,
+    )];
+    if let Some(free) = s.free {
+        let after = free + plan.remove_bytes;
+        let style = if plan.add_bytes > after {
+            t.error
+        } else {
+            t.dim
+        };
+        summary.push(Span::styled(format!("Free {}", human_bytes(free)), style));
+        if plan.add_bytes > after {
+            summary.push(Span::styled("  [!!] not enough space", t.error));
+        }
+    }
+    f.render_widget(Paragraph::new(Line::from(summary)), top);
+
+    let rows = s.rows();
+    let inner = l.width.saturating_sub(4) as usize;
+    // "[x] " + title + " " + size (9) + "  " + state (up to 11).
+    let title_w = inner.saturating_sub(4 + 1 + 9 + 2 + 11).clamp(16, 60);
+    let items: Vec<ListItem> = rows
+        .iter()
+        .map(|r| match *r {
+            PackRow::Header(c) => ListItem::new(Span::styled(
+                format!("-- {} --", c.label().to_uppercase()),
+                t.accent,
+            )),
+            PackRow::OthersHeader => ListItem::new(Span::styled(
+                "-- OTHER FILES (not in the catalog) --",
+                t.accent,
+            )),
+            PackRow::Pack(i) => {
+                let p = &s.cfg.packs[i];
+                let (mark, state) = s.row_state(*r);
+                ListItem::new(format!(
+                    "{mark} {:<title_w$.title_w$} {:>9}  {state}",
+                    p.title,
+                    human_bytes(p.size)
+                ))
+            }
+            PackRow::Other(j) => {
+                let o = &s.inv.others[j];
+                let (mark, state) = s.row_state(*r);
+                ListItem::new(format!(
+                    "{mark} {:<title_w$.title_w$} {:>9}  {state}",
+                    o.file,
+                    human_bytes(o.size)
+                ))
+            }
+        })
+        .collect();
+    let title = match &s.language {
+        Some(lang) => format!("RESOURCE PACKS (language: {lang}; f for all)"),
+        None => "RESOURCE PACKS (all languages; f to choose)".to_string(),
+    };
+    draw_list(
+        f,
+        &t,
+        l,
+        &title,
+        items,
+        list,
+        "No resource packs are offered on this system.",
+    );
+    let lines = match list.selected().and_then(|i| rows.get(i)) {
+        Some(PackRow::Pack(i)) => {
+            let p = &s.cfg.packs[*i];
+            vec![
+                Line::from(Span::styled(p.description.clone(), t.base)),
+                Line::from(Span::styled(
+                    format!("Language: {}  License: {}", p.language, p.license),
+                    t.dim,
+                )),
+                Line::from(Span::styled(
+                    "Space ticks it. [+] will be added, [-] will be removed, [*] is installed.",
+                    t.dim,
+                )),
+            ]
+        }
+        Some(PackRow::Other(_)) => vec![Line::from(
+            "A file that is not in this system's catalog, usually an older version. It \
+             can still be read; tick it to remove it and free the space.",
+        )],
+        _ => vec![Line::from(
+            "Packs are shared by every account. Tick what you want with Space, then press \
+             d to download (Internet needed) or u to copy from a USB stick.",
         )],
     };
     details(f, &t, d, lines);
@@ -1627,6 +1793,21 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
                 ))),
             }
             ("WI-FI PASSWORD", l, t.base)
+        }
+        Modal::PackSearch { item, value } => {
+            let l = vec![
+                Line::from(format!("Search in '{}':", item.title)),
+                Line::from(vec![
+                    Span::styled(format!("> {value}"), t.accent),
+                    Span::styled("█", t.base),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Words to look for in the full text | Enter search, Esc cancel",
+                    t.dim,
+                )),
+            ];
+            ("SEARCH", l, t.base)
         }
         Modal::SetTime { value, zone, error } => {
             let mut l = vec![

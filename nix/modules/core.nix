@@ -140,6 +140,7 @@ let
     sha256sum = "${pkgs.coreutils}/bin/sha256sum";
     backup = "${cfg.package}/bin/resilience-backup";
     nmcli = "${lib.getBin config.networking.networkmanager.package}/bin/nmcli";
+    library = "${cfg.package}/bin/resilience-library";
   };
 
   systemConfigUnchecked = toml.generate "resilience-system.toml" {

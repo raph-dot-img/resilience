@@ -1,0 +1,22 @@
+[package]
+name = "resilience-library"
+description = "Offline library of Resilience OS: choose, download, install and read resource packs (Kiwix ZIM files)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "resilience-library"
+path = "src/main.rs"
+
+[[bin]]
+name = "resilience-pack-store"
+path = "src/bin/store.rs"
+
+[dependencies]
+resilience-core.workspace = true
+libc.workspace = true
+
+[lints]
+workspace = true
