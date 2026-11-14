@@ -8,8 +8,11 @@
     wheelNeedsPassword = true;
     execWheelOnly = true;
   };
-  # Root keeps NixOS's default locked password ("!"): no direct root login.
-  # Verified by tests/vm/modes.nix.
+  # Root is locked: no direct root login on any console. NixOS would write
+  # "!" for an unset password only when creating the account; setting it
+  # explicitly re-applies it on every activation and makes it checkable
+  # (tests/eval/security-invariants.nix).
+  users.users.root.hashedPassword = lib.mkDefault "!";
 
   services.openssh.enable = lib.mkDefault false;
 

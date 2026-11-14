@@ -1,0 +1,52 @@
+# Evaluation-time security invariants of the real system configurations.
+# Runs in seconds (nothing heavy is built) as the `security-invariants` check.
+# A violated invariant makes evaluation fail with the list of violations.
+{
+  lib,
+  configurations,
+  writeText,
+}:
+
+let
+  check =
+    name: cfg:
+    let
+      c = cfg.config;
+      root = c.users.users.root;
+      humans = lib.filterAttrs (_: u: u.isNormalUser) c.users.users;
+      autologin = c.services.getty.autologinUser;
+      invariants = {
+        "root password is locked" =
+          root.hashedPassword == "!"
+          && root.initialHashedPassword == null
+          && root.password == null
+          && root.initialPassword == null
+          && root.hashedPasswordFile == null;
+        "ssh is disabled" = !c.services.openssh.enable;
+        "sudo requires a password" = c.security.sudo.wheelNeedsPassword;
+        "only wheel may execute sudo" = c.security.sudo.execWheelOnly;
+        "firewall is enabled" = c.networking.firewall.enable;
+        "no open firewall ports" =
+          c.networking.firewall.allowedTCPPorts == [ ] && c.networking.firewall.allowedUDPPorts == [ ];
+        "no NTP in the background" = !c.services.timesyncd.enable;
+        "no X server" = !c.services.xserver.enable;
+        "nix daemon refuses ultra-stable accounts" =
+          !(lib.elem "*" c.nix.settings.allowed-users) && !(lib.elem "@users" c.nix.settings.allowed-users);
+        "only root is a trusted nix user" = lib.unique c.nix.settings.trusted-users == [ "root" ];
+        "every human account uses the Resilience session" = lib.all (
+          u: u.shell == c.resilience.sessionPackage
+        ) (lib.attrValues humans);
+        "autologin account is not privileged" =
+          autologin == null
+          || lib.intersectLists [ "wheel" "resilience-stable" ] c.users.users.${autologin}.extraGroups == [ ];
+      };
+      failed = lib.attrNames (lib.filterAttrs (_: ok: !ok) invariants);
+    in
+    if failed == [ ] then
+      "${name}: ${toString (lib.length (lib.attrNames invariants))} invariants hold"
+    else
+      throw "security invariants violated in ${name}: ${lib.concatStringsSep "; " failed}";
+in
+writeText "security-invariants-report" (
+  lib.concatStringsSep "\n" (lib.mapAttrsToList check configurations) + "\n"
+)

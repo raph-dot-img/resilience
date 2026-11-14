@@ -117,6 +117,5 @@ in
       "@wheel"
       "@resilience-stable"
     ];
-    nix.settings.trusted-users = [ "root" ];
   };
 }

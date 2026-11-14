@@ -14,6 +14,9 @@
         ../../nix/profiles/minimal.nix
       ];
       virtualisation.memorySize = 1536;
+      # The test instrumentation sets an empty root password for debugging;
+      # drop our lock in the test VM only, to avoid conflicting definitions.
+      users.users.root.hashedPassword = lib.mkForce null;
       virtualisation.cores = 2;
       # One isolated VLAN with a static address and no gateway or DNS.
       virtualisation.vlans = [ 1 ];
@@ -81,10 +84,12 @@
     with subtest("advanced: sudo works only with the password"):
         machine.fail(as_user("carol", "sudo -n true"))
         machine.succeed(as_user("carol", "echo carol-pw | sudo -S true"))
-        machine.fail(as_user("carol", "echo wrong | sudo -S true"))
+        # -k: ignore the credential cached by the previous call.
+        machine.fail(as_user("carol", "echo wrong | sudo -k -S true"))
 
-    with subtest("root has no password login"):
-        machine.succeed("getent shadow root | cut -d: -f2 | grep -qx '!'")
+    # Root's locked password cannot be checked here: the NixOS test
+    # instrumentation gives root an empty password on purpose. It is checked
+    # on the real configurations by the `security-invariants` flake check.
 
     with subtest("isolated LAN is detected as LOCAL LINK, not online"):
         machine.wait_until_succeeds("ip -4 addr show eth1 | grep -q inet")

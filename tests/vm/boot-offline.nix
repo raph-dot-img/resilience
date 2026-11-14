@@ -17,6 +17,9 @@
       virtualisation.vlans = [ ];
       virtualisation.qemu.networkingOptions = lib.mkForce [ "-nic none" ];
       virtualisation.memorySize = 1536;
+      # The test instrumentation sets an empty root password for debugging;
+      # drop our lock in the test VM only, to avoid conflicting definitions.
+      users.users.root.hashedPassword = lib.mkForce null;
       virtualisation.cores = 2;
       resilience.users.alice.mode = "ultra-stable";
       users.users.alice.hashedPassword = "!";

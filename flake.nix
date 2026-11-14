@@ -69,6 +69,11 @@
         resilience = pkgs.resilience;
         vm-boot-offline = vmTest ./tests/vm/boot-offline.nix;
         vm-modes = vmTest ./tests/vm/modes.nix;
+        security-invariants = pkgs.callPackage ./tests/eval/security-invariants.nix {
+          configurations = {
+            inherit (self.nixosConfigurations) live-standard live-minimal dev-vm;
+          };
+        };
         # Evaluates the ISO configurations without building the images.
         # (Context is discarded on purpose: this check must not build them.)
         eval-live-iso = pkgs.writeText "eval-live-iso" (
