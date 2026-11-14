@@ -32,7 +32,7 @@ use crate::theme::Theme;
 
 #[path = "library.rs"]
 mod library;
-pub use library::{LibItem, PackRow, PacksScreen};
+pub use library::{ItemPlace, LibItem, PackRow, PacksScreen, stick_items};
 
 const FAST_REFRESH: Duration = Duration::from_secs(5);
 const SLOW_REFRESH: Duration = Duration::from_secs(30);
@@ -77,6 +77,16 @@ impl Default for Paths {
             packs_config: resilience_core::packs::PACKS_CONFIG_PATH.into(),
         }
     }
+}
+
+/// Why the list of removable volumes was opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaPurpose {
+    Backups,
+    /// Copy resource packs from it (from the Resource packs screen).
+    InstallPacks,
+    /// Read packs on it without installing them (from the Offline library).
+    ReadPacks,
 }
 
 /// Entries of the Recovery section.
@@ -394,12 +404,16 @@ pub enum View {
         gens: Vec<recovery::Generation>,
         list: ListState,
     },
-    /// Removable volumes; `for_packs`: chosen to copy resource packs from.
+    /// Removable volumes, opened for `purpose`.
     Media {
         volumes: Vec<Volume>,
         error: Option<String>,
         list: ListState,
-        for_packs: bool,
+        purpose: MediaPurpose,
+    },
+    /// Suggested selections of packs, over the packs screen.
+    PackSets {
+        list: ListState,
     },
     /// Installed resource packs; Enter reads one.
     Library {
@@ -857,7 +871,7 @@ impl App {
             View::Recovery { .. } | View::Generations { .. } => HelpTopic::Recovery,
             View::Media { .. } | View::Backups { .. } => HelpTopic::Backup,
             View::Wifi { .. } => HelpTopic::Network,
-            View::Library { .. } | View::Packs { .. } => HelpTopic::Library,
+            View::Library { .. } | View::Packs { .. } | View::PackSets { .. } => HelpTopic::Library,
             View::Search { .. } => HelpTopic::Search,
         }
     }
@@ -1084,14 +1098,20 @@ impl App {
                 volumes,
                 error,
                 list,
-                for_packs,
+                purpose,
             } => {
                 let selected = list.selected().and_then(|i| volumes.get(i)).cloned();
-                if *for_packs && is_activate(key) {
+                if *purpose != MediaPurpose::Backups && is_activate(key) {
                     if let Some(v) = selected
                         && let Some(mount) = self.mount_volume(&v)
                     {
-                        self.packs_from_mount(&mount);
+                        if *purpose == MediaPurpose::InstallPacks {
+                            self.packs_from_mount(&mount);
+                        } else {
+                            self.notify(Level::Info, format!("{} is open.", v.display_name()));
+                            // This list closes; the library below shows the stick.
+                            self.reload_packs();
+                        }
                         return (None, Effect::None);
                     }
                     (*volumes, *error) = self.load_volumes();
@@ -1232,6 +1252,12 @@ impl App {
                         }
                     }
                     KeyCode::Char('p') => next = self.open_packs(),
+                    KeyCode::Char('u') => next = Some(self.choose_reading_stick()),
+                    KeyCode::Char('c') => {
+                        if let Some(item) = selected {
+                            effect = self.check_pack_effect(&item);
+                        }
+                    }
                     KeyCode::Char('r') => self.reload_packs_in(items, list),
                     _ if is_activate(key) => {
                         if let Some(item) = selected {
@@ -1252,6 +1278,14 @@ impl App {
                         }
                     }
                     KeyCode::Char('d') => self.confirm_download(s),
+                    KeyCode::Char('s') => {
+                        next = (!s.cfg.sets.is_empty()).then(|| View::PackSets {
+                            list: ListState::default().with_selected(Some(0)),
+                        });
+                        if next.is_none() {
+                            self.notify(Level::Info, "No suggested sets on this system.");
+                        }
+                    }
                     KeyCode::Char('u') => next = self.choose_pack_stick(),
                     KeyCode::Char('f') => {
                         s.next_language();
@@ -1269,6 +1303,19 @@ impl App {
                     }
                     _ if is_back(key) => return (None, Effect::None),
                     _ => library::nav_rows(list, &rows, key),
+                }
+            }
+            View::PackSets { list } => {
+                let n = self.pack_sets_len();
+                if is_activate(key) {
+                    if let Some(i) = list.selected() {
+                        self.apply_pack_set(i);
+                        return (None, Effect::None);
+                    }
+                } else if is_back(key) {
+                    return (None, Effect::None);
+                } else {
+                    nav(list, n, key);
                 }
             }
             View::Search { query, hits, list } => match key.code {
@@ -1482,7 +1529,7 @@ impl App {
                         volumes,
                         error,
                         list: ListState::default().with_selected(sel),
-                        for_packs: false,
+                        purpose: MediaPurpose::Backups,
                     }),
                     Effect::None,
                 )
@@ -1879,7 +1926,7 @@ impl App {
             while matches!(
                 self.view(),
                 View::Media {
-                    for_packs: true,
+                    purpose: MediaPurpose::InstallPacks,
                     ..
                 }
             ) {
@@ -2553,7 +2600,7 @@ impl App {
 
     fn reload_packs_in(&mut self, items: &mut Vec<LibItem>, list: &mut ListState) {
         if let Ok(c) = resilience_core::packs::PackConfig::load(&self.paths.packs_config) {
-            *items = library::library_items(&c);
+            *items = self.all_library_items(&c);
             clamp_selection(list, items.len());
         }
     }

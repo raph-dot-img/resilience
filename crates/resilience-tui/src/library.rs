@@ -14,7 +14,9 @@ use resilience_core::human_bytes;
 use resilience_core::network::LinkLevel;
 use resilience_core::packs::{self, Inventory, PackCategory, PackConfig, PackState};
 
-use super::{App, Effect, LIBRARY_LABEL, Level, Modal, PACKS_LABEL, Pending, RunRequest, View};
+use super::{
+    App, Effect, LIBRARY_LABEL, Level, MediaPurpose, Modal, PACKS_LABEL, Pending, RunRequest, View,
+};
 
 /// One line of the packs screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,7 +214,20 @@ impl PacksScreen {
     }
 }
 
-/// An installed file the library can open.
+/// Where a readable pack is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ItemPlace {
+    /// Part of the system (Nix store).
+    Builtin,
+    /// Installed and checked.
+    Installed,
+    /// An older version or a file outside the catalog, in the packs directory.
+    Other,
+    /// On a mounted stick, not checked. `known`: name and size are in the catalog.
+    Stick { volume: String, known: bool },
+}
+
+/// A file the library can open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LibItem {
     pub title: String,
@@ -221,12 +236,97 @@ pub struct LibItem {
     pub size: u64,
     pub category: Option<PackCategory>,
     pub language: Option<String>,
+    pub place: ItemPlace,
 }
 
-/// Installed catalog packs (by category, then title), then other files.
+impl LibItem {
+    /// Short tag for the list.
+    pub fn tag(&self) -> String {
+        match &self.place {
+            ItemPlace::Builtin => "Built in".into(),
+            ItemPlace::Stick { .. } => "USB stick".into(),
+            ItemPlace::Other => "Other".into(),
+            ItemPlace::Installed => self.category.map_or("Other", |c| c.label()).into(),
+        }
+    }
+}
+
+/// `.zim` files a stick offers: catalog files (exact name and size) and
+/// any other `.zim` in its Resilience-packs folder.
+pub fn stick_items(cfg: &PackConfig, volume: &str, mount: &Path) -> Vec<LibItem> {
+    let mut items: Vec<LibItem> = packs::find_on_volume(cfg, mount)
+        .into_iter()
+        .map(|(i, path)| {
+            let p = &cfg.packs[i];
+            LibItem {
+                title: p.title.clone(),
+                description: format!(
+                    "On the stick {volume}, not installed and not checked yet: c checks \
+                     its fingerprint. {}",
+                    p.description
+                ),
+                path,
+                size: p.size,
+                category: Some(p.category),
+                language: Some(p.language.clone()),
+                place: ItemPlace::Stick {
+                    volume: volume.into(),
+                    known: true,
+                },
+            }
+        })
+        .collect();
+    let folder = mount.join(packs::VOLUME_FOLDER);
+    if let Ok(rd) = std::fs::read_dir(&folder) {
+        let mut extra: Vec<LibItem> = rd
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().into_string().ok()?;
+                let meta = std::fs::symlink_metadata(e.path()).ok()?;
+                let listed = items.iter().any(|i| i.path == e.path());
+                (packs::valid_file_name(&name) && meta.is_file() && !listed).then(|| LibItem {
+                    title: name.clone(),
+                    description: format!(
+                        "On the stick {volume}: a file that is not in this system's catalog. \
+                         Its content cannot be checked; open it only if you trust where it \
+                         comes from."
+                    ),
+                    path: e.path(),
+                    size: meta.len(),
+                    category: None,
+                    language: None,
+                    place: ItemPlace::Stick {
+                        volume: volume.into(),
+                        known: false,
+                    },
+                })
+            })
+            .collect();
+        extra.sort_by(|a, b| a.title.cmp(&b.title));
+        items.extend(extra);
+    }
+    items
+}
+
+/// Built-in packs, installed catalog packs (by category, then title), then
+/// other files of the packs directory.
 pub fn library_items(cfg: &PackConfig) -> Vec<LibItem> {
     let inv = packs::inventory(cfg);
     let mut items: Vec<LibItem> = cfg
+        .builtin
+        .iter()
+        .filter(|b| b.path.is_file())
+        .map(|b| LibItem {
+            title: b.title.clone(),
+            description: b.description.clone(),
+            path: b.path.clone(),
+            size: std::fs::metadata(&b.path).map_or(0, |m| m.len()),
+            category: Some(b.category),
+            language: Some(b.language.clone()),
+            place: ItemPlace::Builtin,
+        })
+        .collect();
+    let mut installed: Vec<LibItem> = cfg
         .packs
         .iter()
         .zip(&inv.states)
@@ -238,9 +338,11 @@ pub fn library_items(cfg: &PackConfig) -> Vec<LibItem> {
             size: p.size,
             category: Some(p.category),
             language: Some(p.language.clone()),
+            place: ItemPlace::Installed,
         })
         .collect();
-    items.sort_by(|a, b| (a.category, &a.title).cmp(&(b.category, &b.title)));
+    installed.sort_by(|a, b| (a.category, &a.title).cmp(&(b.category, &b.title)));
+    items.extend(installed);
     items.extend(inv.others.iter().map(|o| {
         let older = o.older_of.map(|i| cfg.packs[i].title.as_str());
         LibItem {
@@ -250,6 +352,7 @@ pub fn library_items(cfg: &PackConfig) -> Vec<LibItem> {
             size: o.size,
             category: None,
             language: None,
+            place: ItemPlace::Other,
         }
     }));
     items
@@ -314,9 +417,21 @@ impl App {
         }
     }
 
+    /// Library items, including packs on mounted sticks.
+    pub(super) fn all_library_items(&self, cfg: &PackConfig) -> Vec<LibItem> {
+        let mut items = library_items(cfg);
+        let (volumes, _) = self.load_volumes();
+        for v in volumes.iter().filter(|v| v.usable()) {
+            if let Some(m) = &v.mountpoint {
+                items.extend(stick_items(cfg, &v.display_name(), m));
+            }
+        }
+        items
+    }
+
     pub(super) fn open_library(&mut self) -> Option<View> {
         let cfg = self.packs_config_or_explain()?;
-        let items = library_items(&cfg);
+        let items = self.all_library_items(&cfg);
         let sel = (!items.is_empty()).then_some(0);
         Some(View::Library {
             items,
@@ -345,22 +460,103 @@ impl App {
     /// Refresh every library and packs screen after a change.
     pub(super) fn reload_packs(&mut self) {
         let cfg = PackConfig::load(&self.paths.packs_config).ok();
+        let fresh = cfg.as_ref().map(|c| self.all_library_items(c));
         for v in &mut self.stack {
+            if let (View::Library { items, list }, Some(f)) = (&mut *v, &fresh) {
+                *items = f.clone();
+                super::clamp_selection(list, items.len());
+            }
             match v {
                 View::Packs { s, list } => {
                     s.refresh();
                     let rows = s.rows();
                     fix_selection(list, &rows);
                 }
-                View::Library { items, list } => {
-                    if let Some(c) = &cfg {
-                        *items = library_items(c);
-                        super::clamp_selection(list, items.len());
-                    }
-                }
+                View::Library { .. } => {}
                 _ => {}
             }
         }
+    }
+
+    /// `u` in the library: open a stick to read the packs on it.
+    pub(super) fn choose_reading_stick(&mut self) -> View {
+        let (volumes, error) = self.load_volumes();
+        let sel = (!volumes.is_empty()).then_some(0);
+        View::Media {
+            volumes,
+            error,
+            list: ListState::default().with_selected(sel),
+            purpose: MediaPurpose::ReadPacks,
+        }
+    }
+
+    /// `c` in the library: compare a file on a stick with the catalog.
+    pub(super) fn check_pack_effect(&mut self, item: &LibItem) -> Effect {
+        if !matches!(item.place, ItemPlace::Stick { .. }) {
+            self.modal = Some(Modal::Message {
+                title: "ALREADY CHECKED".into(),
+                body: "Installed packs were checked against their fingerprint when they were \
+                       installed, and built-in packs are part of the system. Only packs on a \
+                       USB stick need checking."
+                    .into(),
+                error: false,
+            });
+            return Effect::None;
+        }
+        Effect::Run(RunRequest {
+            label: LIBRARY_LABEL.into(),
+            argv: vec![
+                self.sys.tools.library.clone(),
+                "check".into(),
+                item.path.to_string_lossy().into_owned(),
+            ],
+            extra_args: Vec::new(),
+            env: Vec::new(),
+            polkit_agent: None,
+            pause_after: true,
+            banner: Some(format!(
+                "CHECKING {}. Large packs take a while; Ctrl-C stops.",
+                item.title
+            )),
+        })
+    }
+
+    /// Suggested sets of the packs screen just below the top of the stack.
+    fn packs_below(&mut self) -> Option<&mut PacksScreen> {
+        self.stack.iter_mut().rev().find_map(|v| match v {
+            View::Packs { s, .. } => Some(&mut **s),
+            _ => None,
+        })
+    }
+
+    pub(super) fn pack_sets_len(&mut self) -> usize {
+        self.packs_below().map_or(0, |s| s.cfg.sets.len())
+    }
+
+    /// Tick every pack of set `i` that is not installed yet.
+    pub(super) fn apply_pack_set(&mut self, i: usize) {
+        let Some(s) = self.packs_below() else { return };
+        let Some(set) = s.cfg.sets.get(i).cloned() else {
+            return;
+        };
+        let mut n = 0;
+        for id in &set.packs {
+            if let Some(j) = s.cfg.packs.iter().position(|p| &p.id == id)
+                && s.inv.states[j] != PackState::Installed
+            {
+                s.discard.remove(&j);
+                n += usize::from(s.marked.insert(j));
+            }
+        }
+        let bytes = s.plan().add_bytes;
+        self.notify(
+            Level::Info,
+            format!(
+                "{}: {n} more packs ticked ({} to add in total). Press d or u to get them.",
+                set.title,
+                human_bytes(bytes)
+            ),
+        );
     }
 
     /// Open a pack in the text browser (through `resilience-library open`).
@@ -503,7 +699,7 @@ impl App {
             volumes,
             error,
             list: ListState::default().with_selected(sel),
-            for_packs: true,
+            purpose: MediaPurpose::InstallPacks,
         })
     }
 

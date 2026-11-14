@@ -42,6 +42,7 @@ pub enum PackCategory {
     Practical,
     Travel,
     Computing,
+    Documentation,
 }
 
 impl PackCategory {
@@ -53,6 +54,7 @@ impl PackCategory {
             PackCategory::Practical => "Practical",
             PackCategory::Travel => "Travel",
             PackCategory::Computing => "Computing",
+            PackCategory::Documentation => "Documentation",
         }
     }
 }
@@ -191,6 +193,37 @@ pub struct PackConfig {
     pub session_shell: String,
     #[serde(default, rename = "pack")]
     pub packs: Vec<Pack>,
+    /// Suggested selections of catalog packs.
+    #[serde(default, rename = "set")]
+    pub sets: Vec<PackSet>,
+    /// Packs that are part of the system itself (in the Nix store).
+    #[serde(default)]
+    pub builtin: Vec<BuiltinPack>,
+}
+
+/// A suggested selection, e.g. "Essential (English)".
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackSet {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    /// Catalog pack ids.
+    pub packs: Vec<String>,
+}
+
+/// A pack shipped with the system, read-only in the Nix store.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuiltinPack {
+    pub title: String,
+    pub description: String,
+    pub category: PackCategory,
+    pub language: String,
+    /// Absolute path of the `.zim` file.
+    pub path: PathBuf,
+    pub license: String,
+    pub source: String,
 }
 
 #[derive(Debug, Error)]
@@ -221,6 +254,21 @@ impl PackConfig {
             }
             if !files.insert(p.file.as_str()) {
                 return Err(format!("duplicate pack file {}", p.file));
+            }
+        }
+        let mut set_ids = BTreeSet::new();
+        for set in &cfg.sets {
+            if !valid_id(&set.id) || !set_ids.insert(set.id.as_str()) {
+                return Err(format!("invalid or duplicate set id {:?}", set.id));
+            }
+            if let Some(missing) = set.packs.iter().find(|id| !ids.contains(id.as_str())) {
+                return Err(format!("set {}: unknown pack {missing}", set.id));
+            }
+        }
+        for b in &cfg.builtin {
+            let name = b.path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !b.path.is_absolute() || !valid_file_name(name) {
+                return Err(format!("built-in pack {}: invalid path", b.title));
             }
         }
         Ok(cfg)
@@ -775,6 +823,8 @@ mod tests {
             kiwix_serve: "kiwix-serve".into(),
             browser: vec!["lynx".into()],
             session_shell: "/bin/sh".into(),
+            sets: Vec::new(),
+            builtin: Vec::new(),
             packs,
         }
     }
@@ -877,6 +927,31 @@ session_shell = "/bin/sh"
                 .expect_err("invalid")
                 .contains("file name")
         );
+        let set = format!(
+            "{base}{}[[set]]\nid = \"s\"\ntitle = \"S\"\ndescription = \"D\"\npacks = [\"a\"]\n",
+            entry("a", "a.zim", "https://x/a")
+        );
+        assert_eq!(
+            PackConfig::parse(&set).expect("valid set").sets[0].packs,
+            ["a"]
+        );
+        let bad_set = set.replace("packs = [\"a\"]", "packs = [\"zz\"]");
+        assert!(
+            PackConfig::parse(&bad_set)
+                .expect_err("unknown")
+                .contains("unknown pack")
+        );
+        let builtin = format!(
+            "{base}[[builtin]]\ntitle = \"Docs\"\ndescription = \"D\"\ncategory = \
+             \"documentation\"\nlanguage = \"en\"\npath = \"/nix/store/x/docs.zim\"\n\
+             license = \"MIT\"\nsource = \"s\"\n"
+        );
+        assert_eq!(
+            PackConfig::parse(&builtin).expect("builtin").builtin.len(),
+            1
+        );
+        let relative = builtin.replace("/nix/store/x/docs.zim", "docs.zim");
+        assert!(PackConfig::parse(&relative).is_err());
         let unknown = format!("{base}extra = 1\n");
         assert!(PackConfig::parse(&unknown).is_err());
     }

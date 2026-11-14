@@ -6,6 +6,8 @@
 //!                                               install or remove packs (one
 //!                                               administrator password)
 //! resilience-library open FILE [--search WORDS] read a pack in the text browser
+//! resilience-library check FILE                 compare a file (e.g. on a stick)
+//!                                               with the catalog's fingerprint
 //! ```
 //!
 //! `change` downloads with `curl` (HTTPS only), or reads the files from a
@@ -40,7 +42,8 @@ const USAGE: &str = "\
 Usage:
   resilience-library list
   resilience-library change [--from DIR] [--remove FILE]... [--get ID]...
-  resilience-library open FILE [--search WORDS]";
+  resilience-library open FILE [--search WORDS]
+  resilience-library check FILE";
 
 enum Failure {
     Usage,
@@ -54,6 +57,7 @@ fn main() -> ExitCode {
         Some("list") if args.len() == 1 => config().and_then(|c| list(&c)),
         Some("change") => config().and_then(|c| change(&c, &args[1..])),
         Some("open") => config().and_then(|c| open(&c, &args[1..])),
+        Some("check") if args.len() == 2 => config().and_then(|c| check(&c, Path::new(&args[1]))),
         // Used at build time on the generated catalog.
         Some("check-config") if args.len() == 2 => PackConfig::load(Path::new(&args[1]))
             .map(|c| println!("{} packs", c.packs.len()))
@@ -514,6 +518,88 @@ fn send_download(
         "Download stopped: {last_error}. Check the network, then start again: it continues \
          where it stopped."
     ))
+}
+
+// ----------------------------------------------------------------- check
+
+/// SHA-256 of a file through `sha256sum`, with progress on stderr.
+fn hash_file(cfg: &PackConfig, path: &Path, size: u64) -> Result<String, String> {
+    let mut f = fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut child = Command::new(&cfg.sha256sum)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("sha256sum: {e}"))?;
+    let mut input = child.stdin.take().ok_or("no pipe")?;
+    let mut progress = Progress::new(size, 0);
+    let mut buf = vec![0u8; CHUNK];
+    loop {
+        let n = match f.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(format!("{}: {e}", path.display())),
+        };
+        input
+            .write_all(&buf[..n])
+            .map_err(|e| format!("sha256sum: {e}"))?;
+        progress.add(n as u64);
+    }
+    drop(input);
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("sha256sum: {e}"))?;
+    let hex = String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    eprint!("\r{:72}\r", "");
+    if out.status.success() && packs::is_sha256(&hex) {
+        Ok(hex)
+    } else {
+        Err("sha256sum failed".into())
+    }
+}
+
+fn check(cfg: &PackConfig, path: &Path) -> Result<(), Failure> {
+    let meta = fs::metadata(path)
+        .ok()
+        .filter(|m| m.is_file())
+        .ok_or_else(|| Failure::Refused(format!("{} is not available.", path.display())))?;
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let pack = cfg.packs.iter().find(|p| p.file == name);
+    println!("Checking {}", path.display());
+    if let Some(p) = pack {
+        println!("against: {} ({})\n", p.title, human_bytes(p.size));
+        if meta.len() != p.size {
+            return Err(Failure::Error(format!(
+                "DOES NOT MATCH: the file is {} but the catalog expects {}. It is \
+                 incomplete or a different file.",
+                human_bytes(meta.len()),
+                human_bytes(p.size)
+            )));
+        }
+    }
+    let hex = hash_file(cfg, path, meta.len()).map_err(Failure::Error)?;
+    match pack {
+        Some(p) if hex == p.sha256 => {
+            println!(
+                "MATCHES: this is exactly the file of the catalog. It can be read or installed."
+            );
+            Ok(())
+        }
+        Some(_) => Err(Failure::Error(
+            "DOES NOT MATCH: the file is damaged or was altered. Do not rely on it; copy it \
+             again from another source."
+                .into(),
+        )),
+        None => Err(Failure::Refused(format!(
+            "This file is not in the catalog of this system, so it cannot be checked.\n\
+             Its SHA-256 is {hex}.\nCompare it with the fingerprint published by its source."
+        ))),
+    }
 }
 
 // ------------------------------------------------------------------ open

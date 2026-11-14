@@ -40,6 +40,7 @@ let
           "practical"
           "travel"
           "computing"
+          "documentation"
         ];
       };
       language = mkOption {
@@ -141,6 +142,20 @@ let
     ];
     session_shell = "/run/current-system/sw${config.resilience.sessionPackage.shellPath}";
     pack = map (p: lib.filterAttrs (_: v: v != null) p) cfg.catalog;
+    set = cfg.sets;
+    builtin = lib.optional cfg.builtinDocs {
+      title = "System documentation (built in)";
+      description = "The Resilience handbook, the NixOS manual and every NixOS option of this system.";
+      category = "documentation";
+      language = "en";
+      path = "${docsPack}/share/resilience/packs/resilience-system-docs.zim";
+      license = "MIT";
+      source = "Resilience handbook; NixOS manual and options of the pinned nixpkgs (nixos.org)";
+    };
+  };
+
+  docsPack = pkgs.callPackage ../packages/resilience-docs {
+    handbook = config.resilience.handbookPackage;
   };
 
   # The same parser as the store checks the file at build time.
@@ -180,6 +195,41 @@ in
       default = "/var/lib/resilience/packs";
       description = "Where installed packs are kept, shared by every account.";
     };
+    sets = mkOption {
+      type = types.listOf (
+        types.submodule {
+          options = {
+            id = mkOption { type = types.strMatching "[a-z0-9][a-z0-9-]{0,63}"; };
+            title = mkOption { type = types.str; };
+            description = mkOption { type = types.str; };
+            packs = mkOption {
+              type = types.listOf types.str;
+              description = "Catalog pack ids.";
+            };
+          };
+        }
+      );
+      # Only packs present in the catalog (it may be replaced); empty sets dropped.
+      default =
+        let
+          ids = map (p: p.id) cfg.catalog;
+        in
+        lib.filter (s: s.packs != [ ]) (
+          map (s: s // { packs = lib.filter (id: lib.elem id ids) s.packs; }) (
+            import ../packs/sets.nix cfg.catalog
+          )
+        );
+      defaultText = lib.literalExpression "import ./nix/packs/sets.nix config.resilience.packs.catalog";
+      description = "Suggested selections offered on the Resource packs screen.";
+    };
+    builtinDocs = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Ship a small documentation pack (Resilience handbook, NixOS manual and
+        options, about 4 MiB) in the system, readable in the Offline library.
+      '';
+    };
     configFile = mkOption {
       type = types.package;
       readOnly = true;
@@ -208,6 +258,10 @@ in
       {
         assertion = lib.allUnique (map (p: p.file) cfg.catalog);
         message = "resilience.packs.catalog: pack files must be unique";
+      }
+      {
+        assertion = lib.all (s: lib.all (id: lib.any (p: p.id == id) cfg.catalog) s.packs) cfg.sets;
+        message = "resilience.packs.sets: every pack id must be in the catalog";
       }
     ];
 

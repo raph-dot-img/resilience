@@ -238,6 +238,72 @@ in
     source = "Stack Exchange contributors; packaged by Kiwix (download.kiwix.org)";
   }
 
+  {
+    id = "se-diy";
+    title = "Home Improvement questions (Stack Exchange)";
+    description = "Questions and answers about repairs, electrical wiring, plumbing and building work at home.";
+    category = "practical";
+    language = "en";
+    file = "diy.stackexchange.com_en_all_2026-10.zim";
+    size = 2086024326;
+    sha256 = "df795a094698282164ddee422814f88bf84841a2413c89ac23401efd71f22731";
+    urls = kiwix "stack_exchange" "diy.stackexchange.com_en_all_2026-10.zim";
+    license = "CC-BY-SA-4.0";
+    source = "Stack Exchange contributors; packaged by Kiwix (download.kiwix.org)";
+  }
+  {
+    id = "se-mechanics";
+    title = "Motor Vehicle Maintenance & Repair questions (Stack Exchange)";
+    description = "Questions and answers about keeping cars, motorbikes and engines running.";
+    category = "practical";
+    language = "en";
+    file = "mechanics.stackexchange.com_en_all_2026-10.zim";
+    size = 341672133;
+    sha256 = "3b8790dcde480f466d0d55fae23941cdb1f06ff464a77168f27110f98d8eb923";
+    urls = kiwix "stack_exchange" "mechanics.stackexchange.com_en_all_2026-10.zim";
+    license = "CC-BY-SA-4.0";
+    source = "Stack Exchange contributors; packaged by Kiwix (download.kiwix.org)";
+  }
+  {
+    id = "se-earthscience";
+    title = "Earth Science questions (Stack Exchange)";
+    description = "Questions and answers about weather, climate, geology and the oceans.";
+    category = "practical";
+    language = "en";
+    file = "earthscience.stackexchange.com_en_all_2026-10.zim";
+    size = 132908100;
+    sha256 = "af63d199e3ec876a31d2a9fdd335853acc1655ff73995854f488d03402f55c72";
+    urls = kiwix "stack_exchange" "earthscience.stackexchange.com_en_all_2026-10.zim";
+    license = "CC-BY-SA-4.0";
+    source = "Stack Exchange contributors; packaged by Kiwix (download.kiwix.org)";
+  }
+  {
+    id = "se-ham";
+    title = "Amateur Radio questions (Stack Exchange)";
+    description = "Questions and answers about radio equipment, antennas, licences and emergency communication.";
+    category = "practical";
+    language = "en";
+    file = "ham.stackexchange.com_en_all_2026-10.zim";
+    size = 77108284;
+    sha256 = "cb8a0cd7ae0078279ace1cd2a05e60505aa2494c29e82dac1942bf4cd54fcf9c";
+    urls = kiwix "stack_exchange" "ham.stackexchange.com_en_all_2026-10.zim";
+    license = "CC-BY-SA-4.0";
+    source = "Stack Exchange contributors; packaged by Kiwix (download.kiwix.org)";
+  }
+  {
+    id = "se-electronics";
+    title = "Electrical Engineering questions (Stack Exchange)";
+    description = "Questions and answers about electronics, circuits, batteries and power. Large.";
+    category = "practical";
+    language = "en";
+    file = "electronics.stackexchange.com_en_all_2026-10.zim";
+    size = 4261397539;
+    sha256 = "b28e58b24ed55c602265729b34b0c6cc4e12228e6fe2f55df5b5e9eae169b266";
+    urls = kiwix "stack_exchange" "electronics.stackexchange.com_en_all_2026-10.zim";
+    license = "CC-BY-SA-4.0";
+    source = "Stack Exchange contributors; packaged by Kiwix (download.kiwix.org)";
+  }
+
   # --- Travel --------------------------------------------------------------
   {
     id = "wikivoyage-en";
@@ -305,5 +371,46 @@ in
     urls = kiwix "stack_exchange" "superuser.com_en_all_2026-10.zim";
     license = "CC-BY-SA-4.0";
     source = "Stack Exchange contributors; packaged by Kiwix (download.kiwix.org)";
+  }
+
+  # --- Documentation -------------------------------------------------------
+  {
+    id = "devdocs-man";
+    title = "Linux manual pages (DevDocs)";
+    description = "The Linux man pages of most commands, system calls and file formats, including programs not installed here.";
+    category = "documentation";
+    language = "en";
+    file = "devdocs_en_man_2026-10.zim";
+    size = 29591154;
+    sha256 = "89f699d6b77df358847f36bd72129eeb1b7d9f9f2a16c35e550005d04cda51ac";
+    urls = kiwix "devdocs" "devdocs_en_man_2026-10.zim";
+    license = "LicenseRef-Various-Free";
+    source = "DevDocs (devdocs.io) and the projects' own authors; packaged by Kiwix (download.kiwix.org)";
+  }
+  {
+    id = "devdocs-bash";
+    title = "Bash reference manual (DevDocs)";
+    description = "The GNU Bash manual: the shell language, its commands and options.";
+    category = "documentation";
+    language = "en";
+    file = "devdocs_en_bash_2026-10.zim";
+    size = 572117;
+    sha256 = "ea4afb04ddf90f31363829ef9fa2485405dc05bd1fc62b4626245fe70c24735d";
+    urls = kiwix "devdocs" "devdocs_en_bash_2026-10.zim";
+    license = "GFDL-1.3-or-later";
+    source = "DevDocs (devdocs.io) and the projects' own authors; packaged by Kiwix (download.kiwix.org)";
+  }
+  {
+    id = "devdocs-nix";
+    title = "Nix language reference (DevDocs)";
+    description = "The Nix language and its built-in functions, used to configure NixOS.";
+    category = "documentation";
+    language = "en";
+    file = "devdocs_en_nix_2026-10.zim";
+    size = 400603;
+    sha256 = "942db2a5bb2032398af88b6d04abd0a66da432d147715b0c848eedc9146d7333";
+    urls = kiwix "devdocs" "devdocs_en_nix_2026-10.zim";
+    license = "LGPL-2.1-or-later";
+    source = "DevDocs (devdocs.io) and the projects' own authors; packaged by Kiwix (download.kiwix.org)";
   }
 ]

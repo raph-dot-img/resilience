@@ -13,8 +13,8 @@ use resilience_core::config::{SystemConfig, ThemeName, ToolPaths, UserSettings};
 use resilience_core::mode::{Detected, Mode};
 
 use crate::app::{
-    App, BACKUP_LABEL, Builtin, CHECK_LABEL, Effect, Entry, Modal, PACKS_LABEL, PackRow, Paths,
-    Pending, RESTORE_LABEL, Startup, View,
+    App, BACKUP_LABEL, Builtin, CHECK_LABEL, Effect, Entry, MediaPurpose, Modal, PACKS_LABEL,
+    PackRow, Paths, Pending, RESTORE_LABEL, Startup, View,
 };
 use crate::ui;
 
@@ -178,7 +178,15 @@ fn write_packs(sys: &Path) {
             "wiki_fr_2026-10.zim",
             3000
         ),
+    ) + &format!(
+        "[[set]]\nid = \"starter\"\ntitle = \"Starter set\"\ndescription = \"A start\"\n\
+         packs = [\"wiki-en\", \"wiki-fr\", \"medicine-en\"]\n\
+         [[builtin]]\ntitle = \"System documentation (built in)\"\ndescription = \"Docs\"\n\
+         category = \"documentation\"\nlanguage = \"en\"\npath = \"{}\"\nlicense = \"MIT\"\n\
+         source = \"Test\"\n",
+        sys.join("docs.zim").display()
     );
+    std::fs::write(sys.join("docs.zim"), b"docs").expect("w");
     std::fs::write(sys.join("packs.toml"), text).expect("write packs.toml");
     std::fs::write(dir.join("wiki_en_2026-09.zim"), b"0123456789").expect("w");
     std::fs::write(dir.join("wiki_en_2026-03.zim"), b"old").expect("w");
@@ -2007,7 +2015,7 @@ fn packs_from_a_usb_stick() {
     assert!(matches!(
         a.view(),
         View::Media {
-            for_packs: true,
+            purpose: MediaPurpose::InstallPacks,
             ..
         }
     ));
@@ -2086,8 +2094,17 @@ fn library_lists_installed_packs_and_opens_them_in_the_browser() {
     let titles: Vec<&str> = items.iter().map(|i| i.title.as_str()).collect();
     assert_eq!(
         titles,
-        ["Wikipedia (English)", "Wikipedia (English) (older version)"]
+        [
+            "System documentation (built in)",
+            "Wikipedia (English)",
+            "Wikipedia (English) (older version)"
+        ]
     );
+    // Built-in packs need no check.
+    assert_eq!(press(&mut a, KeyCode::Char('c')), Effect::None);
+    assert!(matches!(&a.modal, Some(Modal::Message { title, .. }) if title == "ALREADY CHECKED"));
+    a.modal = None;
+    press(&mut a, KeyCode::Down);
     let screen = render(&mut a, 80, 24);
     assert!(screen.contains("OFFLINE LIBRARY"), "{screen}");
     assert_console_glyphs(&screen);

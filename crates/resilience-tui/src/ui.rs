@@ -22,14 +22,15 @@ use resilience_core::network::{LinkLevel, ProbeOutcome};
 use resilience_core::status::format_uptime;
 
 use crate::app::{
-    App, Entry, Level, LibItem, MODES, Modal, PackRow, PacksScreen, RecoveryItem, SearchHit, View,
-    category_description, level_tag,
+    App, Entry, Level, LibItem, MODES, MediaPurpose, Modal, PackRow, PacksScreen, RecoveryItem,
+    SearchHit, View, category_description, level_tag,
 };
 use crate::help;
 use crate::theme::Theme;
 use resilience_core::admin::{AccountRow, Source};
 use resilience_core::backup::{self, BackupFile};
 use resilience_core::media::Volume;
+use resilience_core::packs::PackState;
 use resilience_core::recovery;
 use resilience_core::wifi::{self, Network, Overview};
 
@@ -181,8 +182,9 @@ fn footer_hints(view: &View) -> &'static str {
         View::Media { .. } => "Enter Open  e Eject  r Refresh  Esc Back  F1 Help",
         View::Wifi { .. } => "Enter Join  d Disconnect  f Forget  r Scan  w Wi-Fi on  Esc Back",
         View::Backups { .. } => "Enter Back up/Restore  c Check  e Eject  Esc Back  F1 Help",
-        View::Library { .. } => "Enter Read  s Search in it  p Get packs  Esc Back  F1 Help",
-        View::Packs { .. } => "Space Tick  d Download  u From USB  f Language  Enter Details  Esc",
+        View::Packs { .. } => "Space Tick  s Sets  d Download  u From USB  f Language  Enter Info",
+        View::PackSets { .. } => "Enter Tick this set  Esc Back",
+        View::Library { .. } => "Enter Read  s Search  c Check  u USB stick  p Get packs  Esc Back",
     }
 }
 
@@ -325,8 +327,9 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
             volumes,
             error,
             list,
-            for_packs,
-        } => draw_media(f, app, area, volumes, error.as_deref(), list, *for_packs),
+            purpose,
+        } => draw_media(f, app, area, volumes, error.as_deref(), list, *purpose),
+        View::PackSets { list } => draw_pack_sets(f, app, area, list),
         View::Library { items, list } => draw_library(f, app, area, items, list),
         View::Packs { s, list } => draw_packs(f, app, area, s, list),
         View::Backups {
@@ -1248,13 +1251,13 @@ fn draw_media(
     volumes: &[Volume],
     error: Option<&str>,
     list: &mut ListState,
-    for_packs: bool,
+    purpose: MediaPurpose,
 ) {
     let t = app.theme;
-    let title = if for_packs {
-        "COPY PACKS FROM A USB STICK"
-    } else {
-        "BACKUPS & USB STICKS"
+    let title = match purpose {
+        MediaPurpose::InstallPacks => "COPY PACKS FROM A USB STICK",
+        MediaPurpose::ReadPacks => "READ PACKS ON A USB STICK",
+        MediaPurpose::Backups => "BACKUPS & USB STICKS",
     };
     if let Some(e) = error {
         let p = Paragraph::new(format!(
@@ -1319,7 +1322,7 @@ fn draw_media(
                     format!("[!!] Cannot be used: {p}."),
                     t.warn,
                 ))),
-                None if for_packs => lines.push(Line::from(
+                None if purpose != MediaPurpose::Backups => lines.push(Line::from(
                     "Enter opens it and looks for resource packs on it (at its top level \
                      or in a folder named Resilience-packs).",
                 )),
@@ -1343,10 +1346,9 @@ fn draw_library(f: &mut Frame, app: &App, area: Rect, items: &[LibItem], list: &
     let rows: Vec<ListItem> = items
         .iter()
         .map(|i| {
-            let tag = i.category.map_or("Other", |c| c.label());
             ListItem::new(format!(
                 "{:<12.12} {:<46.46} {:>9}",
-                tag,
+                i.tag(),
                 i.title,
                 human_bytes(i.size)
             ))
@@ -1378,6 +1380,71 @@ fn draw_library(f: &mut Frame, app: &App, area: Rect, items: &[LibItem], list: &
              health and practical guides. Everything here works without a network.",
         )],
     };
+    details(f, &t, d, lines);
+}
+
+fn draw_pack_sets(f: &mut Frame, app: &App, area: Rect, list: &mut ListState) {
+    let t = app.theme;
+    // The packs screen is right below this one.
+    let Some(s) = app.stack.iter().rev().find_map(|v| match v {
+        View::Packs { s, .. } => Some(&**s),
+        _ => None,
+    }) else {
+        return;
+    };
+    let summary = |set: &resilience_core::packs::PackSet| {
+        let mut add = 0u64;
+        let mut missing = 0;
+        for id in &set.packs {
+            if let Some(i) = s.cfg.packs.iter().position(|p| &p.id == id) {
+                match s.inv.states[i] {
+                    PackState::Installed => {}
+                    PackState::Partial(n) => {
+                        add += s.cfg.packs[i].size - n;
+                        missing += 1;
+                    }
+                    PackState::Absent => {
+                        add += s.cfg.packs[i].size;
+                        missing += 1;
+                    }
+                }
+            }
+        }
+        (missing, add)
+    };
+    let items: Vec<ListItem> = s
+        .cfg
+        .sets
+        .iter()
+        .map(|set| {
+            let (missing, add) = summary(set);
+            let state = if missing == 0 {
+                "all installed".to_string()
+            } else {
+                format!("{missing} to get, {}", human_bytes(add))
+            };
+            ListItem::new(format!("{:<34.34} {state}", set.title))
+        })
+        .collect();
+    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(9)]).areas(area);
+    draw_list(f, &t, l, "SUGGESTED SETS", items, list, "");
+    let Some(set) = list.selected().and_then(|i| s.cfg.sets.get(i)) else {
+        return;
+    };
+    let titles: Vec<&str> = set
+        .packs
+        .iter()
+        .filter_map(|id| s.cfg.pack(id).map(|p| p.title.as_str()))
+        .collect();
+    let lines = vec![
+        Line::from(Span::styled(set.description.clone(), t.base)),
+        Line::from(Span::styled(titles.join("; "), t.dim)),
+        Line::from(Span::styled(
+            "Enter ticks every pack of this set that is not installed. Nothing is \
+             downloaded until you press d (or u for a USB stick).",
+            t.dim,
+        )),
+    ];
     details(f, &t, d, lines);
 }
 
