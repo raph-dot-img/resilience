@@ -5,7 +5,8 @@ the current architecture, conventions and constraints.
 
 ## Workflow
 
-1. `git switch -c feat/<topic>` from `main`.
+1. `git switch -c feat/<topic>` from `develop` (merge back into `develop`;
+   `main` only receives `develop` at tested milestones).
 2. Make a small, working vertical slice.
 3. Run `cargo fmt && cargo clippy --all-targets && cargo test` and
    `nix fmt && nix flake check --no-build`. Run the relevant VM test

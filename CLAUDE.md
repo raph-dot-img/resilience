@@ -154,7 +154,10 @@ Nix 2.35 multi-user daemon (user is NOT trusted; cache.nixos.org works;
 ## 8. Git conventions
 
 Conventional commits (`feat:`, `fix:`, `security:`, `test:`, `docs:`,
-`chore:`, `refactor:`). Main branch `main`; feature branches for larger work.
+`chore:`, `refactor:`). Branches: `develop` is the development branch (work
+happens there, or on `feat/<topic>` branches created from `develop` and merged
+back into it); `main` only receives `develop` at tested milestones. Both are
+on `origin` (GitHub); push only when the user asks.
 Never commit ISOs, disk images, `result*` links, large archives, keys or
 secrets (see `.gitignore`). Never force-push, never push unless asked, never
 run destructive git operations without explicit authorization.
