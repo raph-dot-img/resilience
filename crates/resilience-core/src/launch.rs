@@ -38,13 +38,19 @@ impl Drop for IgnoreSignals {
 }
 
 /// Run `argv` in the foreground and wait for it. `extra_args` are appended
-/// as separate arguments (for example a file name chosen in the TUI).
-pub fn run_foreground(argv: &[String], extra_args: &[&std::ffi::OsStr]) -> io::Result<ExitStatus> {
+/// as separate arguments (for example a file name chosen in the TUI); `env`
+/// overrides individual environment variables of the child.
+pub fn run_foreground(
+    argv: &[String],
+    extra_args: &[&std::ffi::OsStr],
+    env: &[(String, String)],
+) -> io::Result<ExitStatus> {
     let (prog, args) = argv
         .split_first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty command"))?;
     let mut cmd = Command::new(prog);
     cmd.args(args).args(extra_args);
+    cmd.envs(env.iter().map(|(k, v)| (k, v)));
     // SAFETY: the closure runs between fork and exec and only calls signal(),
     // which is async-signal-safe.
     unsafe {
@@ -61,6 +67,80 @@ pub fn run_foreground(argv: &[String], extra_args: &[&std::ffi::OsStr]) -> io::R
     status
 }
 
+/// Run `argv` (a `pkexec` command) with polkit's text agent `pkttyagent`
+/// registered for this process, so the administrator's password is asked on
+/// the terminal.
+///
+/// pkexec's built-in agent cannot complete a successful authentication
+/// when polkit uses its socket-activated helper (the helper reports pkexec's
+/// effective uid 0, polkitd expects the calling user; upstream polkit issue
+/// 17). pkttyagent runs as the user, so the uids match. pkexec checks the
+/// authorisation of its parent, which is this process.
+pub fn run_with_polkit_agent(
+    agent: &str,
+    argv: &[String],
+    env: &[(String, String)],
+) -> io::Result<ExitStatus> {
+    let mut fds = [0 as libc::c_int; 2];
+    // SAFETY: pipe2 writes two descriptors into the provided array.
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let (read_fd, write_fd) = (fds[0], fds[1]);
+    // SAFETY: getpid cannot fail.
+    let pid = unsafe { libc::getpid() };
+    let mut cmd = Command::new(agent);
+    cmd.args([
+        "--process".to_string(),
+        pid.to_string(),
+        "--notify-fd".to_string(),
+        write_fd.to_string(),
+        "--fallback".to_string(),
+    ]);
+    // SAFETY: between fork and exec, only fcntl (async-signal-safe) is called
+    // to let the child inherit the write end of the pipe.
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::fcntl(write_fd, libc::F_SETFD, 0) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let spawned = cmd.spawn();
+    // SAFETY: the parent no longer needs the write end.
+    unsafe { libc::close(write_fd) };
+    let mut child = match spawned {
+        Ok(c) => c,
+        Err(e) => {
+            // SAFETY: closing a descriptor we own.
+            unsafe { libc::close(read_fd) };
+            return Err(e);
+        }
+    };
+    // pkttyagent closes the notify fd once it is registered: wait for EOF.
+    let mut pfd = libc::pollfd {
+        fd: read_fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: poll on one valid descriptor with a 5 s timeout.
+    let ready = unsafe { libc::poll(&mut pfd, 1, 5000) };
+    // SAFETY: closing a descriptor we own.
+    unsafe { libc::close(read_fd) };
+    let result = if ready == 1 {
+        run_foreground(argv, &[], env)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "the polkit authentication agent did not start",
+        ))
+    };
+    let _ = child.kill();
+    let _ = child.wait();
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,15 +149,62 @@ mod tests {
     fn runs_fixed_argv_without_shell() {
         // If a shell interpreted the argument, `;` would run `false`.
         let argv = vec!["echo".to_string(), "a;false".to_string()];
-        let st = run_foreground(&argv, &[]).expect("run");
+        let st = run_foreground(&argv, &[], &[]).expect("run");
         assert!(st.success());
     }
 
     #[test]
     fn reports_errors() {
-        assert!(run_foreground(&[], &[]).is_err());
-        assert!(run_foreground(&["/nonexistent/x".into()], &[]).is_err());
-        let st = run_foreground(&["sh".into(), "-c".into(), "exit 4".into()], &[]).expect("run");
+        assert!(run_foreground(&[], &[], &[]).is_err());
+        assert!(run_foreground(&["/nonexistent/x".into()], &[], &[]).is_err());
+        let st =
+            run_foreground(&["sh".into(), "-c".into(), "exit 4".into()], &[], &[]).expect("run");
         assert_eq!(st.code(), Some(4));
+    }
+
+    #[test]
+    fn applies_environment_overrides() {
+        let argv: Vec<String> = ["sh", "-c", "test \"$RESILIENCE_X\" = 'a b'"]
+            .map(String::from)
+            .into();
+        let env = [("RESILIENCE_X".to_string(), "a b".to_string())];
+        assert!(run_foreground(&argv, &[], &env).expect("run").success());
+        assert!(!run_foreground(&argv, &[], &[]).expect("run").success());
+    }
+
+    #[test]
+    fn polkit_agent_is_registered_first_and_stopped_after() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("resilience-agent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("mkdir");
+        // Fake agent: records its arguments, closes the notify fd, waits.
+        let agent = d.join("agent");
+        std::fs::write(
+            &agent,
+            format!(
+                "#!/bin/sh\necho \"$@\" > {0}/args\neval \"exec $4>&-\"\nexec sleep 30\n",
+                d.display()
+            ),
+        )
+        .expect("write");
+        std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let argv: Vec<String> = ["sh", "-c", "test -s \"$1\"", "sh"]
+            .map(String::from)
+            .into_iter()
+            .chain([d.join("args").display().to_string()])
+            .collect();
+        let st = run_with_polkit_agent(&agent.to_string_lossy(), &argv, &[]).expect("run");
+        assert!(st.success(), "agent ran before the command");
+        let args = std::fs::read_to_string(d.join("args")).expect("args");
+        // SAFETY: getpid cannot fail.
+        let pid = unsafe { libc::getpid() };
+        assert!(
+            args.starts_with(&format!("--process {pid} --notify-fd ")),
+            "{args}"
+        );
+        assert!(args.trim_end().ends_with("--fallback"), "{args}");
+        assert!(run_with_polkit_agent("/nonexistent/agent", &argv, &[]).is_err());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

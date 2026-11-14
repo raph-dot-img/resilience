@@ -21,9 +21,12 @@ use resilience_core::mode::Mode;
 use resilience_core::network::{LinkLevel, ProbeOutcome};
 use resilience_core::status::format_uptime;
 
-use crate::app::{App, Entry, Level, Modal, SearchHit, View, category_description, level_tag};
+use crate::app::{
+    App, Entry, Level, MODES, Modal, RecoveryItem, SearchHit, View, category_description, level_tag,
+};
 use crate::help;
 use crate::theme::Theme;
+use resilience_core::admin::{AccountRow, Source};
 
 const LOGO: [&str; 2] = [
     "█▀█ █▀▀ █▀ █ █   █ █▀▀ █▄ █ █▀▀ █▀▀",
@@ -46,6 +49,30 @@ pub fn clock(t: SystemTime) -> String {
         tm
     };
     format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
+}
+
+/// Local date and time, `2026-11-14 10:30`.
+pub fn date_time(t: SystemTime) -> String {
+    let secs = t
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0) as libc::time_t;
+    // SAFETY: localtime_r writes into the provided, zero-initialised struct.
+    let tm = unsafe {
+        let mut tm: libc::tm = std::mem::zeroed();
+        if libc::localtime_r(&secs, &mut tm).is_null() {
+            return "?".into();
+        }
+        tm
+    };
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min
+    )
 }
 
 fn block<'a>(title: &'a str, theme: &Theme) -> Block<'a> {
@@ -142,6 +169,9 @@ fn footer_hints(view: &View) -> &'static str {
         View::Network { .. } => "p Probe Internet  r Refresh  Esc Back",
         View::Settings { .. } => "Enter Apply theme  Esc Back",
         View::Search { .. } => "Type to search  Up/Down Select  Enter Open  Esc Back",
+        View::Users { .. } => "Enter Change mode  r Refresh  Esc Back  F1 Help",
+        View::ChooseMode { .. } => "Up/Down Choose  Enter Continue  Esc Cancel",
+        View::Recovery { .. } => "1-4/Enter Open  Esc Back  F1 Help",
     }
 }
 
@@ -259,6 +289,9 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         }
         View::Settings { list } => draw_settings(f, app, area, list),
         View::Search { query, hits, list } => draw_search(f, app, area, query, hits, list),
+        View::Users { rows, error, list } => draw_users(f, app, area, rows, error.as_deref(), list),
+        View::ChooseMode { row, list } => draw_choose_mode(f, app, area, row, list),
+        View::Recovery { list } => draw_recovery(f, app, area, list),
     }
     app.stack.push(view);
 }
@@ -928,6 +961,151 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect, list: &mut ListState) {
             .block(block("ACCOUNT", &t)),
         info,
     );
+}
+
+fn two_panes(area: Rect) -> [Rect; 2] {
+    if area.width >= 76 {
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(area)
+    } else {
+        Layout::vertical([Constraint::Min(0), Constraint::Length(8)]).areas(area)
+    }
+}
+
+fn details(f: &mut Frame, t: &Theme, area: Rect, lines: Vec<Line<'static>>) {
+    f.render_widget(
+        Paragraph::new(lines)
+            .style(t.base)
+            .wrap(Wrap { trim: true })
+            .block(block("DETAILS", t)),
+        area,
+    );
+}
+
+fn draw_users(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    rows: &[AccountRow],
+    error: Option<&str>,
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    if let Some(e) = error {
+        let p = Paragraph::new(format!(
+            "The list of accounts could not be read.\n\n{e}\n\n\
+             Security modes can still be changed by an administrator in the system \
+             configuration (resilience.users.<name>.mode)."
+        ))
+        .wrap(Wrap { trim: false })
+        .style(t.error)
+        .block(block("USERS & SECURITY MODES", &t));
+        f.render_widget(p, area);
+        return;
+    }
+    let items: Vec<ListItem> = rows
+        .iter()
+        .map(|r| {
+            let you = if r.name == app.who.user { " (you)" } else { "" };
+            ListItem::new(format!("{:<18} {}{you}", r.name, r.effective.label()))
+        })
+        .collect();
+    let [l, d] = two_panes(area);
+    draw_list(
+        f,
+        &t,
+        l,
+        "USERS & SECURITY MODES",
+        items,
+        list,
+        "No accounts are managed by Resilience on this system.",
+    );
+    if let Some(r) = list.selected().and_then(|i| rows.get(i)) {
+        let mut lines = vec![
+            kv(&t, "Account", r.name.clone()),
+            kv(&t, "Security mode", r.effective.label()),
+        ];
+        if !r.description.is_empty() {
+            lines.insert(1, kv(&t, "Name", r.description.clone()));
+        }
+        lines.push(kv(
+            &t,
+            "Set by",
+            match r.source {
+                Source::Declared => "system config".to_string(),
+                Source::Override => "mode change".to_string(),
+            },
+        ));
+        if r.active != r.effective {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "[!!] Active permissions are still {}; restart to apply.",
+                    r.active
+                ),
+                t.warn,
+            )));
+        }
+        if r.autologin {
+            lines.push(Line::from(Span::styled(
+                "Logs in automatically on the first console, so it always stays Ultra-Stable.",
+                t.dim,
+            )));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(r.effective.description()));
+        details(f, &t, d, lines);
+    }
+}
+
+fn draw_choose_mode(f: &mut Frame, app: &App, area: Rect, row: &AccountRow, list: &mut ListState) {
+    let t = app.theme;
+    let items: Vec<ListItem> = MODES
+        .iter()
+        .map(|m| {
+            let cur = if *m == row.effective {
+                "  (current)"
+            } else {
+                ""
+            };
+            ListItem::new(format!("{}{cur}", m.label()))
+        })
+        .collect();
+    let [l, d] = two_panes(area);
+    draw_list(
+        f,
+        &t,
+        l,
+        &format!("NEW MODE FOR '{}'", row.name),
+        items,
+        list,
+        "",
+    );
+    if let Some(m) = list.selected().and_then(|i| MODES.get(i)) {
+        let lines = vec![
+            Line::from(Span::styled(m.label(), t.accent)),
+            Line::from(""),
+            Line::from(m.description()),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Enter shows the consequences and asks for confirmation. Nothing changes yet.",
+                t.dim,
+            )),
+        ];
+        details(f, &t, d, lines);
+    }
+}
+
+fn draw_recovery(f: &mut Frame, app: &App, area: Rect, list: &mut ListState) {
+    let t = app.theme;
+    let items: Vec<ListItem> = RecoveryItem::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, r)| ListItem::new(format!("[{}] {}", i + 1, r.name())))
+        .collect();
+    let [l, d] = two_panes(area);
+    draw_list(f, &t, l, "RECOVERY & DIAGNOSTICS", items, list, "");
+    if let Some(r) = list.selected().and_then(|i| RecoveryItem::ALL.get(i)) {
+        details(f, &t, d, vec![Line::from(r.description())]);
+    }
 }
 
 fn draw_search(

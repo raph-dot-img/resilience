@@ -69,6 +69,7 @@
         resilience = pkgs.resilience;
         vm-boot-offline = vmTest ./tests/vm/boot-offline.nix;
         vm-modes = vmTest ./tests/vm/modes.nix;
+        vm-admin = vmTest ./tests/vm/admin.nix;
         security-invariants = pkgs.callPackage ./tests/eval/security-invariants.nix {
           configurations = {
             inherit (self.nixosConfigurations) live-standard live-minimal dev-vm;

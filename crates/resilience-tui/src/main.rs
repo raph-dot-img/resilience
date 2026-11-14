@@ -28,7 +28,7 @@ use resilience_core::catalog::{Availability, Catalog};
 use resilience_core::config::{self, SystemConfig, UserSettings};
 use resilience_core::{launch, mode, network, status};
 
-use crate::app::{App, Effect, RunRequest, Startup};
+use crate::app::{App, Effect, Paths, RunRequest, Startup};
 
 const USAGE: &str = "\
 Usage: resilience [COMMAND]
@@ -99,6 +99,7 @@ fn startup() -> Startup {
         home,
         settings,
         settings_path,
+        paths: Paths::default(),
         warnings,
     }
 }
@@ -266,7 +267,10 @@ fn run_program(terminal: &mut DefaultTerminal, app: &mut App, req: &RunRequest) 
     }
     let _ = out.flush();
     let extra: Vec<&std::ffi::OsStr> = req.extra_args.iter().map(|p| p.as_os_str()).collect();
-    let result = launch::run_foreground(&req.argv, &extra);
+    let result = match &req.polkit_agent {
+        Some(agent) => launch::run_with_polkit_agent(agent, &req.argv, &req.env),
+        None => launch::run_foreground(&req.argv, &extra, &req.env),
+    };
     let failed = !matches!(&result, Ok(st) if st.success());
     if req.pause_after || failed {
         match &result {

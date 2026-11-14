@@ -1,0 +1,18 @@
+[package]
+name = "resilience-admin"
+description = "Narrow privileged helper of Resilience OS: typed operations only, run through pkexec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "resilience-admin"
+path = "src/main.rs"
+
+[dependencies]
+resilience-core.workspace = true
+libc.workspace = true
+
+[lints]
+workspace = true

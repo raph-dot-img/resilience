@@ -64,6 +64,23 @@ pub fn lines(topic: HelpTopic, mode: Mode) -> Vec<String> {
             "  Enter                  Apply and save the selected theme",
             "  The Monochrome theme uses no colour at all; all information stays visible.",
         ],
+        HelpTopic::Users => &[
+            "== USERS & SECURITY MODES ==",
+            "  Lists the accounts of this computer and their security mode.",
+            "  Enter                  Choose a new mode for the selected account",
+            "  r                      Refresh the list",
+            "  Every change shows its consequences first and then asks for the password of",
+            "  an administrator (an Advanced account). Only type an administrator password",
+            "  on a screen you trust. Changes are recorded in the audit log.",
+            "  A mode is a set of real permissions of the account, not a display setting.",
+        ],
+        HelpTopic::Recovery => &[
+            "== RECOVERY ==",
+            "  1-4 / Enter            Open the selected item",
+            "  Nothing in this section changes the system or your files.",
+            "  A system rollback (earlier generation, chosen in the boot menu) never touches",
+            "  your personal files; restoring files is a separate operation.",
+        ],
         HelpTopic::Search => &[
             "== SEARCH ==",
             "  Type any word. Results include menu sections [MENU], built-in tools [TOOL],",

@@ -3,6 +3,7 @@
 {
   imports = [
     ./core.nix
+    ./admin.nix
     ./users.nix
     ./interface.nix
     ./security.nix

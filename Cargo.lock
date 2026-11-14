@@ -560,6 +560,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "resilience-admin"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "resilience-core",
+]
+
+[[package]]
 name = "resilience-core"
 version = "0.1.0"
 dependencies = [

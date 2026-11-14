@@ -10,7 +10,7 @@ use resilience_core::catalog::{Catalog, Category};
 use resilience_core::config::{SystemConfig, ThemeName, UserSettings};
 use resilience_core::mode::{Detected, Mode};
 
-use crate::app::{App, Builtin, Effect, Entry, Modal, Startup, View};
+use crate::app::{App, Builtin, Effect, Entry, Modal, Paths, Pending, Startup, View};
 use crate::ui;
 
 const CATALOG: &str = r#"
@@ -68,10 +68,57 @@ fn app(mode: Mode, tag: &str) -> App {
             groups: vec![],
         },
         settings_path: UserSettings::path(&home.join(".config")),
+        paths: test_paths(&home),
         home,
         settings: UserSettings::default(),
         warnings: vec![],
     })
+}
+
+/// A fake system: helper configuration with three accounts (demo logs in
+/// automatically, bob is Stable, carol is the only administrator), the group
+/// database matching it, and no system generations.
+fn test_paths(home: &Path) -> Paths {
+    let sys = home.join("sys");
+    std::fs::create_dir_all(sys.join("profiles")).expect("mkdir");
+    std::fs::write(
+        sys.join("admin.toml"),
+        format!(
+            r#"
+state_file = "{0}/modes.toml"
+audit_log = "{0}/audit.log"
+lock_file = "{0}/lock"
+gpasswd = "/bin/gpasswd"
+loginctl = "/bin/loginctl"
+helper = "/store/bin/resilience-admin"
+pkexec = "/run/wrappers/bin/pkexec"
+pkttyagent = "/store/bin/pkttyagent"
+session_shell = "/run/current-system/sw/bin/resilience-session"
+autologin_user = "demo"
+[users.demo]
+declared_mode = "ultra-stable"
+[users.bob]
+declared_mode = "stable"
+[users.carol]
+declared_mode = "advanced"
+description = "Carol the admin"
+"#,
+            sys.display()
+        ),
+    )
+    .expect("write admin.toml");
+    std::fs::write(
+        sys.join("group"),
+        "wheel:x:1:carol\nresilience-stable:x:990:bob,carol\nnetworkmanager:x:57:bob,carol\n",
+    )
+    .expect("write group");
+    Paths {
+        admin_config: sys.join("admin.toml"),
+        group_file: sys.join("group"),
+        profiles: sys.join("profiles"),
+        booted_system: sys.join("booted"),
+        running_system: sys.join("current"),
+    }
 }
 
 fn key(c: KeyCode) -> KeyEvent {
@@ -388,15 +435,42 @@ fn dump_screens() {
     println!("{}\n", render(&mut a, 80, 24));
     press(&mut a, KeyCode::Enter);
     println!("{}\n", render(&mut a, 80, 24));
+    while a.stack.len() > 1 {
+        press(&mut a, KeyCode::Esc);
+    }
+    open(&mut a, Builtin::Users);
+    press(&mut a, KeyCode::Down);
+    println!("{}\n", render(&mut a, 80, 24));
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::End);
+    println!("{}\n", render(&mut a, 80, 24));
+    press(&mut a, KeyCode::Enter);
+    println!("{}\n", render(&mut a, 80, 24));
+    a.modal = None;
+    open(&mut a, Builtin::Recovery);
+    println!("{}\n", render(&mut a, 80, 24));
+    press(&mut a, KeyCode::Char('2'));
+    println!("{}\n", render(&mut a, 80, 24));
 }
 
 /// Every non-ASCII glyph the interface draws must exist in the console font
 /// (ter-i16n, CP437 repertoire). ter-v16n once rendered the logo as garbage
 /// on real hardware; the unit tests could not see it. Keep this list in sync
 /// with nix/modules/interface.nix.
+const CONSOLE_GLYPHS: &str = "▀▄█═║╔╗╚╝─│┌┐└┘░▒▓";
+
+fn assert_console_glyphs(screen: &str) {
+    for ch in screen.chars() {
+        assert!(
+            ch.is_ascii() || CONSOLE_GLYPHS.contains(ch),
+            "glyph {ch:?} (U+{:04X}) is not in the console font",
+            ch as u32
+        );
+    }
+}
+
 #[test]
 fn only_console_font_glyphs_are_drawn() {
-    const CONSOLE_GLYPHS: &str = "▀▄█═║╔╗╚╝─│┌┐└┘░▒▓";
     let mut a = app(Mode::Advanced, "glyphs");
     let sequences: [&[KeyCode]; 7] = [
         &[],
@@ -421,6 +495,270 @@ fn only_console_font_glyphs_are_drawn() {
             }
         }
         a.modal = None;
+        while a.stack.len() > 1 {
+            press(&mut a, KeyCode::Esc);
+        }
+    }
+}
+
+fn open(a: &mut App, b: Builtin) {
+    let (v, e) = a.activate(Entry::Builtin(b));
+    assert_eq!(e, Effect::None);
+    a.stack.push(v.expect("builtin opens a view"));
+}
+
+/// Move the selection of the top list view to the row whose text matches.
+fn select_user(a: &mut App, name: &str) {
+    let View::Users { rows, .. } = a.view() else {
+        panic!("not on the users view")
+    };
+    let i = rows
+        .iter()
+        .position(|r| r.name == name)
+        .expect("user listed");
+    press(a, KeyCode::Home);
+    for _ in 0..i {
+        press(a, KeyCode::Down);
+    }
+}
+
+#[test]
+fn users_and_recovery_are_offered_in_every_mode() {
+    for m in [Mode::UltraStable, Mode::Stable, Mode::Advanced] {
+        let a = app(m, &format!("offer-{m:?}"));
+        let sys = a.entries(Category::System);
+        assert!(sys.contains(&Entry::Builtin(Builtin::Users)), "{m:?}");
+        assert!(sys.contains(&Entry::Builtin(Builtin::Recovery)), "{m:?}");
+    }
+}
+
+#[test]
+fn mode_change_explains_consequences_and_defaults_to_cancel() {
+    let mut a = app(Mode::UltraStable, "setmode");
+    open(&mut a, Builtin::Users);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("USERS & SECURITY MODES"), "{screen}");
+    assert!(
+        screen.contains("carol") && screen.contains("ADVANCED"),
+        "{screen}"
+    );
+    select_user(&mut a, "bob");
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(a.view(), View::ChooseMode { .. }));
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("NEW MODE FOR 'bob'"), "{screen}");
+    press(&mut a, KeyCode::End); // Advanced
+    press(&mut a, KeyCode::Enter);
+    match &a.modal {
+        Some(Modal::Confirm {
+            body,
+            action,
+            yes_focused,
+            ..
+        }) => {
+            assert!(!yes_focused, "the safe choice is the default");
+            assert!(body.contains("sudo"), "{body}");
+            assert!(body.contains("administrator must type"), "{body}");
+            assert!(body.contains("next login"), "{body}");
+            assert_eq!(
+                *action,
+                Pending::SetMode {
+                    user: "bob".into(),
+                    to: Mode::Advanced
+                }
+            );
+        }
+        other => panic!("expected confirmation, got {other:?}"),
+    }
+    let shown = render(&mut a, 80, 24);
+    assert!(shown.contains("CHANGE SECURITY MODE"), "{shown}");
+    // Enter on the default button cancels; nothing runs.
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    assert!(a.modal.is_none());
+    // Confirm explicitly: the helper runs through pkexec with a fixed argv.
+    press(&mut a, KeyCode::Enter);
+    match press(&mut a, KeyCode::Char('y')) {
+        Effect::Run(r) => {
+            assert_eq!(
+                r.argv,
+                vec![
+                    "/run/wrappers/bin/pkexec",
+                    "/store/bin/resilience-admin",
+                    "set-mode",
+                    "bob",
+                    "advanced"
+                ]
+            );
+            assert!(r.pause_after, "the helper's answer stays on screen");
+            a.after_run(&r.label, &Ok(std::process::ExitStatus::default()));
+            assert!(matches!(a.view(), View::Users { .. }), "{:?}", a.view());
+            assert!(r.extra_args.is_empty());
+            assert_eq!(r.polkit_agent.as_deref(), Some("/store/bin/pkttyagent"));
+            assert_eq!(
+                r.env,
+                vec![(
+                    "SHELL".to_string(),
+                    "/run/current-system/sw/bin/resilience-session".to_string()
+                )]
+            );
+        }
+        other => panic!("expected run, got {other:?}"),
+    }
+}
+
+#[test]
+fn demotion_warns_that_sessions_end() {
+    let mut a = app(Mode::Stable, "demote");
+    open(&mut a, Builtin::Users);
+    select_user(&mut a, "bob");
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::Home); // Ultra-Stable
+    press(&mut a, KeyCode::Enter);
+    let Some(Modal::Confirm { body, .. }) = &a.modal else {
+        panic!("expected confirmation")
+    };
+    assert!(body.contains("sessions of 'bob' will be closed"), "{body}");
+}
+
+#[test]
+fn unsafe_mode_changes_are_refused_before_asking_for_a_password() {
+    let mut a = app(Mode::Advanced, "refuse");
+    open(&mut a, Builtin::Users);
+    // carol is the only administrator.
+    select_user(&mut a, "carol");
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::Home);
+    press(&mut a, KeyCode::Enter);
+    match &a.modal {
+        Some(Modal::Message { title, body, error }) => {
+            assert_eq!(title, "NOT POSSIBLE");
+            assert!(body.contains("last Advanced account"), "{body}");
+            assert!(error);
+        }
+        other => panic!("expected refusal, got {other:?}"),
+    }
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::Esc);
+    // demo logs in automatically and must stay Ultra-Stable.
+    select_user(&mut a, "demo");
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::End);
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { body, .. }) if body.contains("automatically")),
+        "{:?}",
+        a.modal
+    );
+}
+
+#[test]
+fn no_administrator_means_no_mode_change() {
+    let mut a = app(Mode::UltraStable, "noadmin");
+    std::fs::write(&a.paths.group_file, "").expect("w");
+    let cfg = std::fs::read_to_string(&a.paths.admin_config).expect("r");
+    std::fs::write(
+        &a.paths.admin_config,
+        cfg.replace("declared_mode = \"advanced\"", "declared_mode = \"stable\""),
+    )
+    .expect("w");
+    open(&mut a, Builtin::Users);
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { title, .. }) if title == "NO ADMINISTRATOR"),
+        "{:?}",
+        a.modal
+    );
+}
+
+#[test]
+fn users_view_survives_missing_or_corrupt_configuration() {
+    let mut a = app(Mode::UltraStable, "badcfg");
+    std::fs::write(&a.paths.admin_config, "this is = not [valid").expect("w");
+    open(&mut a, Builtin::Users);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("could not be read"), "{screen}");
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    let mut b = app(Mode::UltraStable, "nocfg");
+    std::fs::remove_file(&b.paths.admin_config).expect("rm");
+    open(&mut b, Builtin::Users);
+    assert!(render(&mut b, 80, 24).contains("could not be read"));
+}
+
+#[test]
+fn recovery_section_shows_health_generations_and_guide() {
+    let mut a = app(Mode::UltraStable, "recovery");
+    std::fs::write(
+        a.sys.handbook_dir.join("40-recovery.md"),
+        "# Recovery\nWhen something goes wrong.\n",
+    )
+    .expect("w");
+    open(&mut a, Builtin::Recovery);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("RECOVERY & DIAGNOSTICS"), "{screen}");
+    assert!(screen.contains("[2] System generations"), "{screen}");
+    press(&mut a, KeyCode::Char('1'));
+    assert!(matches!(a.view(), View::Pager { title, .. } if title.contains("HEALTH")));
+    press(&mut a, KeyCode::Esc);
+    press(&mut a, KeyCode::Char('2'));
+    match a.view() {
+        View::Pager { text, .. } => {
+            assert!(text.contains("No generations are recorded"), "{text}");
+            assert!(text.contains("boot menu"), "{text}");
+            assert!(text.contains("never your personal files"), "{text}");
+        }
+        other => panic!("expected pager, got {other:?}"),
+    }
+    press(&mut a, KeyCode::Esc);
+    press(&mut a, KeyCode::Char('4'));
+    assert!(
+        matches!(a.view(), View::Pager { text, .. } if text.contains("When something goes wrong")),
+        "{:?}",
+        a.view()
+    );
+}
+
+#[test]
+fn diagnostic_report_is_private_and_never_overwritten() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut a = app(Mode::UltraStable, "report");
+    open(&mut a, Builtin::Recovery);
+    press(&mut a, KeyCode::Char('3'));
+    let Some(Modal::Message { title, body, error }) = &a.modal else {
+        panic!("expected message, got {:?}", a.modal)
+    };
+    assert_eq!(title, "REPORT SAVED", "{body}");
+    assert!(!error);
+    let dir = a.home.join("Diagnostics");
+    let files: Vec<_> = std::fs::read_dir(&dir).expect("dir").flatten().collect();
+    assert_eq!(files.len(), 1);
+    let text = std::fs::read_to_string(files[0].path()).expect("read");
+    assert!(text.contains("RESILIENCE OS DIAGNOSTIC REPORT"));
+    assert!(text.contains("ULTRA-STABLE mode"), "{text}");
+    let mode = files[0].metadata().expect("meta").permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}
+
+#[test]
+fn new_views_render_at_several_sizes() {
+    let mut a = app(Mode::Advanced, "newsizes");
+    for b in [Builtin::Users, Builtin::Recovery] {
+        open(&mut a, b);
+        for (w, h) in [(80, 24), (40, 12), (120, 40), (200, 60)] {
+            assert_console_glyphs(&render(&mut a, w, h));
+        }
+        if b == Builtin::Users {
+            press(&mut a, KeyCode::Enter); // choose mode for the first account
+            press(&mut a, KeyCode::Down);
+            for (w, h) in [(80, 24), (40, 12), (120, 40)] {
+                assert_console_glyphs(&render(&mut a, w, h));
+            }
+            press(&mut a, KeyCode::Enter); // confirmation or refusal modal
+            assert!(a.modal.is_some());
+            for (w, h) in [(80, 24), (60, 20)] {
+                assert_console_glyphs(&render(&mut a, w, h));
+            }
+            a.modal = None;
+        }
         while a.stack.len() > 1 {
             press(&mut a, KeyCode::Esc);
         }

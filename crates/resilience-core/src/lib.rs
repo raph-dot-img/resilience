@@ -9,6 +9,7 @@
 //! counterpart that takes the raw file contents, so it can be unit-tested on
 //! any host.
 
+pub mod admin;
 pub mod catalog;
 pub mod config;
 pub mod handbook;
@@ -17,6 +18,7 @@ pub mod mode;
 pub mod network;
 pub mod notes;
 pub mod proc;
+pub mod recovery;
 pub mod status;
 
 /// Version of the Resilience userland, taken from the Cargo workspace.

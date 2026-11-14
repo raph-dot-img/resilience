@@ -12,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::ListState;
+use resilience_core::admin::{self, AccountRow, AdminConfig, ModeState};
 use resilience_core::catalog::{Availability, Catalog, Category};
 use resilience_core::config::{SystemConfig, ThemeName, UserSettings};
 use resilience_core::handbook;
@@ -19,6 +20,7 @@ use resilience_core::mode::{Detected, Mode};
 use resilience_core::network::{self, NetworkState, ProbeConfig, ProbeReport};
 use resilience_core::notes;
 use resilience_core::proc::run_full;
+use resilience_core::recovery;
 use resilience_core::status::{self, Snapshot, SystemState};
 
 use crate::theme::Theme;
@@ -27,6 +29,75 @@ const FAST_REFRESH: Duration = Duration::from_secs(5);
 const SLOW_REFRESH: Duration = Duration::from_secs(30);
 const TOAST_DURATION: Duration = Duration::from_secs(6);
 const MAX_NOTICES: usize = 100;
+/// Label of the run request that changes a security mode (see `after_run`).
+pub const SET_MODE_LABEL: &str = "Change security mode";
+
+/// System files the interface reads. Real paths by default; tests point
+/// them into a temporary directory.
+#[derive(Debug, Clone)]
+pub struct Paths {
+    pub admin_config: PathBuf,
+    pub group_file: PathBuf,
+    pub profiles: PathBuf,
+    pub booted_system: PathBuf,
+    pub running_system: PathBuf,
+}
+
+impl Default for Paths {
+    fn default() -> Paths {
+        Paths {
+            admin_config: admin::ADMIN_CONFIG_PATH.into(),
+            group_file: "/etc/group".into(),
+            profiles: recovery::PROFILES_DIR.into(),
+            booted_system: "/run/booted-system".into(),
+            running_system: "/run/current-system".into(),
+        }
+    }
+}
+
+/// Entries of the Recovery section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryItem {
+    Health,
+    Generations,
+    Report,
+    Emergency,
+}
+
+impl RecoveryItem {
+    pub const ALL: [RecoveryItem; 4] = [
+        RecoveryItem::Health,
+        RecoveryItem::Generations,
+        RecoveryItem::Report,
+        RecoveryItem::Emergency,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            RecoveryItem::Health => "System health & recent failures",
+            RecoveryItem::Generations => "System generations (roll back)",
+            RecoveryItem::Report => "Export a diagnostic report",
+            RecoveryItem::Emergency => "Emergency guide",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            RecoveryItem::Health => {
+                "Overall state, services that failed, and recent error messages from this boot."
+            }
+            RecoveryItem::Generations => {
+                "Every earlier version of the system is kept. Shows them and how to start one \
+                 from the boot menu. Your personal files are not affected by a system rollback."
+            }
+            RecoveryItem::Report => {
+                "Saves a plain-text report (status, failures, generations, interface log) in \
+                 your Diagnostics folder, to show to someone who can help. Contains no passwords."
+            }
+            RecoveryItem::Emergency => "What to do when something is wrong: step-by-step, offline.",
+        }
+    }
+}
 
 /// Functions built into the interface (as opposed to catalog programs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +108,8 @@ pub enum Builtin {
     SystemStatus,
     Notifications,
     Settings,
+    Users,
+    Recovery,
     Help,
     Shell,
     Logout,
@@ -45,13 +118,15 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 11] = [
+    pub const ALL: [Builtin; 13] = [
         Builtin::Handbook,
         Builtin::Notes,
         Builtin::Network,
         Builtin::SystemStatus,
+        Builtin::Recovery,
         Builtin::Notifications,
         Builtin::Settings,
+        Builtin::Users,
         Builtin::Help,
         Builtin::Shell,
         Builtin::Logout,
@@ -67,6 +142,8 @@ impl Builtin {
             Builtin::SystemStatus => "System status",
             Builtin::Notifications => "Notification history",
             Builtin::Settings => "Settings",
+            Builtin::Users => "Users & security modes",
+            Builtin::Recovery => "Recovery & diagnostics",
             Builtin::Help => "Help & keyboard shortcuts",
             Builtin::Shell => "Terminal shell",
             Builtin::Logout => "Log out",
@@ -91,6 +168,14 @@ impl Builtin {
             }
             Builtin::Notifications => "Messages the interface has shown during this session.",
             Builtin::Settings => "Choose the colour theme. Your security mode is shown here too.",
+            Builtin::Users => {
+                "See each account's security mode. An administrator can change a mode here; \
+                 every change asks for an administrator password and is recorded."
+            }
+            Builtin::Recovery => {
+                "When something is wrong: system health, earlier system versions, a report \
+                 to share, and the emergency guide."
+            }
             Builtin::Help => "How to move around the interface and what each key does.",
             Builtin::Shell => "An unprivileged command-line shell. Type 'exit' to return here.",
             Builtin::Logout => "End this session.",
@@ -122,6 +207,12 @@ impl Builtin {
             Builtin::Network => "wifi ethernet internet offline online dns",
             Builtin::SystemStatus => "health battery disk storage memory",
             Builtin::Settings => "theme colour color preferences",
+            Builtin::Users => {
+                "account accounts mode modes administrator admin permissions privileges sudo"
+            }
+            Builtin::Recovery => {
+                "rescue repair rollback generation failure failed diagnostics report emergency broken"
+            }
             Builtin::Shell => "terminal command bash console",
             Builtin::PowerOff => "shutdown halt",
             Builtin::Reboot => "reboot",
@@ -159,6 +250,8 @@ pub enum HelpTopic {
     Network,
     Settings,
     Search,
+    Users,
+    Recovery,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -205,17 +298,30 @@ pub enum View {
         hits: Vec<SearchHit>,
         list: ListState,
     },
+    Users {
+        rows: Vec<AccountRow>,
+        error: Option<String>,
+        list: ListState,
+    },
+    ChooseMode {
+        row: AccountRow,
+        list: ListState,
+    },
+    Recovery {
+        list: ListState,
+    },
     Help {
         topic: HelpTopic,
         scroll: usize,
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pending {
     Logout,
     Reboot,
     PowerOff,
+    SetMode { user: String, to: Mode },
 }
 
 #[derive(Debug)]
@@ -244,6 +350,10 @@ pub struct RunRequest {
     pub label: String,
     pub argv: Vec<String>,
     pub extra_args: Vec<PathBuf>,
+    /// Environment overrides for the child (most runs: none).
+    pub env: Vec<(String, String)>,
+    /// For pkexec commands: polkit text agent to register first.
+    pub polkit_agent: Option<String>,
     pub pause_after: bool,
     pub banner: Option<String>,
 }
@@ -283,6 +393,7 @@ pub struct App {
     pub home: PathBuf,
     pub settings: UserSettings,
     pub settings_path: PathBuf,
+    pub paths: Paths,
     pub theme: Theme,
     pub snapshot: Snapshot,
     pub sys_state: SystemState,
@@ -306,6 +417,7 @@ pub struct Startup {
     pub home: PathBuf,
     pub settings: UserSettings,
     pub settings_path: PathBuf,
+    pub paths: Paths,
     pub warnings: Vec<String>,
 }
 
@@ -338,6 +450,7 @@ impl App {
             home: s.home,
             settings: s.settings,
             settings_path: s.settings_path,
+            paths: s.paths,
         };
         app.refresh_slow();
         for w in s.warnings {
@@ -555,6 +668,8 @@ impl App {
             View::Notes { .. } => HelpTopic::Notes,
             View::Network { .. } => HelpTopic::Network,
             View::Settings { .. } => HelpTopic::Settings,
+            View::Users { .. } | View::ChooseMode { .. } => HelpTopic::Users,
+            View::Recovery { .. } => HelpTopic::Recovery,
             View::Search { .. } => HelpTopic::Search,
         }
     }
@@ -731,6 +846,52 @@ impl App {
                     nav(list, ThemeName::ALL.len(), key);
                 }
             }
+            View::Users { rows, error, list } => {
+                if is_activate(key) {
+                    if let Some(r) = list.selected().and_then(|i| rows.get(i)).cloned() {
+                        next = self.choose_mode(r);
+                    }
+                } else if key.code == KeyCode::Char('r') {
+                    let (r, e) = self.load_accounts();
+                    *rows = r;
+                    *error = e;
+                    clamp_selection(list, rows.len());
+                } else if is_back(key) {
+                    return (None, Effect::None);
+                } else {
+                    nav(list, rows.len(), key);
+                }
+            }
+            View::ChooseMode { row, list } => {
+                if is_activate(key) {
+                    if let Some(m) = list.selected().and_then(|i| MODES.get(i)) {
+                        self.confirm_set_mode(row, *m);
+                    }
+                } else if is_back(key) {
+                    return (None, Effect::None);
+                } else {
+                    nav(list, MODES.len(), key);
+                }
+            }
+            View::Recovery { list } => {
+                let chosen = if let Some(i) = digit(key) {
+                    (i < RecoveryItem::ALL.len()).then(|| {
+                        list.select(Some(i));
+                        RecoveryItem::ALL[i]
+                    })
+                } else if is_activate(key) {
+                    list.selected()
+                        .and_then(|i| RecoveryItem::ALL.get(i).copied())
+                } else if is_back(key) {
+                    return (None, Effect::None);
+                } else {
+                    nav(list, RecoveryItem::ALL.len(), key);
+                    None
+                };
+                if let Some(item) = chosen {
+                    next = self.open_recovery(item);
+                }
+            }
             View::Search { query, hits, list } => match key.code {
                 KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                     if query.chars().count() < 64 {
@@ -781,6 +942,8 @@ impl App {
                             label: app.name.clone(),
                             argv: argv.to_vec(),
                             extra_args: Vec::new(),
+                            env: Vec::new(),
+                            polkit_agent: None,
                             pause_after: app.pause_after_exit,
                             banner: None,
                         };
@@ -895,6 +1058,24 @@ impl App {
                     Effect::None,
                 )
             }
+            Builtin::Users => {
+                let (rows, error) = self.load_accounts();
+                let sel = (!rows.is_empty()).then_some(0);
+                (
+                    Some(View::Users {
+                        rows,
+                        error,
+                        list: ListState::default().with_selected(sel),
+                    }),
+                    Effect::None,
+                )
+            }
+            Builtin::Recovery => (
+                Some(View::Recovery {
+                    list: ListState::default().with_selected(Some(0)),
+                }),
+                Effect::None,
+            ),
             Builtin::Help => (
                 Some(View::Help {
                     topic: HelpTopic::Home,
@@ -907,6 +1088,8 @@ impl App {
                     label: "Terminal shell".into(),
                     argv: self.sys.shell.clone(),
                     extra_args: Vec::new(),
+                    env: Vec::new(),
+                    polkit_agent: None,
                     pause_after: false,
                     banner: Some(format!(
                         "RESILIENCE SHELL — {} mode, unprivileged. Type 'exit' to return to the interface.",
@@ -961,6 +1144,8 @@ impl App {
             label: "Notes editor".into(),
             argv: argv.clone(),
             extra_args: vec![path],
+            env: Vec::new(),
+            polkit_agent: None,
             pause_after: false,
             banner: None,
         })
@@ -976,7 +1161,8 @@ impl App {
     }
 
     fn confirm(&mut self, action: Pending) {
-        let (title, body, confirm) = match action {
+        let (title, body, confirm) = match &action {
+            Pending::SetMode { .. } => return,
             Pending::Logout => (
                 "LOG OUT",
                 "End this session? Programs you started from here will be closed.",
@@ -1081,6 +1267,7 @@ impl App {
     fn execute(&mut self, action: Pending) -> Effect {
         let verb = match action {
             Pending::Logout => return Effect::Quit,
+            Pending::SetMode { user, to } => return self.set_mode_effect(&user, to),
             Pending::Reboot => "reboot",
             Pending::PowerOff => "poweroff",
         };
@@ -1132,8 +1319,442 @@ impl App {
             Ok(st) => self.notify(Level::Warn, format!("{label} exited with {st}")),
             Err(e) => self.notify(Level::Error, format!("{label} could not start: {e}")),
         }
+        if label == SET_MODE_LABEL {
+            // Back to the account list, which now shows the result.
+            while matches!(self.view(), View::ChooseMode { .. }) {
+                self.stack.pop();
+            }
+            self.reload_accounts();
+        }
         self.reload_notes();
         self.refresh_fast();
+    }
+
+    // ----- users and security modes ----------------------------------------
+
+    /// Managed accounts, from the root-owned helper configuration, the
+    /// recorded mode changes and the live group database. Read-only.
+    pub fn load_accounts(&self) -> (Vec<AccountRow>, Option<String>) {
+        let cfg = match std::fs::read_to_string(&self.paths.admin_config)
+            .map_err(|e| format!("{}: {e}", self.paths.admin_config.display()))
+            .and_then(|t| AdminConfig::parse(&t))
+        {
+            Ok(c) => c,
+            Err(e) => return (Vec::new(), Some(e)),
+        };
+        let state = match std::fs::read_to_string(&cfg.state_file) {
+            Ok(t) => match ModeState::parse(&t) {
+                Ok(s) => s,
+                Err(e) => {
+                    return (
+                        Vec::new(),
+                        Some(format!("{} is damaged: {e}", cfg.state_file.display())),
+                    );
+                }
+            },
+            Err(_) => ModeState::default(),
+        };
+        let groups = std::fs::read_to_string(&self.paths.group_file).unwrap_or_default();
+        (admin::overview(&cfg, &state, &groups), None)
+    }
+
+    fn reload_accounts(&mut self) {
+        let (rows, error) = self.load_accounts();
+        for v in self.stack.iter_mut() {
+            if let View::Users {
+                rows: r,
+                error: e,
+                list,
+            } = v
+            {
+                *r = rows.clone();
+                *e = error.clone();
+                clamp_selection(list, r.len());
+            }
+        }
+    }
+
+    fn choose_mode(&mut self, row: AccountRow) -> Option<View> {
+        let (rows, _) = self.load_accounts();
+        if admin::administrators(&rows) == 0 {
+            self.modal = Some(Modal::Message {
+                title: "NO ADMINISTRATOR".into(),
+                body: "Changing a security mode needs the password of an Advanced \
+                       (administrator) account, and this system has none.\n\n\
+                       On the live system this is intentional. On an installed system, \
+                       see the handbook page 'Security modes'."
+                    .into(),
+                error: true,
+            });
+            return None;
+        }
+        let i = MODES.iter().position(|m| *m == row.effective);
+        Some(View::ChooseMode {
+            row,
+            list: ListState::default().with_selected(i),
+        })
+    }
+
+    /// Explain the consequences before anything happens. The checks here
+    /// are for clear messages only; the helper repeats all of them.
+    fn confirm_set_mode(&mut self, row: &AccountRow, to: Mode) {
+        let cfg = std::fs::read_to_string(&self.paths.admin_config)
+            .ok()
+            .and_then(|t| AdminConfig::parse(&t).ok());
+        let state = cfg
+            .as_ref()
+            .and_then(|c| std::fs::read_to_string(&c.state_file).ok())
+            .and_then(|t| ModeState::parse(&t).ok())
+            .unwrap_or_default();
+        if let Some(c) = &cfg
+            && let Err(refusal) = admin::plan_set_mode(c, &state, &row.name, to)
+        {
+            self.modal = Some(Modal::Message {
+                title: "NOT POSSIBLE".into(),
+                body: format!("{}.", capitalise(&refusal.to_string())),
+                error: true,
+            });
+            return;
+        }
+        let user = &row.name;
+        let is_self = *user == self.who.user;
+        let mut body = format!("Change '{user}' from {} to {to} mode?\n\n", row.effective);
+        body.push_str(match to {
+            Mode::Advanced => {
+                "The account will be able to change the whole system with sudo and its \
+                 password. Mistakes in this mode can damage the installation."
+            }
+            Mode::Stable => {
+                "The account gets an unprivileged shell and can use the Nix package \
+                 tools, but cannot change the system."
+            }
+            Mode::UltraStable => {
+                "The account will only have the guided interface: no shell, no \
+                 administration, no software installation."
+            }
+        });
+        body.push_str("\n\n");
+        if to < row.effective {
+            body.push_str(&format!(
+                "Rights are removed immediately: all sessions of '{user}' will be closed{}.",
+                if is_self { ", including this one" } else { "" }
+            ));
+        } else {
+            body.push_str(&format!("New rights apply at the next login of '{user}'."));
+        }
+        body.push_str(
+            "\n\nAn administrator must type their password next. The change is \
+             recorded in the audit log and kept after restarts.",
+        );
+        self.modal = Some(Modal::Confirm {
+            title: "CHANGE SECURITY MODE".into(),
+            body,
+            confirm: "Continue".into(),
+            action: Pending::SetMode {
+                user: user.clone(),
+                to,
+            },
+            yes_focused: false,
+        });
+    }
+
+    /// The fixed argv: `pkexec <helper> set-mode <user> <mode>`. The user
+    /// name comes from the root-owned configuration and is validated again.
+    fn set_mode_effect(&mut self, user: &str, to: Mode) -> Effect {
+        let cfg = match std::fs::read_to_string(&self.paths.admin_config)
+            .map_err(|e| e.to_string())
+            .and_then(|t| AdminConfig::parse(&t))
+        {
+            Ok(c) => c,
+            Err(e) => {
+                self.notify(Level::Error, format!("mode change unavailable: {e}"));
+                return Effect::None;
+            }
+        };
+        if !admin::valid_user_name(user) || !cfg.users.contains_key(user) {
+            return Effect::None;
+        }
+        tracing::warn!(
+            user,
+            mode = admin::mode_id(to),
+            "security mode change requested"
+        );
+        Effect::Run(RunRequest {
+            label: SET_MODE_LABEL.into(),
+            argv: vec![
+                cfg.pkexec.to_string_lossy().into_owned(),
+                cfg.helper.to_string_lossy().into_owned(),
+                "set-mode".into(),
+                user.into(),
+                admin::mode_id(to).into(),
+            ],
+            extra_args: Vec::new(),
+            // pkexec refuses to run unless $SHELL is listed in /etc/shells;
+            // Ultra-Stable sessions deliberately set it to nologin.
+            env: vec![(
+                "SHELL".into(),
+                cfg.session_shell.to_string_lossy().into_owned(),
+            )],
+            polkit_agent: Some(cfg.pkttyagent.to_string_lossy().into_owned()),
+            pause_after: true,
+            banner: Some(format!(
+                "CHANGE SECURITY MODE: '{user}' -> {to}. An administrator must now type \
+                 their password. Press Ctrl-C to cancel."
+            )),
+        })
+    }
+
+    // ----- recovery ----------------------------------------------------------
+
+    fn open_recovery(&mut self, item: RecoveryItem) -> Option<View> {
+        match item {
+            RecoveryItem::Health => {
+                self.refresh_slow();
+                Some(View::Pager {
+                    title: "SYSTEM HEALTH & RECENT FAILURES".into(),
+                    text: self.health_text(),
+                    scroll: 0,
+                })
+            }
+            RecoveryItem::Generations => Some(View::Pager {
+                title: "SYSTEM GENERATIONS".into(),
+                text: self.generations_text(),
+                scroll: 0,
+            }),
+            RecoveryItem::Report => {
+                self.export_report();
+                None
+            }
+            RecoveryItem::Emergency => {
+                let pages = handbook::list(&self.sys.handbook_dir).unwrap_or_default();
+                match pages.iter().find(|p| {
+                    p.path
+                        .file_name()
+                        .is_some_and(|n| n.to_string_lossy().contains("recovery"))
+                }) {
+                    Some(p) => Some(self.open_page(&p.clone())),
+                    None => Some(View::Pager {
+                        title: "EMERGENCY GUIDE".into(),
+                        text: EMERGENCY_FALLBACK.into(),
+                        scroll: 0,
+                    }),
+                }
+            }
+        }
+    }
+
+    pub fn health_text(&self) -> String {
+        let mut t = String::new();
+        let state = match &self.sys_state {
+            SystemState::Running => "running: everything started correctly".to_string(),
+            SystemState::Degraded => "DEGRADED: some services failed (listed below)".to_string(),
+            other => format!("{other:?}"),
+        };
+        t.push_str(&format!("Overall state: {state}\n\n"));
+        if self.failed_units.is_empty() {
+            t.push_str("Failed services: none\n");
+        } else {
+            t.push_str(&format!("Failed services ({}):\n", self.failed_units.len()));
+            for f in recovery::failure_details(&self.failed_units) {
+                t.push_str(&format!(
+                    "  {}\n    {}\n    result: {}   since: {}\n",
+                    f.unit, f.description, f.result, f.since
+                ));
+            }
+            t.push_str(
+                "\nA failed service is often harmless for daily use. If something you need \
+                 does not work, restart the computer; if it still fails, start the previous \
+                 system generation from the boot menu (see 'System generations').\n",
+            );
+        }
+        let errors = recovery::recent_errors(30);
+        t.push_str("\nRecent error messages (this boot):\n");
+        if errors.is_empty() {
+            t.push_str("  none that this account may read\n");
+        } else {
+            for e in &errors {
+                t.push_str(&format!("  {e}\n"));
+            }
+        }
+        if self.mode() != Mode::Advanced {
+            t.push_str(
+                "\nOnly administrators can read every system message. This list shows the \
+                 messages your account is allowed to see.\n",
+            );
+        }
+        t
+    }
+
+    pub fn generations_text(&self) -> String {
+        let gens = recovery::generations(
+            &self.paths.profiles,
+            &self.paths.booted_system,
+            &self.paths.running_system,
+        );
+        let mut t = String::from(
+            "Every change to the system creates a new generation; earlier ones are kept \
+             and can be started from the boot menu. Starting an earlier generation changes \
+             only the system software and its settings, never your personal files.\n\n",
+        );
+        if gens.is_empty() {
+            t.push_str(
+                "No generations are recorded on this machine. This is normal on the live \
+                 system, which always starts the same way.\n",
+            );
+        } else {
+            t.push_str(&format!(
+                "{:>4}  {:<16}  {:<24}  {}\n",
+                "#", "CREATED", "VERSION", "STATE"
+            ));
+            for g in &gens {
+                let mut marks = Vec::new();
+                if g.booted {
+                    marks.push("started now");
+                }
+                if g.running && !g.booted {
+                    marks.push("active");
+                }
+                if g.default {
+                    marks.push("default at next boot");
+                }
+                t.push_str(&format!(
+                    "{:>4}  {:<16}  {:<24}  {}\n",
+                    g.number,
+                    g.created
+                        .map(crate::ui::date_time)
+                        .unwrap_or_else(|| "?".into()),
+                    g.nixos_version.as_deref().unwrap_or("?"),
+                    marks.join(", ")
+                ));
+                if let Some(k) = &g.kernel {
+                    t.push_str(&format!("{:>4}  kernel {k}\n", ""));
+                }
+            }
+        }
+        t.push_str(
+            "\nTo start an earlier generation:\n\
+             \x20 1. Restart the computer (System > Restart computer).\n\
+             \x20 2. When the boot menu appears, use the arrow keys to choose an older entry\n\
+             \x20    (on some menus it is under 'NixOS - All configurations').\n\
+             \x20 3. Press Enter. Only this start uses the older generation: the next\n\
+             \x20    restart returns to the newest one, unless an administrator makes\n\
+             \x20    the older generation permanent.\n",
+        );
+        t
+    }
+
+    pub fn diagnostic_report(&self) -> String {
+        let now = admin::now_rfc3339();
+        let mut t = format!(
+            "RESILIENCE OS DIAGNOSTIC REPORT\n\
+             Created: {now} (UTC)\n\
+             Contains: system status, failed services, generations, network link state\n\
+             (no addresses), and the last lines of the interface log. No passwords, no\n\
+             file names from your home directory.\n\n"
+        );
+        let s = &self.snapshot;
+        t.push_str(&format!(
+            "Resilience: {} (edition {})\nOS: {}\nKernel: {}\nGeneration: {}\nUser: {} ({} mode)\nUptime: {}\n",
+            resilience_core::VERSION,
+            self.sys.edition,
+            s.os_name,
+            s.kernel,
+            s.system_generation.as_deref().unwrap_or("?"),
+            self.who.user,
+            self.mode(),
+            s.uptime.map(status::format_uptime).unwrap_or_else(|| "?".into()),
+        ));
+        if let Some(m) = &s.memory {
+            t.push_str(&format!(
+                "Memory: {} available of {}\n",
+                resilience_core::human_bytes(m.available_kib * 1024),
+                resilience_core::human_bytes(m.total_kib * 1024)
+            ));
+        }
+        for (label, d) in [("system", &s.root), ("home", &s.home)] {
+            if let Some(d) = d {
+                t.push_str(&format!(
+                    "Storage ({label}): {} free of {}\n",
+                    resilience_core::human_bytes(d.available),
+                    resilience_core::human_bytes(d.total)
+                ));
+            }
+        }
+        t.push_str(&format!("Network: {:?}\n", self.net.level));
+        for i in &self.net.interfaces {
+            t.push_str(&format!(
+                "  {} {:?} {}\n",
+                i.name,
+                i.kind,
+                if i.is_connected() {
+                    "link up"
+                } else {
+                    "no link"
+                }
+            ));
+        }
+        t.push_str("\n--- Health ---\n");
+        t.push_str(&self.health_text());
+        t.push_str("\n--- Generations ---\n");
+        t.push_str(&self.generations_text());
+        t.push_str("\n--- Interface log (last 50 lines) ---\n");
+        let log = resilience_core::config::state_home(&self.home)
+            .join("resilience")
+            .join("tui.log");
+        for l in recovery::tail(&log, 50) {
+            t.push_str(&l);
+            t.push('\n');
+        }
+        t
+    }
+
+    fn export_report(&mut self) {
+        let name = recovery::report_file_name(&admin::now_rfc3339());
+        let dir = recovery::reports_dir(&self.home);
+        match recovery::write_report(&dir, &name, &self.diagnostic_report()) {
+            Ok(path) => {
+                self.notify(Level::Info, format!("Report saved: {}", path.display()));
+                self.modal = Some(Modal::Message {
+                    title: "REPORT SAVED".into(),
+                    body: format!(
+                        "The diagnostic report was saved as:\n\n  {}\n\n\
+                         It is a plain text file. Copy it to a USB stick or show it to \
+                         someone who can help. It contains no passwords.",
+                        path.display()
+                    ),
+                    error: false,
+                });
+            }
+            Err(e) => {
+                self.notify(Level::Error, format!("report not saved: {e}"));
+                self.modal = Some(Modal::Message {
+                    title: "REPORT NOT SAVED".into(),
+                    body: format!(
+                        "The report could not be written to {}:\n\n{e}",
+                        dir.display()
+                    ),
+                    error: true,
+                });
+            }
+        }
+    }
+}
+
+/// The modes offered by the mode chooser, least privileged first.
+pub const MODES: [Mode; 3] = [Mode::UltraStable, Mode::Stable, Mode::Advanced];
+
+const EMERGENCY_FALLBACK: &str = "The handbook is not available.\n\n\
+1. Restart the computer.\n\
+2. In the boot menu, choose an earlier entry and press Enter.\n\
+3. If the interface does not start, press Ctrl-Alt-F2 and log in with an\n\
+   administrator account.\n\
+4. Your files are in your home folder; they are not changed by these steps.";
+
+fn capitalise(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().chain(c).collect(),
+        None => String::new(),
     }
 }
 
