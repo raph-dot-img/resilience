@@ -51,7 +51,10 @@ in
 
     console = {
       earlySetup = true;
-      font = "ter-v16n";
+      # ter-i16n: 256 glyphs (keeps 16 colours on the VT), CP437 box/block
+      # characters used by the TUI, and most accented Latin letters.
+      # (ter-v16n lacks ▀ ▄ and double-line boxes; verified from its PSF table.)
+      font = "ter-i16n";
       packages = [ pkgs.terminus_font ];
       keyMap = lib.mkDefault "us";
     };

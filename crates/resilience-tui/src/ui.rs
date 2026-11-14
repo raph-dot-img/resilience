@@ -579,7 +579,7 @@ fn draw_scroll(
 
 fn kv(t: &Theme, k: &str, v: impl Into<String>) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("  {k:<18}"), t.dim),
+        Span::styled(format!("  {k:<20}"), t.dim),
         Span::styled(v.into(), t.base),
     ])
 }
@@ -738,7 +738,7 @@ fn outcome_line(t: &Theme, label: &str, o: &ProbeOutcome) -> Line<'static> {
         ProbeOutcome::Skipped(why) => (marker(None, t), why.clone()),
     };
     Line::from(vec![
-        Span::styled(format!("  {label:<18}"), t.dim),
+        Span::styled(format!("  {label:<20}"), t.dim),
         m,
         Span::raw(format!(" {text}")),
     ])

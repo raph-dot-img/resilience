@@ -389,3 +389,40 @@ fn dump_screens() {
     press(&mut a, KeyCode::Enter);
     println!("{}\n", render(&mut a, 80, 24));
 }
+
+/// Every non-ASCII glyph the interface draws must exist in the console font
+/// (ter-i16n, CP437 repertoire). ter-v16n once rendered the logo as garbage
+/// on real hardware; the unit tests could not see it. Keep this list in sync
+/// with nix/modules/interface.nix.
+#[test]
+fn only_console_font_glyphs_are_drawn() {
+    const CONSOLE_GLYPHS: &str = "▀▄█═║╔╗╚╝─│┌┐└┘░▒▓";
+    let mut a = app(Mode::Advanced, "glyphs");
+    let sequences: [&[KeyCode]; 7] = [
+        &[],
+        &[KeyCode::F(1)],
+        &[KeyCode::F(5)],
+        &[KeyCode::Char('/'), KeyCode::Char('e')],
+        &[KeyCode::Char('2')],
+        &[KeyCode::Char('q')],
+        &[KeyCode::Char('1'), KeyCode::Enter],
+    ];
+    for seq in sequences {
+        for c in seq {
+            press(&mut a, *c);
+        }
+        for (w, h) in [(80, 24), (60, 20), (160, 50)] {
+            for ch in render(&mut a, w, h).chars() {
+                assert!(
+                    ch.is_ascii() || CONSOLE_GLYPHS.contains(ch),
+                    "glyph {ch:?} (U+{:04X}) is not in the console font",
+                    ch as u32
+                );
+            }
+        }
+        a.modal = None;
+        while a.stack.len() > 1 {
+            press(&mut a, KeyCode::Esc);
+        }
+    }
+}

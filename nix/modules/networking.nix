@@ -11,6 +11,12 @@
     # Never contact a connectivity-check server in the background.
     settings.connectivity.enabled = false;
   };
+  # ModemManager (cellular modems) is a resident service with a ~70 MiB
+  # closure that most machines do not need. Enable it for 3G/4G/5G modems.
+  # NetworkManager enables it with mkDefault; 900 beats that but still
+  # yields to a plain `networking.modemmanager.enable = true;`.
+  networking.modemmanager.enable = lib.mkOverride 900 false;
+
   networking.firewall = {
     enable = true;
     allowedTCPPorts = lib.mkDefault [ ];

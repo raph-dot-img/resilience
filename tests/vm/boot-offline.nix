@@ -113,6 +113,13 @@
         machine.send_key("ret")
         wait_tty("1", "MAIN MENU")
 
+    with subtest("measure resource usage (reported, not asserted)"):
+        print("MEASURE tui_rss_kib", machine.succeed("ps -o rss= -C resilience | head -1").strip())
+        print("MEASURE mem_used_mib", machine.succeed("free -m | awk '/^Mem:/ {print $3}'").strip())
+        print("MEASURE boot_userspace", machine.succeed("systemd-analyze 2>/dev/null | head -1 || true").strip())
+        print("MEASURE running_services", machine.succeed("systemctl list-units --type=service --state=running --plain --no-legend | wc -l").strip())
+        print(machine.succeed("systemctl list-units --type=service --state=running --plain --no-legend | awk '{print $1}'"))
+
     with subtest("no unexpected listening sockets"):
         out = machine.succeed("ss -H -tuln")
         print(out)

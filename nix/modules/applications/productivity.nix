@@ -89,17 +89,5 @@ lib.mkIf config.resilience.applications.productivity.enable {
         "cal"
       ];
     };
-    calcurse = {
-      name = "Calcurse planner";
-      category = "productivity";
-      description = "Calendar with appointments and a to-do list. Press q to quit.";
-      package = pkgs.calcurse;
-      command = [ "${pkgs.calcurse}/bin/calcurse" ];
-      keywords = [
-        "agenda"
-        "todo"
-        "appointments"
-      ];
-    };
   };
 }
