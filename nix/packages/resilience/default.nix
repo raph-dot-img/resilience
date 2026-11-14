@@ -36,7 +36,7 @@ rustPlatform.buildRustPackage {
 
   meta = {
     description = "Terminal interface of Resilience OS";
-    license = lib.licenses.gpl3Plus;
+    license = lib.licenses.bsd0;
     mainProgram = "resilience";
     platforms = lib.platforms.linux;
   };

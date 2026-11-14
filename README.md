@@ -72,5 +72,6 @@ See [docs/BUILDING.md](docs/BUILDING.md) and [docs/TESTING.md](docs/TESTING.md).
 
 ## License
 
-Resilience's own code is licensed GPL-3.0-or-later. Bundled third-party
+Resilience's own code is licensed under the [0BSD license](LICENSE)
+(Zero-Clause BSD). Bundled third-party
 software keeps its own license; see [docs/COMPONENTS.md](docs/COMPONENTS.md).

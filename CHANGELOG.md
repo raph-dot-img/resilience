@@ -5,6 +5,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Resilience's own code is now licensed 0BSD (was GPL-3.0-or-later);
+  `LICENSE` added. Bundled software keeps its own license.
+
 ### Added
 - `resilience-admin`, the privileged helper (ADR 0007): `list`, `set-mode`,
   `apply-state`; polkit action `org.resilience.admin.set-mode` (auth_admin),
