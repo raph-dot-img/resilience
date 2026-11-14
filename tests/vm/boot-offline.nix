@@ -27,14 +27,32 @@
     };
 
   testScript = ''
+    import base64, re, time as _time
+
+    def tty_text(tty):
+        """Screen text from /dev/vcsuN (UTF-32), decoded on the host.
+
+        The driver's get_tty_text() reads /dev/vcsN, which holds 8-bit glyph
+        indices; with a CP437-ordered console font the box-drawing indices
+        are invalid UTF-8 and corrupt neighbouring characters.
+        """
+        cols = int(machine.succeed(f"stty -F /dev/tty{tty} size").split()[1])
+        raw = base64.b64decode(machine.succeed(f"base64 -w0 /dev/vcsu{tty}"))
+        text = raw.decode("utf-32-le", errors="replace")
+        return "\n".join(text[i:i + cols] for i in range(0, len(text), cols))
+
     def wait_tty(tty, regexp, timeout=60):
-        """wait_until_tty_matches that shows the screen when it fails."""
-        try:
-            machine.wait_until_tty_matches(tty, regexp, timeout=timeout)
-        except Exception:
-            print(f"--- tty{tty} contents ---")
-            print(machine.get_tty_text(tty))
-            raise
+        """Wait until the screen of ttyN matches, showing it on failure."""
+        deadline = _time.monotonic() + timeout
+        while True:
+            text = tty_text(tty)
+            if re.search(regexp, text):
+                return
+            if _time.monotonic() > deadline:
+                print(f"--- tty{tty} contents ---")
+                print(text)
+                raise Exception(f"timed out waiting for {regexp!r} on tty{tty}")
+            _time.sleep(0.5)
 
     import time
 
