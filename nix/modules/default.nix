@@ -4,6 +4,7 @@
   imports = [
     ./core.nix
     ./admin.nix
+    ./media.nix
     ./users.nix
     ./interface.nix
     ./security.nix

@@ -1,6 +1,12 @@
-# The Resilience userland: the `resilience` TUI binary.
+# The Resilience userland: the `resilience` TUI and its helpers
+# `resilience-admin` (privileged, ADR 0007) and `resilience-backup` (ADR 0008).
 # Unit and TUI tests (`cargo test`) run in the check phase of this build.
-{ lib, rustPlatform }:
+{
+  lib,
+  rustPlatform,
+  age,
+  zstd,
+}:
 
 let
   root = ../../..;
@@ -21,6 +27,12 @@ rustPlatform.buildRustPackage {
   };
 
   cargoLock.lockFile = root + "/Cargo.lock";
+
+  # The backup round-trip test runs the real tools (tar, sha256sum: stdenv).
+  nativeCheckInputs = [
+    age
+    zstd
+  ];
 
   meta = {
     description = "Terminal interface of Resilience OS";

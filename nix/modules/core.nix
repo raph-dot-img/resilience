@@ -130,7 +130,18 @@ let
     cp ${catalogUnchecked} $out
   '';
 
-  systemConfig = toml.generate "resilience-system.toml" {
+  # Programs used for removable media and backups (absolute store paths).
+  tools = {
+    lsblk = "${lib.getBin pkgs.util-linux}/bin/lsblk";
+    udisksctl = "${lib.getBin config.services.udisks2.package}/bin/udisksctl";
+    tar = "${pkgs.gnutar}/bin/tar";
+    zstd = "${lib.getBin pkgs.zstd}/bin/zstd";
+    age = lib.getExe pkgs.age;
+    sha256sum = "${pkgs.coreutils}/bin/sha256sum";
+    backup = "${cfg.package}/bin/resilience-backup";
+  };
+
+  systemConfigUnchecked = toml.generate "resilience-system.toml" {
     edition = cfg.edition;
     version = cfg.package.version;
     catalog = "/etc/resilience/apps.toml";
@@ -149,7 +160,20 @@ let
       dns_name = cfg.probe.dnsName;
       timeout_ms = cfg.probe.timeoutMs;
     };
+    # Removable media and backups (media.nix, ADR 0008).
+    inherit tools;
   };
+
+  # Fails the system build if a tool path is wrong.
+  systemConfig = pkgs.runCommand "resilience-system-checked.toml" { } ''
+    ${lib.concatMapStrings (p: ''
+      if [ ! -x ${lib.escapeShellArg p} ]; then
+        echo "resilience: tool is not executable: ${p}" >&2
+        exit 1
+      fi
+    '') (lib.attrValues tools)}
+    cp ${systemConfigUnchecked} $out
+  '';
 in
 {
   options.resilience = {
@@ -224,6 +248,9 @@ in
     environment.systemPackages = [
       cfg.package
       cfg.handbookPackage
+      # A backup can also be opened by hand (handbook, "Backups").
+      pkgs.age
+      pkgs.zstd
     ]
     ++ lib.filter (p: p != null) (lib.mapAttrsToList (_: a: a.package) cfg.apps);
   };

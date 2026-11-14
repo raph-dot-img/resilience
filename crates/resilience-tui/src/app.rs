@@ -13,9 +13,12 @@ use std::time::{Duration, Instant, SystemTime};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::ListState;
 use resilience_core::admin::{self, AccountRow, AdminConfig, ModeState};
+use resilience_core::backup::{self, BackupFile};
 use resilience_core::catalog::{Availability, Catalog, Category};
 use resilience_core::config::{SystemConfig, ThemeName, UserSettings};
 use resilience_core::handbook;
+use resilience_core::human_bytes;
+use resilience_core::media::{self, Ejected, Volume};
 use resilience_core::mode::{Detected, Mode};
 use resilience_core::network::{self, NetworkState, ProbeConfig, ProbeReport};
 use resilience_core::notes;
@@ -31,6 +34,10 @@ const TOAST_DURATION: Duration = Duration::from_secs(6);
 const MAX_NOTICES: usize = 100;
 /// Label of the run request that changes a security mode (see `after_run`).
 pub const SET_MODE_LABEL: &str = "Change security mode";
+/// Labels of the backup tool runs (see `after_run`).
+pub const BACKUP_LABEL: &str = "Backup of your files";
+pub const CHECK_LABEL: &str = "Check a backup";
+pub const RESTORE_LABEL: &str = "Restore a backup";
 
 /// System files the interface reads. Real paths by default; tests point
 /// them into a temporary directory.
@@ -110,6 +117,7 @@ pub enum Builtin {
     Settings,
     Users,
     Recovery,
+    Backup,
     Help,
     Shell,
     Logout,
@@ -118,12 +126,13 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 13] = [
+    pub const ALL: [Builtin; 14] = [
         Builtin::Handbook,
         Builtin::Notes,
         Builtin::Network,
         Builtin::SystemStatus,
         Builtin::Recovery,
+        Builtin::Backup,
         Builtin::Notifications,
         Builtin::Settings,
         Builtin::Users,
@@ -144,6 +153,7 @@ impl Builtin {
             Builtin::Settings => "Settings",
             Builtin::Users => "Users & security modes",
             Builtin::Recovery => "Recovery & diagnostics",
+            Builtin::Backup => "Backups & USB sticks",
             Builtin::Help => "Help & keyboard shortcuts",
             Builtin::Shell => "Terminal shell",
             Builtin::Logout => "Log out",
@@ -175,6 +185,10 @@ impl Builtin {
             Builtin::Recovery => {
                 "When something is wrong: system health, earlier system versions, a report \
                  to share, and the emergency guide."
+            }
+            Builtin::Backup => {
+                "Save your files, encrypted with a passphrase, to a USB stick; check a backup; \
+                 restore one into a new folder. Also ejects sticks safely."
             }
             Builtin::Help => "How to move around the interface and what each key does.",
             Builtin::Shell => "An unprivileged command-line shell. Type 'exit' to return here.",
@@ -212,6 +226,9 @@ impl Builtin {
             }
             Builtin::Recovery => {
                 "rescue repair rollback generation failure failed diagnostics report emergency broken"
+            }
+            Builtin::Backup => {
+                "backup backups restore usb stick key removable media drive disk eject copy save sd card"
             }
             Builtin::Shell => "terminal command bash console",
             Builtin::PowerOff => "shutdown halt",
@@ -252,6 +269,7 @@ pub enum HelpTopic {
     Search,
     Users,
     Recovery,
+    Backup,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -310,6 +328,19 @@ pub enum View {
     Recovery {
         list: ListState,
     },
+    /// Removable volumes.
+    Media {
+        volumes: Vec<Volume>,
+        error: Option<String>,
+        list: ListState,
+    },
+    /// Backups on one mounted volume; row 0 is "make a new backup".
+    Backups {
+        volume: Volume,
+        mount: PathBuf,
+        files: Vec<BackupFile>,
+        list: ListState,
+    },
     Help {
         topic: HelpTopic,
         scroll: usize,
@@ -322,6 +353,8 @@ pub enum Pending {
     Reboot,
     PowerOff,
     SetMode { user: String, to: Mode },
+    Backup { mount: PathBuf },
+    Restore { file: PathBuf },
 }
 
 #[derive(Debug)]
@@ -670,6 +703,7 @@ impl App {
             View::Settings { .. } => HelpTopic::Settings,
             View::Users { .. } | View::ChooseMode { .. } => HelpTopic::Users,
             View::Recovery { .. } => HelpTopic::Recovery,
+            View::Media { .. } | View::Backups { .. } => HelpTopic::Backup,
             View::Search { .. } => HelpTopic::Search,
         }
     }
@@ -892,6 +926,70 @@ impl App {
                     next = self.open_recovery(item);
                 }
             }
+            View::Media {
+                volumes,
+                error,
+                list,
+            } => {
+                let selected = list.selected().and_then(|i| volumes.get(i)).cloned();
+                match key.code {
+                    KeyCode::Char('r') => {
+                        (*volumes, *error) = self.load_volumes();
+                        clamp_selection(list, volumes.len());
+                    }
+                    KeyCode::Char('e') => {
+                        if let Some(v) = selected {
+                            self.eject_volume(&v);
+                            (*volumes, *error) = self.load_volumes();
+                            clamp_selection(list, volumes.len());
+                        }
+                    }
+                    _ if is_activate(key) => {
+                        if let Some(v) = selected {
+                            next = self.open_volume(v);
+                            (*volumes, *error) = self.load_volumes();
+                            clamp_selection(list, volumes.len());
+                        }
+                    }
+                    _ if is_back(key) => return (None, Effect::None),
+                    _ => nav(list, volumes.len(), key),
+                }
+            }
+            View::Backups {
+                volume,
+                mount,
+                files,
+                list,
+            } => {
+                let sel = list.selected().unwrap_or(0);
+                match key.code {
+                    KeyCode::Char('r') => {
+                        *files = backup::list_backups(mount);
+                        clamp_selection(list, files.len() + 1);
+                    }
+                    KeyCode::Char('c') => {
+                        if let Some(f) = sel.checked_sub(1).and_then(|i| files.get(i)) {
+                            effect = self.backup_tool_effect(CHECK_LABEL, "check", &f.path);
+                        }
+                    }
+                    KeyCode::Char('e') => {
+                        let v = volume.clone();
+                        self.eject_volume(&v);
+                        self.reload_volumes();
+                        return (None, Effect::None);
+                    }
+                    _ if is_activate(key) => match sel.checked_sub(1) {
+                        None => self.confirm_backup(volume, mount),
+                        Some(i) => {
+                            if let Some(f) = files.get(i) {
+                                self.confirm_restore(f);
+                            }
+                        }
+                    },
+                    _ if is_back(key) => return (None, Effect::None),
+                    _ => nav(list, files.len() + 1, key),
+                }
+            }
             View::Search { query, hits, list } => match key.code {
                 KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                     if query.chars().count() < 64 {
@@ -1076,6 +1174,18 @@ impl App {
                 }),
                 Effect::None,
             ),
+            Builtin::Backup => {
+                let (volumes, error) = self.load_volumes();
+                let sel = (!volumes.is_empty()).then_some(0);
+                (
+                    Some(View::Media {
+                        volumes,
+                        error,
+                        list: ListState::default().with_selected(sel),
+                    }),
+                    Effect::None,
+                )
+            }
             Builtin::Help => (
                 Some(View::Help {
                     topic: HelpTopic::Home,
@@ -1162,7 +1272,7 @@ impl App {
 
     fn confirm(&mut self, action: Pending) {
         let (title, body, confirm) = match &action {
-            Pending::SetMode { .. } => return,
+            Pending::SetMode { .. } | Pending::Backup { .. } | Pending::Restore { .. } => return,
             Pending::Logout => (
                 "LOG OUT",
                 "End this session? Programs you started from here will be closed.",
@@ -1268,6 +1378,12 @@ impl App {
         let verb = match action {
             Pending::Logout => return Effect::Quit,
             Pending::SetMode { user, to } => return self.set_mode_effect(&user, to),
+            Pending::Backup { mount } => {
+                return self.backup_tool_effect(BACKUP_LABEL, "create", &mount);
+            }
+            Pending::Restore { file } => {
+                return self.backup_tool_effect(RESTORE_LABEL, "restore", &file);
+            }
             Pending::Reboot => "reboot",
             Pending::PowerOff => "poweroff",
         };
@@ -1325,6 +1441,9 @@ impl App {
                 self.stack.pop();
             }
             self.reload_accounts();
+        }
+        if [BACKUP_LABEL, CHECK_LABEL, RESTORE_LABEL].contains(&label) {
+            self.reload_backups();
         }
         self.reload_notes();
         self.refresh_fast();
@@ -1501,6 +1620,198 @@ impl App {
                 "CHANGE SECURITY MODE: '{user}' -> {to}. An administrator must now type \
                  their password. Press Ctrl-C to cancel."
             )),
+        })
+    }
+
+    // ----- removable media and backups ---------------------------------------
+
+    /// Removable volumes, through lsblk. Internal disks are never listed.
+    pub fn load_volumes(&self) -> (Vec<Volume>, Option<String>) {
+        match media::list(&self.sys.tools.lsblk) {
+            Ok(v) => (v, None),
+            Err(e) => (Vec::new(), Some(e)),
+        }
+    }
+
+    fn reload_volumes(&mut self) {
+        let (v, e) = self.load_volumes();
+        for view in self.stack.iter_mut() {
+            if let View::Media {
+                volumes,
+                error,
+                list,
+            } = view
+            {
+                *volumes = v.clone();
+                *error = e.clone();
+                clamp_selection(list, volumes.len());
+            }
+        }
+    }
+
+    fn reload_backups(&mut self) {
+        for view in self.stack.iter_mut() {
+            if let View::Backups {
+                mount, files, list, ..
+            } = view
+            {
+                *files = backup::list_backups(mount);
+                clamp_selection(list, files.len() + 1);
+            }
+        }
+    }
+
+    /// Mount (if needed) and show the backups on a volume.
+    fn open_volume(&mut self, v: Volume) -> Option<View> {
+        if let Some(p) = &v.problem {
+            self.modal = Some(Modal::Message {
+                title: "CANNOT USE THIS DEVICE".into(),
+                body: format!("'{}' cannot be used here: {p}.", v.display_name()),
+                error: true,
+            });
+            return None;
+        }
+        match media::mount(&self.sys.tools.lsblk, &self.sys.tools.udisksctl, &v) {
+            Ok(mount) => {
+                if v.mountpoint.is_none() {
+                    self.notify(
+                        Level::Info,
+                        format!("{} is ready ({})", v.display_name(), mount.display()),
+                    );
+                }
+                let files = backup::list_backups(&mount);
+                Some(View::Backups {
+                    volume: Volume {
+                        mountpoint: Some(mount.clone()),
+                        ..v
+                    },
+                    mount,
+                    files,
+                    list: ListState::default().with_selected(Some(0)),
+                })
+            }
+            Err(e) => {
+                self.notify(
+                    Level::Error,
+                    format!("cannot open {}: {e}", v.display_name()),
+                );
+                self.modal = Some(Modal::Message {
+                    title: "CANNOT OPEN THE STICK".into(),
+                    body: format!("'{}' could not be opened:\n\n{e}", v.display_name()),
+                    error: true,
+                });
+                None
+            }
+        }
+    }
+
+    fn eject_volume(&mut self, v: &Volume) {
+        let name = v.display_name();
+        match media::eject(&self.sys.tools.udisksctl, v) {
+            Ok(how) => {
+                let extra = match how {
+                    Ejected::PoweredOff => String::new(),
+                    Ejected::Unmounted(why) => {
+                        format!("\n\n(It could not be switched off: {why}.)")
+                    }
+                };
+                self.notify(Level::Info, format!("{name} can be unplugged."));
+                self.modal = Some(Modal::Message {
+                    title: "SAFE TO UNPLUG".into(),
+                    body: format!(
+                        "'{name}' can be unplugged now: everything has been written to it.{extra}"
+                    ),
+                    error: false,
+                });
+            }
+            Err(e) => {
+                self.notify(Level::Error, format!("cannot eject {name}: {e}"));
+                self.modal = Some(Modal::Message {
+                    title: "CANNOT EJECT".into(),
+                    body: format!("'{name}' could not be ejected: {e}\n\nDo not unplug it yet."),
+                    error: true,
+                });
+            }
+        }
+    }
+
+    fn confirm_backup(&mut self, volume: &Volume, mount: &std::path::Path) {
+        if volume.read_only {
+            self.modal = Some(Modal::Message {
+                title: "READ-ONLY STICK".into(),
+                body: format!(
+                    "'{}' is write-protected, so no backup can be saved on it. Backups on it \
+                     can still be checked and restored.",
+                    volume.display_name()
+                ),
+                error: true,
+            });
+            return;
+        }
+        let estimate = backup::estimate_size(&self.home);
+        let free = status::storage(mount).map(|s| s.available);
+        let mut body = format!(
+            "Save your home folder (about {}) to '{}'{}?\n\n\
+             The backup is encrypted with a passphrase you choose next. Without it nobody \
+             can open the backup, not even you. Your files are not changed.",
+            human_bytes(estimate),
+            volume.display_name(),
+            free.map(|f| format!(" ({} free)", human_bytes(f)))
+                .unwrap_or_default()
+        );
+        if free.is_some_and(|f| f < estimate) {
+            body.push_str(
+                "\n\n[!!] The stick may be too small. Compression often helps; if it is \
+                 still too small, the backup stops and nothing is kept.",
+            );
+        }
+        self.modal = Some(Modal::Confirm {
+            title: "NEW BACKUP".into(),
+            body,
+            confirm: "Back up".into(),
+            action: Pending::Backup {
+                mount: mount.to_path_buf(),
+            },
+            yes_focused: false,
+        });
+    }
+
+    fn confirm_restore(&mut self, f: &BackupFile) {
+        let mut body = format!(
+            "Restore the backup of {}?\n\n\
+             Its files go into a new folder, {}/backup-{}. Nothing that exists is \
+             changed. You will need this backup's passphrase.",
+            backup::human_stamp(&f.stamp),
+            self.home.join(backup::RESTORED_DIR).display(),
+            f.stamp
+        );
+        if !f.has_checksum {
+            body.push_str(
+                "\n\nThis copy has no checksum file; damage will still be detected while restoring.",
+            );
+        }
+        self.modal = Some(Modal::Confirm {
+            title: "RESTORE A BACKUP".into(),
+            body,
+            confirm: "Restore".into(),
+            action: Pending::Restore {
+                file: f.path.clone(),
+            },
+            yes_focused: false,
+        });
+    }
+
+    /// Run `resilience-backup <op> <path>` in the foreground: age asks for
+    /// the passphrase on the terminal itself.
+    fn backup_tool_effect(&self, label: &str, op: &str, path: &std::path::Path) -> Effect {
+        Effect::Run(RunRequest {
+            label: label.into(),
+            argv: vec![self.sys.tools.backup.clone(), op.into()],
+            extra_args: vec![path.to_path_buf()],
+            env: Vec::new(),
+            polkit_agent: None,
+            pause_after: true,
+            banner: Some(format!("{}: press Ctrl-C to cancel.", label.to_uppercase())),
         })
     }
 

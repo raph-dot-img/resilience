@@ -51,6 +51,47 @@ pub struct SystemConfig {
     /// Interactive shell offered to Stable/Advanced accounts.
     pub shell: Vec<String>,
     pub probe: ProbeSettings,
+    pub tools: ToolPaths,
+}
+
+/// Programs used for removable media and backups. Absolute store paths on
+/// Resilience; bare names (looked up in `PATH`) on development hosts.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ToolPaths {
+    pub lsblk: String,
+    pub udisksctl: String,
+    pub tar: String,
+    pub zstd: String,
+    pub age: String,
+    pub sha256sum: String,
+    /// The unprivileged backup tool `resilience-backup`.
+    pub backup: String,
+}
+
+impl Default for ToolPaths {
+    fn default() -> Self {
+        ToolPaths {
+            lsblk: "lsblk".into(),
+            udisksctl: "udisksctl".into(),
+            tar: "tar".into(),
+            zstd: "zstd".into(),
+            age: "age".into(),
+            sha256sum: "sha256sum".into(),
+            backup: "resilience-backup".into(),
+        }
+    }
+}
+
+impl ToolPaths {
+    pub fn backup_tools(&self) -> crate::backup::Tools {
+        crate::backup::Tools {
+            tar: self.tar.clone(),
+            zstd: self.zstd.clone(),
+            age: self.age.clone(),
+            sha256sum: self.sha256sum.clone(),
+        }
+    }
 }
 
 impl Default for SystemConfig {
@@ -64,6 +105,7 @@ impl Default for SystemConfig {
             restricted_editor: vec!["nano".into(), "--restricted".into()],
             shell: vec!["bash".into(), "-i".into()],
             probe: ProbeSettings::default(),
+            tools: ToolPaths::default(),
         }
     }
 }

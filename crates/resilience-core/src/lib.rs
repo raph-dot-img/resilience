@@ -10,10 +10,12 @@
 //! any host.
 
 pub mod admin;
+pub mod backup;
 pub mod catalog;
 pub mod config;
 pub mod handbook;
 pub mod launch;
+pub mod media;
 pub mod mode;
 pub mod network;
 pub mod notes;

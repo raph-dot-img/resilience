@@ -1,0 +1,17 @@
+[package]
+name = "resilience-backup"
+description = "Unprivileged encrypted backup and restore of the home folder for Resilience OS (tar, zstd, age)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "resilience-backup"
+path = "src/main.rs"
+
+[dependencies]
+resilience-core.workspace = true
+
+[lints]
+workspace = true

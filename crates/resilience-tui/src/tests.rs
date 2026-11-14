@@ -7,10 +7,13 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use resilience_core::catalog::{Catalog, Category};
-use resilience_core::config::{SystemConfig, ThemeName, UserSettings};
+use resilience_core::config::{SystemConfig, ThemeName, ToolPaths, UserSettings};
 use resilience_core::mode::{Detected, Mode};
 
-use crate::app::{App, Builtin, Effect, Entry, Modal, Paths, Pending, Startup, View};
+use crate::app::{
+    App, BACKUP_LABEL, Builtin, CHECK_LABEL, Effect, Entry, Modal, Paths, Pending, RESTORE_LABEL,
+    Startup, View,
+};
 use crate::ui;
 
 const CATALOG: &str = r#"
@@ -57,6 +60,7 @@ fn app(mode: Mode, tag: &str) -> App {
     let sys = SystemConfig {
         handbook_dir: hb,
         edition: "test".into(),
+        tools: fake_media_tools(&home),
         ..SystemConfig::default()
     };
     App::new(Startup {
@@ -119,6 +123,56 @@ description = "Carol the admin"
         booted_system: sys.join("booted"),
         running_system: sys.join("current"),
     }
+}
+
+/// Fake `lsblk` and `udisksctl`: an internal disk, a USB stick (mounted
+/// once `udisksctl mount` ran) and an encrypted SD card. udisksctl records
+/// its arguments in `sys/udisks.log`; `sys/busy` makes unmount fail.
+fn fake_media_tools(home: &Path) -> ToolPaths {
+    use std::os::unix::fs::PermissionsExt;
+    let sys = home.join("sys");
+    std::fs::create_dir_all(&sys).expect("mkdir");
+    let d = sys.display();
+    let lsblk = format!(
+        r#"#!/bin/sh
+if [ -f {d}/mounted ]; then MP="/run/media/tester/STICK"; AV=1000000; else MP=""; AV=""; fi
+cat <<LSBLK
+NAME="vdb" PATH="/dev/vdb" PKNAME="" TYPE="disk" RM="0" HOTPLUG="0" RO="0" SIZE="67108864" LABEL="INTERNAL" FSTYPE="ext4" MOUNTPOINT="" FSAVAIL="" TRAN="" MODEL=""
+NAME="sda" PATH="/dev/sda" PKNAME="" TYPE="disk" RM="1" HOTPLUG="1" RO="0" SIZE="134217728" LABEL="" FSTYPE="" MOUNTPOINT="" FSAVAIL="" TRAN="usb" MODEL="Stick"
+NAME="sda1" PATH="/dev/sda1" PKNAME="sda" TYPE="part" RM="0" HOTPLUG="0" RO="0" SIZE="134217728" LABEL="STICK" FSTYPE="vfat" MOUNTPOINT="$MP" FSAVAIL="$AV" TRAN="" MODEL=""
+NAME="mmcblk0" PATH="/dev/mmcblk0" PKNAME="" TYPE="disk" RM="0" HOTPLUG="1" RO="0" SIZE="32000000000" LABEL="SECRET" FSTYPE="crypto_LUKS" MOUNTPOINT="" FSAVAIL="" TRAN="" MODEL=""
+LSBLK
+"#
+    );
+    let udisksctl = format!(
+        r#"#!/bin/sh
+echo "$@" >> {d}/udisks.log
+case "$1" in
+  mount) touch {d}/mounted; echo "Mounted /dev/sda1 at /run/media/tester/STICK" ;;
+  unmount)
+    if [ -f {d}/busy ]; then
+      echo "Error unmounting /dev/sda1: GDBus.Error:org.freedesktop.UDisks2.Error.DeviceBusy: Error unmounting /dev/sda1: target is busy" >&2
+      exit 1
+    fi
+    rm -f {d}/mounted ;;
+esac
+"#
+    );
+    for (name, text) in [("lsblk", lsblk), ("udisksctl", udisksctl)] {
+        let p = sys.join(name);
+        std::fs::write(&p, text).expect("write");
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    ToolPaths {
+        lsblk: sys.join("lsblk").display().to_string(),
+        udisksctl: sys.join("udisksctl").display().to_string(),
+        backup: "/store/bin/resilience-backup".into(),
+        ..ToolPaths::default()
+    }
+}
+
+fn udisks_log(a: &App) -> String {
+    std::fs::read_to_string(a.home.join("sys/udisks.log")).unwrap_or_default()
 }
 
 fn key(c: KeyCode) -> KeyEvent {
@@ -451,6 +505,12 @@ fn dump_screens() {
     println!("{}\n", render(&mut a, 80, 24));
     press(&mut a, KeyCode::Char('2'));
     println!("{}\n", render(&mut a, 80, 24));
+    open(&mut a, Builtin::Backup);
+    println!("{}\n", render(&mut a, 80, 24));
+    press(&mut a, KeyCode::Enter);
+    println!("{}\n", render(&mut a, 80, 24));
+    press(&mut a, KeyCode::Enter);
+    println!("{}\n", render(&mut a, 80, 24));
 }
 
 /// Every non-ASCII glyph the interface draws must exist in the console font
@@ -529,6 +589,7 @@ fn users_and_recovery_are_offered_in_every_mode() {
         let sys = a.entries(Category::System);
         assert!(sys.contains(&Entry::Builtin(Builtin::Users)), "{m:?}");
         assert!(sys.contains(&Entry::Builtin(Builtin::Recovery)), "{m:?}");
+        assert!(sys.contains(&Entry::Builtin(Builtin::Backup)), "{m:?}");
     }
 }
 
@@ -741,7 +802,7 @@ fn diagnostic_report_is_private_and_never_overwritten() {
 #[test]
 fn new_views_render_at_several_sizes() {
     let mut a = app(Mode::Advanced, "newsizes");
-    for b in [Builtin::Users, Builtin::Recovery] {
+    for b in [Builtin::Users, Builtin::Recovery, Builtin::Backup] {
         open(&mut a, b);
         for (w, h) in [(80, 24), (40, 12), (120, 40), (200, 60)] {
             assert_console_glyphs(&render(&mut a, w, h));
@@ -759,8 +820,240 @@ fn new_views_render_at_several_sizes() {
             }
             a.modal = None;
         }
+        if b == Builtin::Backup {
+            press(&mut a, KeyCode::Enter); // open the stick
+            assert!(matches!(a.view(), View::Backups { .. }));
+            for (w, h) in [(80, 24), (40, 12), (120, 40)] {
+                assert_console_glyphs(&render(&mut a, w, h));
+            }
+            press(&mut a, KeyCode::Enter); // new backup confirmation
+            assert!(a.modal.is_some());
+            for (w, h) in [(80, 24), (60, 20)] {
+                assert_console_glyphs(&render(&mut a, w, h));
+            }
+            a.modal = None;
+        }
         while a.stack.len() > 1 {
             press(&mut a, KeyCode::Esc);
         }
     }
+}
+
+// ----- backups & USB sticks ---------------------------------------------------
+
+fn media_names(a: &App) -> Vec<String> {
+    let View::Media { volumes, .. } = a.view() else {
+        panic!("not on the media view")
+    };
+    volumes.iter().map(|v| v.display_name()).collect()
+}
+
+#[test]
+fn only_removable_media_are_listed_and_opening_mounts_without_a_password() {
+    let mut a = app(Mode::UltraStable, "media");
+    open(&mut a, Builtin::Backup);
+    // The internal disk is never offered; the encrypted card is shown as unusable.
+    assert_eq!(media_names(&a), vec!["STICK", "SECRET"]);
+    let screen = render(&mut a, 80, 24);
+    assert!(
+        !screen.contains("INTERNAL") && !screen.contains("vdb"),
+        "{screen}"
+    );
+    // The encrypted card cannot be opened.
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    match &a.modal {
+        Some(Modal::Message { title, body, .. }) => {
+            assert_eq!(title, "CANNOT USE THIS DEVICE");
+            assert!(body.contains("encrypted"), "{body}");
+        }
+        other => panic!("expected a message, got {other:?}"),
+    }
+    a.modal = None;
+    assert_eq!(udisks_log(&a), "", "nothing was mounted");
+    // The stick: mounted through udisks, never asking for a password.
+    press(&mut a, KeyCode::Up);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        udisks_log(&a),
+        "mount --no-user-interaction --block-device /dev/sda1\n"
+    );
+    let View::Backups { mount, files, .. } = a.view() else {
+        panic!("not on the backups view: {:?}", a.view())
+    };
+    assert_eq!(mount, Path::new("/run/media/tester/STICK"));
+    assert!(files.is_empty());
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("BACKUPS ON STICK"), "{screen}");
+    assert!(screen.contains("Make a new backup"), "{screen}");
+    // Back on the list the stick shows as open; opening it again does not remount.
+    press(&mut a, KeyCode::Esc);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains(" open"), "{screen}");
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(udisks_log(&a).lines().count(), 1);
+}
+
+#[test]
+fn new_backup_asks_first_then_runs_the_unprivileged_tool() {
+    let mut a = app(Mode::UltraStable, "newbackup");
+    std::fs::write(a.home.join("file"), vec![0u8; 4096]).expect("write");
+    open(&mut a, Builtin::Backup);
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::Enter); // "+ Make a new backup"
+    let Some(Modal::Confirm {
+        body,
+        action,
+        yes_focused,
+        ..
+    }) = &a.modal
+    else {
+        panic!("expected a confirmation, got {:?}", a.modal)
+    };
+    assert!(body.contains("passphrase"), "{body}");
+    assert!(body.contains("Your files are not changed"), "{body}");
+    assert!(!yes_focused, "Cancel is the default");
+    assert_eq!(
+        *action,
+        Pending::Backup {
+            mount: "/run/media/tester/STICK".into()
+        }
+    );
+    // Enter on the default choice cancels.
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    assert!(a.modal.is_none());
+    press(&mut a, KeyCode::Enter);
+    let Effect::Run(req) = press(&mut a, KeyCode::Char('y')) else {
+        panic!("expected a run request")
+    };
+    assert_eq!(req.label, BACKUP_LABEL);
+    assert_eq!(req.argv, vec!["/store/bin/resilience-backup", "create"]);
+    assert_eq!(
+        req.extra_args,
+        vec![PathBuf::from("/run/media/tester/STICK")]
+    );
+    assert!(req.pause_after && req.polkit_agent.is_none() && req.env.is_empty());
+    a.after_run(&req.label, &Ok(std::process::ExitStatus::default()));
+    assert!(matches!(a.view(), View::Backups { .. }));
+}
+
+#[test]
+fn restore_and_check_use_the_selected_backup() {
+    let mut a = app(Mode::Stable, "restore");
+    let stick = a.home.join("stick");
+    let dir = stick.join("Resilience-backups");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(dir.join("home-20261114-103000.tar.zst.age"), "x").expect("w");
+    std::fs::write(dir.join("home-20261101-080000.tar.zst.age"), "x").expect("w");
+    std::fs::write(dir.join("home-20261101-080000.tar.zst.age.sha256"), "x").expect("w");
+    open(&mut a, Builtin::Backup);
+    let View::Media { volumes, .. } = a.view() else {
+        panic!("media")
+    };
+    let volume = volumes[0].clone();
+    a.stack.push(View::Backups {
+        volume,
+        mount: stick.clone(),
+        files: resilience_core::backup::list_backups(&stick),
+        list: ratatui::widgets::ListState::default().with_selected(Some(0)),
+    });
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("2026-11-14 10:30:00 UTC"), "{screen}");
+    press(&mut a, KeyCode::Down); // newest backup
+    // c checks without asking anything.
+    let Effect::Run(req) = press(&mut a, KeyCode::Char('c')) else {
+        panic!("expected a run request")
+    };
+    assert_eq!(req.label, CHECK_LABEL);
+    assert_eq!(req.argv[1], "check");
+    assert_eq!(
+        req.extra_args,
+        vec![dir.join("home-20261114-103000.tar.zst.age")]
+    );
+    // Enter restores, after a confirmation that says where the files go.
+    press(&mut a, KeyCode::Enter);
+    let Some(Modal::Confirm {
+        body, yes_focused, ..
+    }) = &a.modal
+    else {
+        panic!("expected a confirmation")
+    };
+    assert!(!yes_focused);
+    assert!(body.contains("Restored/backup-20261114-103000"), "{body}");
+    assert!(body.contains("Nothing that exists is"), "{body}");
+    assert!(body.contains("no checksum file"), "{body}");
+    let Effect::Run(req) = press(&mut a, KeyCode::Char('y')) else {
+        panic!("expected a run request")
+    };
+    assert_eq!(req.label, RESTORE_LABEL);
+    assert_eq!(req.argv, vec!["/store/bin/resilience-backup", "restore"]);
+    assert_eq!(
+        req.extra_args,
+        vec![dir.join("home-20261114-103000.tar.zst.age")]
+    );
+    // The older backup has a checksum: no warning.
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    let Some(Modal::Confirm { body, .. }) = &a.modal else {
+        panic!("expected a confirmation")
+    };
+    assert!(!body.contains("no checksum file"), "{body}");
+    a.modal = None;
+    // The first row has nothing to check.
+    press(&mut a, KeyCode::Home);
+    assert_eq!(press(&mut a, KeyCode::Char('c')), Effect::None);
+}
+
+#[test]
+fn eject_says_when_it_is_safe_to_unplug() {
+    let mut a = app(Mode::UltraStable, "eject");
+    open(&mut a, Builtin::Backup);
+    press(&mut a, KeyCode::Enter); // mount and open
+    std::fs::write(a.home.join("sys/busy"), "").expect("w");
+    press(&mut a, KeyCode::Char('e'));
+    match &a.modal {
+        Some(Modal::Message { title, body, error }) => {
+            assert_eq!(title, "CANNOT EJECT");
+            assert!(*error && body.contains("Do not unplug it yet"), "{body}");
+            assert!(body.contains("still in use"), "{body}");
+        }
+        other => panic!("expected a message, got {other:?}"),
+    }
+    a.modal = None;
+    // Back on the list (the backups view closed); try again once not busy.
+    assert!(matches!(a.view(), View::Media { .. }));
+    std::fs::remove_file(a.home.join("sys/busy")).expect("rm");
+    press(&mut a, KeyCode::Char('e'));
+    match &a.modal {
+        Some(Modal::Message { title, error, .. }) => {
+            assert_eq!(title, "SAFE TO UNPLUG");
+            assert!(!error);
+        }
+        other => panic!("expected a message, got {other:?}"),
+    }
+    let log = udisks_log(&a);
+    assert!(
+        log.ends_with(
+            "unmount --no-user-interaction --block-device /dev/sda1\n\
+             power-off --no-user-interaction --block-device /dev/sda\n"
+        ),
+        "{log}"
+    );
+    let View::Media { volumes, .. } = a.view() else {
+        panic!("media")
+    };
+    assert!(volumes[0].mountpoint.is_none());
+}
+
+#[test]
+fn media_view_survives_a_failing_lsblk() {
+    let mut a = app(Mode::UltraStable, "nolsblk");
+    a.sys.tools.lsblk = "/nonexistent/lsblk".into();
+    open(&mut a, Builtin::Backup);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("could not be read"), "{screen}");
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::Char('e'));
+    assert!(a.modal.is_none());
+    assert!(matches!(a.view(), View::Media { .. }));
 }

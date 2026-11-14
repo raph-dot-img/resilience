@@ -27,6 +27,8 @@ use crate::app::{
 use crate::help;
 use crate::theme::Theme;
 use resilience_core::admin::{AccountRow, Source};
+use resilience_core::backup::{self, BackupFile};
+use resilience_core::media::Volume;
 
 const LOGO: [&str; 2] = [
     "█▀█ █▀▀ █▀ █ █   █ █▀▀ █▄ █ █▀▀ █▀▀",
@@ -172,6 +174,8 @@ fn footer_hints(view: &View) -> &'static str {
         View::Users { .. } => "Enter Change mode  r Refresh  Esc Back  F1 Help",
         View::ChooseMode { .. } => "Up/Down Choose  Enter Continue  Esc Cancel",
         View::Recovery { .. } => "1-4/Enter Open  Esc Back  F1 Help",
+        View::Media { .. } => "Enter Open  e Eject  r Refresh  Esc Back  F1 Help",
+        View::Backups { .. } => "Enter Back up/Restore  c Check  e Eject  Esc Back  F1 Help",
     }
 }
 
@@ -292,6 +296,17 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         View::Users { rows, error, list } => draw_users(f, app, area, rows, error.as_deref(), list),
         View::ChooseMode { row, list } => draw_choose_mode(f, app, area, row, list),
         View::Recovery { list } => draw_recovery(f, app, area, list),
+        View::Media {
+            volumes,
+            error,
+            list,
+        } => draw_media(f, app, area, volumes, error.as_deref(), list),
+        View::Backups {
+            volume,
+            mount,
+            files,
+            list,
+        } => draw_backups(f, app, area, volume, mount, files, list),
     }
     app.stack.push(view);
 }
@@ -1106,6 +1121,154 @@ fn draw_recovery(f: &mut Frame, app: &App, area: Rect, list: &mut ListState) {
     if let Some(r) = list.selected().and_then(|i| RecoveryItem::ALL.get(i)) {
         details(f, &t, d, vec![Line::from(r.description())]);
     }
+}
+
+fn draw_media(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    volumes: &[Volume],
+    error: Option<&str>,
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    if let Some(e) = error {
+        let p = Paragraph::new(format!(
+            "The list of USB sticks could not be read.\n\n{e}\n\nPress r to try again."
+        ))
+        .wrap(Wrap { trim: false })
+        .style(t.error)
+        .block(block("BACKUPS & USB STICKS", &t));
+        f.render_widget(p, area);
+        return;
+    }
+    let items: Vec<ListItem> = volumes
+        .iter()
+        .map(|v| {
+            let state = if !v.usable() {
+                "unusable"
+            } else if v.mountpoint.is_some() {
+                "open"
+            } else {
+                ""
+            };
+            ListItem::new(format!(
+                "{:<14.14} {:>9} {state}",
+                v.display_name(),
+                human_bytes(v.size)
+            ))
+        })
+        .collect();
+    let [l, d] = two_panes(area);
+    draw_list(
+        f,
+        &t,
+        l,
+        "BACKUPS & USB STICKS",
+        items,
+        list,
+        "No USB stick or memory card found. Plug one in, wait a few seconds, then press r.",
+    );
+    let lines = match list.selected().and_then(|i| volumes.get(i)) {
+        Some(v) => {
+            let mut lines = vec![
+                kv(&t, "Name", v.display_name()),
+                kv(&t, "Device", v.device.clone()),
+                kv(&t, "Size", human_bytes(v.size)),
+                kv(&t, "File system", v.fstype.clone()),
+            ];
+            match &v.mountpoint {
+                Some(m) => {
+                    lines.push(kv(&t, "Open at", m.display().to_string()));
+                    if let Some(a) = v.available {
+                        lines.push(kv(&t, "Free", human_bytes(a)));
+                    }
+                }
+                None => lines.push(kv(&t, "State", "not open")),
+            }
+            if v.read_only {
+                lines.push(kv(&t, "Write", "protected (read-only)"));
+            }
+            lines.push(Line::from(""));
+            match &v.problem {
+                Some(p) => lines.push(Line::from(Span::styled(
+                    format!("[!!] Cannot be used: {p}."),
+                    t.warn,
+                ))),
+                None => lines.push(Line::from(
+                    "Enter opens it: make a backup, check or restore one. Press e before \
+                     unplugging it.",
+                )),
+            }
+            lines
+        }
+        None => vec![Line::from(
+            "Backups protect your files if this computer is lost or broken. Keep two \
+             copies, on different sticks, in different places.",
+        )],
+    };
+    details(f, &t, d, lines);
+}
+
+fn draw_backups(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    volume: &Volume,
+    mount: &std::path::Path,
+    files: &[BackupFile],
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    let mut items = vec![ListItem::new("+ Make a new backup of my files")];
+    items.extend(files.iter().map(|b| {
+        ListItem::new(format!(
+            "{}  {:>10}",
+            backup::human_stamp(&b.stamp),
+            human_bytes(b.size)
+        ))
+    }));
+    let title = format!("BACKUPS ON {}", volume.display_name().to_uppercase());
+    let [l, d] = two_panes(area);
+    draw_list(f, &t, l, &title, items, list, "");
+    let lines = match list.selected().unwrap_or(0).checked_sub(1) {
+        None => {
+            let mut lines = vec![
+                Line::from(
+                    "Saves your whole home folder (notes, documents, settings) in one \
+                     encrypted file on this stick. You choose its passphrase.",
+                ),
+                Line::from(""),
+            ];
+            if files.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "No backups on this stick yet.",
+                    t.dim,
+                )));
+            }
+            lines.push(kv(&t, "Stick", mount.display().to_string()));
+            lines
+        }
+        Some(i) => match files.get(i) {
+            Some(b) => vec![
+                kv(&t, "Made", backup::human_stamp(&b.stamp)),
+                kv(&t, "Size", human_bytes(b.size)),
+                kv(&t, "File", b.name.clone()),
+                kv(
+                    &t,
+                    "Checksum",
+                    if b.has_checksum { "yes" } else { "missing" },
+                ),
+                Line::from(""),
+                Line::from(
+                    "Enter restores it into a new folder in Restored; nothing is overwritten. \
+                     c checks that the copy is intact.",
+                ),
+            ],
+            None => Vec::new(),
+        },
+    };
+    details(f, &t, d, lines);
 }
 
 fn draw_search(
