@@ -1,0 +1,21 @@
+[package]
+name = "resilience-tui"
+description = "The Resilience OS terminal user interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "resilience"
+path = "src/main.rs"
+
+[dependencies]
+resilience-core.workspace = true
+ratatui.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+libc.workspace = true
+
+[lints]
+workspace = true

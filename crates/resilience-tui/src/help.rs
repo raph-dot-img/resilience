@@ -1,0 +1,83 @@
+//! Context-sensitive help text.
+
+use resilience_core::mode::Mode;
+
+use crate::app::HelpTopic;
+
+const GENERAL: &[&str] = &[
+    "== MOVING AROUND ==",
+    "  Up / Down (or k / j)   Move the selection",
+    "  Enter (or Right)       Open the selected item",
+    "  Esc                    Go back one screen",
+    "  1 - 9                  Open the numbered item directly",
+    "  /                      Search everything",
+    "  F1 or ?                This help",
+    "  F5                     Detailed system status",
+    "",
+    "Every screen shows its most important keys on the bottom line.",
+    "Ctrl-C does nothing here on purpose, so you cannot leave the interface by accident.",
+    "",
+];
+
+pub fn lines(topic: HelpTopic, mode: Mode) -> Vec<String> {
+    let specific: &[&str] = match topic {
+        HelpTopic::Home => &[
+            "== MAIN MENU ==",
+            "  The left panel shows the state of the computer. Each line starts with a marker:",
+            "    [OK] all good     [!!] needs attention     [--] information only",
+            "  The right panel lists what you can do. Only sections that contain something",
+            "  usable for your account are shown.",
+            "  q                      Log out (asks for confirmation)",
+        ],
+        HelpTopic::Category => &[
+            "== SECTIONS ==",
+            "  The left side lists tools; the right side describes the selected one.",
+            "  Items marked [UNAVAILABLE] are part of this system but their program is missing.",
+            "  When a program runs, the interface waits for it. Quit the program normally",
+            "  (for example Ctrl-X in nano, q in htop) to come back here.",
+        ],
+        HelpTopic::Reader => &[
+            "== READING ==",
+            "  Up / Down              Scroll one line",
+            "  PgUp / PgDn / Space    Scroll one page",
+            "  Home / End (g / G)     Jump to the start / end",
+        ],
+        HelpTopic::Notes => &[
+            "== NOTES ==",
+            "  n                      Create a new note and open it in the editor",
+            "  Enter                  Open the selected note",
+            "  r                      Refresh the list",
+            "  In the editor (nano): Ctrl-O saves, Ctrl-X closes and returns here.",
+            "  Notes are plain text files in the Notes folder of your home directory.",
+        ],
+        HelpTopic::Network => &[
+            "== NETWORK ==",
+            "  This screen reads the network state without sending anything.",
+            "  p                      Test Internet access now (a few seconds at most)",
+            "  r                      Re-read the network state",
+            "  OFFLINE      no cable or wireless link",
+            "  LOCAL LINK   connected to a local network without a route beyond it",
+            "  ROUTE UP     a route exists, but the Internet is only confirmed by a probe",
+        ],
+        HelpTopic::Settings => &[
+            "== SETTINGS ==",
+            "  Enter                  Apply and save the selected theme",
+            "  The Monochrome theme uses no colour at all; all information stays visible.",
+        ],
+        HelpTopic::Search => &[
+            "== SEARCH ==",
+            "  Type any word. Results include menu sections [MENU], built-in tools [TOOL],",
+            "  applications [APP ] and handbook pages [DOC ]. Enter opens the selected result.",
+        ],
+    };
+    let mode_text = format!("== YOUR MODE: {} ==", mode.label());
+    let mut out: Vec<String> = specific.iter().map(|s| s.to_string()).collect();
+    out.push(String::new());
+    out.extend(GENERAL.iter().map(|s| s.to_string()));
+    out.push(mode_text);
+    out.push(format!("  {}", mode.description()));
+    out.push(String::new());
+    out.push("If the interface ever stops working, press Alt+F2 to reach another console,".into());
+    out.push("or restart and choose an earlier system generation in the boot menu.".into());
+    out
+}
