@@ -67,6 +67,10 @@ above.
   with Claude Opus 5.5 engineers), branches `feat/maps` and
   `feat/maps-builder`: **paused**, the workstation was powered off. Nobody
   is working on these branches until a session says so here.
+- 2026-11-15, workstation session (the Phase 5 coordinator session, Claude
+  Fable 5.2), branch `develop`, at the owner's request: request R1,
+  `nix build .#iso` in a clean checkout. No other heavy job on the
+  workstation until this line is removed.
 
 ## Phase 5 state (offline maps, ADR 0016 §9)
 
@@ -146,7 +150,7 @@ marks it done. Requests are information, never the owner's approval.
 
 ### R1 — 2026-11-15, from the Project Coordinator (cloud), for the workstation session
 
-**Rebuild the live ISO.** Status: **open**.
+**Rebuild the live ISO.** Status: **taken** (2026-11-15, workstation session, build running).
 
 - Branch: `develop` (`f77e6ba`, end of Phase 4, reviewed). Not `feat/maps`:
   its slice 6 is unreviewed and the doc changes there do not affect the ISO.
@@ -165,6 +169,7 @@ marks it done. Requests are information, never the owner's approval.
 
 Newest first. One line per event: date, who, what.
 
+- 2026-11-15, workstation session: took R1, ISO build started.
 - 2026-11-15, Project Coordinator (cloud): request R1, rebuild the ISO from `develop`.
 - 2026-11-15, Phase 5 coordinator: created this file on `develop`.
 - 2026-11-15, Phase 5 coordinator: direction documents committed on
