@@ -55,8 +55,17 @@ activity as known on 2026-11-14; re-check before each release.
 
 ratatui 0.30 (MIT), crossterm 0.29 (MIT, via ratatui), serde 1 (MIT/Apache-2.0),
 toml 1 (MIT/Apache-2.0), tracing 0.1 / tracing-subscriber 0.3 (MIT),
-thiserror 2 (MIT/Apache-2.0), libc 0.2 (MIT/Apache-2.0). 108 crates total
-including transitive dependencies. `cargo deny check licenses advisories`
+thiserror 2 (MIT/Apache-2.0), libc 0.2 (MIT/Apache-2.0). In `resilience-maps`
+only (ADR 0016): **rusqlite 0.43.0** (MIT; `default-features = false`,
+features `bundled`, `hooks`, `limits`; needs Rust 1.89) with
+**libsqlite3-sys 0.40.0** (MIT) bundling **SQLite 3.54.1** (public domain;
+compiled with `SQLITE_OMIT_LOAD_EXTENSION` and `SQLITE_MAX_MMAP_SIZE=0` from
+`.cargo/config.toml`), and **miniz_oxide 0.9.1** (MIT OR Zlib OR Apache-2.0,
+pure Rust) with adler2 2.0.1 (0BSD OR MIT OR Apache-2.0).
+They add fallible-iterator and fallible-streaming-iterator (MIT/Apache-2.0),
+reuse bitflags and smallvec (already locked) and, at build time only, add
+cc, pkg-config, vcpkg, shlex and find-msvc-tools (MIT/Apache-2.0). 124
+packages in Cargo.lock including the workspace's own. `cargo deny check licenses advisories`
 is to be run before each release (cargo-deny is in the dev shell).
 
 ## Evaluated, available in nixpkgs, planned

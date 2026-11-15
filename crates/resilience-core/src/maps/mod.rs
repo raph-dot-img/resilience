@@ -8,5 +8,5 @@
 
 pub mod geo;
 pub mod mvt;
-#[cfg(test)]
-mod mvt_encode;
+#[cfg(any(test, feature = "test-support"))]
+pub mod mvt_encode;

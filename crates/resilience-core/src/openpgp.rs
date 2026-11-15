@@ -117,12 +117,12 @@ pub fn parse_decrypt(status: &str) -> Decryption {
 pub fn parse_import(status: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for l in status.lines() {
-        if let Some(r) = l.strip_prefix("[GNUPG:] IMPORT_OK ") {
-            if let Some(fpr) = r.split(' ').nth(1) {
-                if is_fingerprint(fpr) && !out.iter().any(|f| f == fpr) {
-                    out.push(fpr.to_string());
-                }
-            }
+        if let Some(r) = l.strip_prefix("[GNUPG:] IMPORT_OK ")
+            && let Some(fpr) = r.split(' ').nth(1)
+            && is_fingerprint(fpr)
+            && !out.iter().any(|f| f == fpr)
+        {
+            out.push(fpr.to_string());
         }
     }
     out
@@ -216,10 +216,10 @@ pub fn parse_keys(colons: &str) -> Vec<PgpKey> {
                 want_sub = false;
             }
             Some("uid") => {
-                if let Some(k) = keys.last_mut() {
-                    if k.uid.is_empty() {
-                        k.uid = unescape(f.get(9).copied().unwrap_or(""));
-                    }
+                if let Some(k) = keys.last_mut()
+                    && k.uid.is_empty()
+                {
+                    k.uid = unescape(f.get(9).copied().unwrap_or(""));
                 }
             }
             Some("sub" | "ssb") => {

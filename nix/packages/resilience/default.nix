@@ -1,6 +1,12 @@
 # The Resilience userland: the `resilience` TUI and its helpers
-# `resilience-admin` (privileged, ADR 0007) and `resilience-backup` (ADR 0008).
+# `resilience-admin` (privileged, ADR 0007), `resilience-backup` (ADR 0008),
+# `resilience-library`, `resilience-crypto` and `resilience-maps` (ADR 0016).
 # Unit and TUI tests (`cargo test`) run in the check phase of this build.
+#
+# resilience-maps bundles SQLite (C, compiled by libsqlite3-sys with stdenv's
+# cc). Its compile flags (no extension loading, no mmap) come from
+# .cargo/config.toml, which is part of the source below; the test
+# `sqlite_is_built_without_extension_loading` fails if they are lost.
 {
   lib,
   rustPlatform,
@@ -22,6 +28,7 @@ rustPlatform.buildRustPackage {
     fileset = lib.fileset.unions [
       (root + "/Cargo.toml")
       (root + "/Cargo.lock")
+      (root + "/.cargo/config.toml")
       (root + "/crates")
     ];
   };

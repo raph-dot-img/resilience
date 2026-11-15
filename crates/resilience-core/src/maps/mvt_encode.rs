@@ -1,12 +1,10 @@
 //! Test-only Mapbox Vector Tile encoder, so tests can build tiles by hand,
 //! including malformed ones (every helper writes exactly what it is given).
 //!
-//! It is compiled only for this crate's tests (`#[cfg(test)]` in
-//! `maps/mod.rs`): production code never needs to write tiles, and the
-//! pack builder gets its tiles from tippecanoe. It sits in its own file so
-//! that the maps crate's tests (ADR 0016 slice 5) can reuse it by adding a
-//! `test-support` feature to `resilience-core` and widening the `cfg`, a
-//! two-line change, instead of copying it.
+//! It is compiled only for this crate's tests and for crates that enable the
+//! `test-support` feature, which `resilience-maps` does from its
+//! `[dev-dependencies]` only: production code never needs to write tiles,
+//! and the pack builder gets its tiles from tippecanoe.
 
 /// Append a base-128 varint.
 pub fn put_varint(out: &mut Vec<u8>, mut v: u64) {

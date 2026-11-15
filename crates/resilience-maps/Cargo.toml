@@ -1,0 +1,23 @@
+[package]
+name = "resilience-maps"
+description = "Offline map viewer of Resilience OS: hardened reader for map packs (MBTiles, ADR 0016)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "resilience-maps"
+path = "src/main.rs"
+
+[dependencies]
+resilience-core.workspace = true
+libc.workspace = true
+rusqlite = { version = "0.43", default-features = false, features = ["bundled", "hooks", "limits"] }
+miniz_oxide = { version = "0.9", default-features = false, features = ["with-alloc"] }
+
+[dev-dependencies]
+resilience-core = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

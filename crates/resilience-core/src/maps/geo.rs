@@ -925,12 +925,12 @@ fn scan_number(
     let mut i = start;
     let mut text = String::new();
     let (mut negative, mut signed) = (false, false);
-    if let Some(&c) = chars.get(i) {
-        if matches!(c, '+' | '-' | '\u{2212}') {
-            signed = true;
-            negative = c != '+';
-            i += 1;
-        }
+    if let Some(&c) = chars.get(i)
+        && matches!(c, '+' | '-' | '\u{2212}')
+    {
+        signed = true;
+        negative = c != '+';
+        i += 1;
     }
     let (mut digits, mut fraction) = (0usize, false);
     while let Some(&c) = chars.get(i) {

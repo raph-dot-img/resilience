@@ -1836,7 +1836,11 @@ fn draw_files(
         .unwrap_or("FIND FILES (home folder and open USB sticks)");
     let [input, results] =
         Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(area);
-    let cursor = if (app.tick / 2) % 2 == 0 { "█" } else { " " };
+    let cursor = if (app.tick / 2).is_multiple_of(2) {
+        "█"
+    } else {
+        " "
+    };
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(query.to_string(), t.accent),
@@ -1937,7 +1941,11 @@ fn draw_search(
     let t = app.theme;
     let [input, results] =
         Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(area);
-    let cursor = if (app.tick / 2) % 2 == 0 { "█" } else { " " };
+    let cursor = if (app.tick / 2).is_multiple_of(2) {
+        "█"
+    } else {
+        " "
+    };
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(query.to_string(), t.accent),

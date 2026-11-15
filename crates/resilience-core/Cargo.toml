@@ -13,5 +13,10 @@ thiserror.workspace = true
 libc.workspace = true
 tracing.workspace = true
 
+[features]
+# Test helpers for other crates' tests (the MVT encoder of maps/mvt_encode.rs).
+# Only ever enabled from a [dev-dependencies] entry: release builds never have it.
+test-support = []
+
 [lints]
 workspace = true

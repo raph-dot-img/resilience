@@ -571,10 +571,11 @@ fn age_stanzas(raw: &[u8]) -> Vec<String> {
         if line.starts_with("---") {
             break;
         }
-        if let Some(kind) = line.strip_prefix("-> ").and_then(|r| r.split(' ').next()) {
-            if !kind.is_empty() && !out.iter().any(|k| k == kind) {
-                out.push(kind.to_string());
-            }
+        if let Some(kind) = line.strip_prefix("-> ").and_then(|r| r.split(' ').next())
+            && !kind.is_empty()
+            && !out.iter().any(|k| k == kind)
+        {
+            out.push(kind.to_string());
         }
     }
     out
@@ -1228,7 +1229,7 @@ dfqiX2FQVLiTMfb7hTcmQ9B9KiBhyTyLsZVhh5CFMuCWDcmMyollHa70tF+BK45z8CHz+6UegRXiR4e7
                 s.push(T[(n >> (18 - 6 * i) & 63) as usize] as char);
             }
         }
-        while s.len() % 4 != 0 {
+        while !s.len().is_multiple_of(4) {
             s.push('=');
         }
         s

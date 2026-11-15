@@ -367,7 +367,7 @@ impl<'a> Feature<'a> {
             .tags
             .get(self.data.tags_start as usize..self.data.tags_end as usize)
             .unwrap_or(&[]);
-        tags.chunks_exact(2).map(|kv| (kv[0], kv[1]))
+        tags.as_chunks::<2>().0.iter().map(|kv| (kv[0], kv[1]))
     }
 
     /// The value of attribute `key` (the first one, if a broken tile
@@ -644,7 +644,7 @@ fn decode_layer(
         .ok_or(MvtError::BadExtent(extent))?;
     // Keys and values may come after the features: check tags at the end.
     let (nkeys, nvalues) = (layer.keys.len(), layer.values.len());
-    for kv in layer.tags.chunks_exact(2) {
+    for kv in layer.tags.as_chunks::<2>().0 {
         if kv[0] as usize >= nkeys || kv[1] as usize >= nvalues {
             return Err(MvtError::TagOutOfRange);
         }
@@ -702,7 +702,7 @@ fn decode_feature(
             return Ok(());
         }
     };
-    if (layer.tags.len() - tags_start) % 2 != 0 {
+    if !(layer.tags.len() - tags_start).is_multiple_of(2) {
         return Err(MvtError::OddTags);
     }
     let parts_start = layer.parts.len();

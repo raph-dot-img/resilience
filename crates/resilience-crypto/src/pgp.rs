@@ -508,12 +508,11 @@ fn verify_inline(c: &Ctx, sig: &Path) -> Res {
         .map(|n| n.as_encoded_bytes().to_vec())
         .unwrap_or_default();
     for ext in [&b".sig"[..], b".asc", b".gpg"] {
-        if let Some(stem) = name.strip_suffix(ext) {
-            if let Ok(stem) = std::str::from_utf8(stem) {
-                if sig.with_file_name(stem).exists() {
-                    return Err(Failure::Refused(not_detached(sig)));
-                }
-            }
+        if let Some(stem) = name.strip_suffix(ext)
+            && let Ok(stem) = std::str::from_utf8(stem)
+            && sig.with_file_name(stem).exists()
+        {
+            return Err(Failure::Refused(not_detached(sig)));
         }
     }
     let (_, data, status, truncated) = capture(c, &[OsStr::new("--decrypt"), sig.as_os_str()])?;

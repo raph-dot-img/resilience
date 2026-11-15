@@ -1,0 +1,8 @@
+# Build settings shared by the host and the Nix build (nix/packages/resilience
+# includes this file; Nix appends its vendoring settings below).
+[env]
+# Bundled SQLite of resilience-maps (ADR 0016 §7): compile out extension loading
+# and memory-mapped I/O. libsqlite3-sys passes -DSQLITE_ENABLE_LOAD_EXTENSION=1
+# itself; -U removes it. The test `sqlite_is_built_without_extension_loading`
+# fails if these flags are lost.
+LIBSQLITE3_FLAGS = "-USQLITE_ENABLE_LOAD_EXTENSION -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_MAX_MMAP_SIZE=0"

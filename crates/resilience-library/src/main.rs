@@ -124,7 +124,7 @@ struct ChangeArgs {
 }
 
 fn parse_change(args: &[String]) -> Result<ChangeArgs, Failure> {
-    if args.len() % 2 != 0 {
+    if !args.len().is_multiple_of(2) {
         return Err(Failure::Usage);
     }
     let mut c = ChangeArgs {
