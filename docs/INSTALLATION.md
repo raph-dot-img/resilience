@@ -1,5 +1,10 @@
 # Installation
 
+Scope (2026-11-15): Resilience OS is now developed for the Resilience
+cyberdeck, not as a general-purpose distribution (CLAUDE.md §1). How the
+cyberdeck receives its system is not decided yet. What follows describes
+what exists today, on generic x86_64 hardware and in virtual machines.
+
 ## Current status (v0.1.0)
 
 **There is no installer yet** (Phase 8). Today you can:

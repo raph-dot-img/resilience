@@ -1,5 +1,14 @@
 # Roadmap
 
+**Direction (2026-11-15).** *Resilience* is the cyberdeck project: a
+standalone, offline-first laptop that we are building. *Resilience OS* is
+the system that runs on it, and this roadmap is the roadmap of that system.
+It is no longer a general-purpose operating system for any x86-64 machine.
+The phases below were planned before this change. They still stand, read
+with the cyberdeck as the target; the items the change puts in question are
+marked **[direction]**. The cyberdeck's hardware is not recorded in this
+repository yet: see "Cyberdeck hardware" at the end.
+
 Legend: ✅ done and tested · 🟡 partial · ⬜ not started. "Tested" means a
 test in docs/TESTING.md actually ran and passed (VM only so far).
 
@@ -67,8 +76,16 @@ secrets never in argv or logs (ADR 0015).
 - [ ] Unlock encrypted (LUKS) USB sticks in the media screens (later)
 - [ ] OpenPGP signing in the interface (minisign signs; gpg on the command line)
 
-## Phase 5 — Offline maps ⬜
-MBTiles/GeoPackage storage, block-character renderer, place search, routing study.
+## Phase 5 — Offline maps 🟡
+Design: ADR 0016 (MBTiles with vector tiles, block-character viewer, search
+inside the pack, reproducible pack builder, routing deferred to its own ADR).
+Branch `feat/maps`.
+- ✅ Resource packs accept map packs (`.mbtiles`, `maps` category, data date, coverage, attribution)
+- ✅ Geographic maths, bounded vector-tile decoder, canvas, style table, labels
+- ✅ Hardened pack reader (`resilience-maps`, SQLite opened as untrusted input)
+- 🟡 Viewer (`resilience-maps view`): written, unit-tested, not reviewed, never run on a real pack
+- 🟡 Pack builder (`resilience-mapmaker`, `nix/maps/`): written on branch `feat/maps-builder`, not reviewed, not merged
+- ⬜ Built-in world overview, TUI "Maps & navigation", search, nearby and go-to, spot heights, `vm-maps`, catalog entries
 
 ## Phase 6 — Networking and communications 🟡
 - ✅ Passive diagnostics + on-demand probe; LOCAL LINK detection tested
@@ -78,13 +95,23 @@ MBTiles/GeoPackage storage, block-character renderer, place search, routing stud
 ## Phase 7 — Radio and additional applications 🟡
 - ✅ First offline games (nudoku, solitaire, ninvaders, moon-buggy, NetHack)
 - ⬜ Receive-only SDR tools with hardware detection and legal notices
-- ⬜ Power profiles (Maximum Efficiency / Balanced / Performance) and measurements on hardware
+- ⬜ Power profiles (Maximum Efficiency / Balanced / Performance) and measurements on the cyberdeck
 
 ## Phase 8 — Updates and installation ⬜
+**[direction]** This phase was planned for installing on any PC. For the
+cyberdeck the question becomes how its system image is produced, written
+and updated; decide that with the owner before building a generic
+installer.
+
 Text installer, offline update bundles (`nix copy` + minisign manifest),
 signed pack verification, rollback tests, installation docs.
 
 ### Planned for the final product: `build_resilience.sh` (requested 2026-11-14)
+**[direction]** Requested before the change of direction, as a way for
+anyone to build a custom ISO for their own machine. Confirm with the owner
+whether it is still wanted, and in what form, now that the target is the
+cyberdeck.
+
 A self-contained script that builds a custom ISO from answers to plain
 questions, for people who do not write Nix. Sketch:
 
@@ -116,7 +143,15 @@ questions, for people who do not write Nix. Sketch:
 
 ## Phase 9 — Audit and release ⬜
 Independent architecture and security reviews, `cargo deny`, license audit,
-SBOM, physical hardware tests, release notes.
+SBOM, tests on the cyberdeck itself, release notes.
+
+## Cyberdeck hardware ⬜
+Not recorded in this repository yet. To be written down by the owner, or
+asked for when first needed, because the system depends on it: CPU
+architecture (everything so far is x86_64 and QEMU only), boot firmware,
+screen and console size, keyboard and pointing device, storage, battery and
+charging, radios (Wi-Fi, others), ports. Once known: a hardware
+configuration for the cyberdeck in `nix/systems/`, and tests on the device.
 
 ## Known limitations carried forward
 See CLAUDE.md §15.

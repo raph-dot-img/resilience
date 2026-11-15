@@ -1,6 +1,15 @@
 # Resilience OS
 
-**An offline-first, terminal-only operating system based on NixOS.**
+**The operating system of Resilience, a standalone, offline-first cyberdeck.**
+
+**Resilience** is a cyberdeck project: a self-contained, offline-first
+laptop that we are building. **Resilience OS**, in this repository, is the
+system that runs on it: NixOS, Rust, terminal-only.
+
+Resilience OS is not a general-purpose distribution for any PC. It was
+first planned as one, and some documents still read that way; it is now
+developed for the cyberdeck. The cyberdeck's hardware is not described in
+this repository yet.
 
 Resilience OS is designed to stay useful — information, productivity, local
 communication, security tools — during a long or complete loss of Internet
@@ -21,11 +30,12 @@ works at 80×24, without colour, and on modest hardware.
 │STORAGE [OK] 7.5 GiB FREE           ││  [5] SYSTEM MANAGEMENT                 │
 ```
 
-> **Status: early prototype (v0.1.0, Phase 1).** It boots and is usable in a
-> virtual machine. It has **not** been tested on physical hardware, has no
-> installer yet, and many planned features (Kiwix, maps, cryptography
-> workflows, local messaging) do not exist yet. See [ROADMAP.md](ROADMAP.md)
-> and [docs/TESTING.md](docs/TESTING.md) for exactly what works.
+> **Status: early prototype (v0.1.0).** It boots and is usable in a
+> virtual machine (x86_64). It has **not** been tested on physical hardware,
+> and never on the cyberdeck. It has no installer yet, and several planned
+> features (maps are in progress; local messaging, radio) do not exist yet.
+> See [ROADMAP.md](ROADMAP.md) and [docs/TESTING.md](docs/TESTING.md) for
+> exactly what works.
 
 ## What works today
 

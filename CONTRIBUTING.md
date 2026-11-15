@@ -1,7 +1,9 @@
 # Contributing to Resilience OS
 
 Read [CLAUDE.md](CLAUDE.md) first: it is the authoritative description of
-the current architecture, conventions and constraints.
+the project direction, current architecture, conventions and constraints.
+Resilience OS is the system of the Resilience cyberdeck, not a
+general-purpose distribution (CLAUDE.md §1).
 
 ## Workflow
 

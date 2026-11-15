@@ -6,6 +6,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Project direction (2026-11-15): "Resilience" is the cyberdeck project, a
+  standalone, offline-first laptop; "Resilience OS" is the system that runs
+  on it. Resilience OS is no longer meant as a general-purpose system for
+  any x86-64 machine. Documentation only; no code changed.
 - Resilience's own code is now licensed 0BSD (was GPL-3.0-or-later);
   `LICENSE` added. Bundled software keeps its own license.
 

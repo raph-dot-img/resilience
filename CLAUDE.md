@@ -2,13 +2,48 @@
 
 Read this whole file at the start of every session. Keep it accurate: update it
 whenever architecture, build process, conventions or status change. The full
-original specification is `MASTER-PROMPT.md` (authoritative for scope; this
-file is authoritative for *current state and decisions*).
+original specification is `MASTER-PROMPT.md` (authoritative for the feature
+scope of the system; this file is authoritative for *project direction,
+current state and decisions*). `MASTER-PROMPT.md` was written before the
+change of direction in §1 and still describes a general-purpose
+distribution: where the two disagree, §1 wins.
 
 ## 1. Identity and purpose
 
-**Resilience OS** is an offline-first, low-resource, terminal-only Linux
-distribution built on **NixOS** (x86_64). It must stay useful — information,
+**Project direction (decided by the owner on 2026-11-15).** Two names, two
+things:
+
+- **Resilience** is the **cyberdeck project**: a standalone, offline-first
+  laptop that we are building. It is the product.
+- **Resilience OS** is the **system that runs on that cyberdeck**: NixOS,
+  Rust, terminal-only. It is one part of Resilience, and this repository
+  holds it.
+
+Resilience OS is **no longer a general-purpose operating system for any
+x86-64 machine**. That was the original idea, and older documents, ADRs and
+`MASTER-PROMPT.md` are written that way. What this means for a session:
+
+- Design for one known machine, the cyberdeck, and not for unknown
+  hardware. When a choice depends on the hardware (screen and console size,
+  keyboard, storage, battery and power, radios, boot firmware), ask the
+  owner or look for the hardware specification; do not assume generic PC
+  hardware and do not invent the cyberdeck's characteristics.
+- **The cyberdeck's hardware is not recorded in this repository yet**
+  (CPU architecture, screen, storage, radios: unknown here). Everything
+  built so far targets x86_64 and has run only in QEMU. Whether the
+  cyberdeck is x86_64 has not been stated: ask before relying on it.
+- Work whose purpose was "runs on any PC" (broad hardware support, a
+  generic installer, images for other people's machines) is not a goal on
+  its own any more. Before starting such work, ask whether the cyberdeck
+  needs it. Affected roadmap items are marked in ROADMAP.md.
+- The principles below (offline-first, security modes, low resources,
+  terminal-only) are unchanged.
+- Use the names as defined: "Resilience" for the cyberdeck or the project
+  as a whole, "Resilience OS" for the system. Program and crate names
+  (`resilience`, `resilience-admin`, …) do not change.
+
+**Resilience OS** is an offline-first, low-resource, terminal-only system
+built on **NixOS** (x86_64 so far). It must stay useful — information,
 productivity, local communication, security tools — with no Internet at all.
 Primary interface: a Rust TUI (`resilience`). No X11, Wayland, desktop or WM.
 
@@ -313,6 +348,20 @@ needlessly. Watch `free -h` during VM tests.
 
 ## 14. Current implementation status (2026-11-15)
 
+Direction changed on 2026-11-15: Resilience is the cyberdeck, Resilience OS
+its system (§1). Only documentation was changed for it; no code.
+
+Phase 5 (offline maps, ADR 0016) is in progress on branch `feat/maps`
+(pushed): slices 1 to 5 of ADR 0016 §9 are done and reviewed (packs accept
+`.mbtiles`, geographic maths, MVT decoder, canvas/style/labels, hardened
+pack reader in the new crate `resilience-maps`); slice 6 (viewer) is
+committed there as work in progress, not reviewed and never run on a real
+pack; slice 7 (pack builder `resilience-mapmaker`, `nix/maps/`) is on branch
+`feat/maps-builder` as work in progress, not reviewed and not merged.
+Slices 8 to 13 are not started. The rest of this section and §2 describe
+the state at the end of Phase 4 and do not list the maps code yet.
+
+
 Phase 0 (foundation), Phase 1 (core), Phase 2, Phase 3 and Phase 4 done
 (Phase 3: resource packs, sets, built-in docs, packs on sticks, ADR 0013;
 Find & view files and manual pages, ADR 0014. Phase 4: guided cryptography
@@ -359,11 +408,13 @@ origin; last full `nix flake check -L --max-jobs 1` passed (9 VM tests,
   signs), no secure deletion of originals (the user is told); contacts'
   keys are only as trustworthy as the user's own check.
 - Power profiles not implemented (schedutil governor only). Not measured yet.
-- Not tested on physical hardware.
+- Not tested on physical hardware, and in particular never on the cyberdeck,
+  whose hardware is not recorded here yet (§1).
 
 ## 16. Roadmap
 
-See ROADMAP.md. Next: Phase 5 (offline maps).
+See ROADMAP.md. Current: Phase 5 (offline maps), see §14. The roadmap is
+read in the light of §1: the target is the cyberdeck.
 
 ## 17. Important decisions (docs/decisions/)
 

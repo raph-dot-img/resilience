@@ -2,6 +2,12 @@
 
 Version 0.1.0. Decisions and their rationale live in `docs/decisions/`.
 
+Scope (2026-11-15): Resilience OS is the system of the Resilience cyberdeck,
+a standalone, offline-first laptop; it is not a general-purpose distribution
+(CLAUDE.md §1). This document and the ADRs up to 0016 were written before
+that change and describe hardware generically. The cyberdeck's hardware is
+not recorded yet, and nothing here is specific to it.
+
 ## 1. Layers
 
 ```
