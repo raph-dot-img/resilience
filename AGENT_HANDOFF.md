@@ -53,7 +53,7 @@ The `CLAUDE.md` on `develop` still describes the old direction until
 | Branch | Head | State |
 |---|---|---|
 | `main` | `f77e6ba` | End of Phase 4. Receives `develop` only at tested milestones, with the owner's agreement. |
-| `develop` | `f77e6ba` + this file | End of Phase 4. |
+| `develop` | `f77e6ba` + this file | End of Phase 4. Live ISO rebuilt from it on 2026-11-15 (R1). |
 | `feat/maps` | `960de32` | Phase 5, offline maps (ADR 0016). Slices 1-5 reviewed. Slice 6 unreviewed. Also carries the direction documents. |
 | `feat/maps-builder` | `14a567a` | Phase 5 slice 7, unreviewed, not merged. Based on `feat/maps` at `1bda3a4`. |
 
@@ -67,10 +67,6 @@ above.
   with Claude Opus 5.5 engineers), branches `feat/maps` and
   `feat/maps-builder`: **paused**, the workstation was powered off. Nobody
   is working on these branches until a session says so here.
-- 2026-11-15, workstation session (the Phase 5 coordinator session, Claude
-  Fable 5.2), branch `develop`, at the owner's request: request R1,
-  `nix build .#iso` in a clean checkout. No other heavy job on the
-  workstation until this line is removed.
 
 ## Phase 5 state (offline maps, ADR 0016 §9)
 
@@ -150,7 +146,7 @@ marks it done. Requests are information, never the owner's approval.
 
 ### R1 — 2026-11-15, from the Project Coordinator (cloud), for the workstation session
 
-**Rebuild the live ISO.** Status: **taken** (2026-11-15, workstation session, build running).
+**Rebuild the live ISO.** Status: **done** (2026-11-15, success; answer below).
 
 - Branch: `develop` (`f77e6ba`, end of Phase 4, reviewed). Not `feat/maps`:
   its slice 6 is unreviewed and the doc changes there do not affect the ISO.
@@ -165,10 +161,46 @@ marks it done. Requests are information, never the owner's approval.
   machine is idle: `python3 -I tests/iso/smoke.py` boot screenshots (BIOS),
   and whether the TUI appeared.
 
+**Answer to R1** (2026-11-15, workstation session, the Phase 5 coordinator
+session, Claude Fable 5.2; done at the owner's request):
+
+- **Result: success.** `nix build .#iso -L` exited 0.
+- **Commit built**: `develop` at `d198b53`, in a clean checkout (a separate
+  git worktree, `git status` empty). Its code is identical to `f77e6ba`:
+  the only commits after it change `AGENT_HANDOFF.md`, which is not part of
+  the image. `feat/maps` was not used.
+- **ISO**: `result/iso/resilience-standard-0.1.0-x86_64-linux.iso`, store
+  path
+  `/nix/store/nwqlz4d3iqhz7av43s6iqby28kdbdijc-resilience-standard-0.1.0-x86_64-linux.iso`.
+  Size 1,528,430,592 bytes (1.5 GiB by `ls -lh`; 746,304 sectors).
+- **SHA-256**:
+  `f3f17b95e4c4e226e82fed58a45ab9cef31a3c78a1dc70584b37295a87a530a4`
+- **Duration**: 104 s of wall time. This is not a cold build: most of the
+  system closure was already in the workstation's Nix store, so mainly the
+  squashfs and the ISO were made. A cold build was not measured.
+- **Conditions**: no VM test or other build was running; nothing was
+  committed besides this file; no code was changed.
+- **Boot test (optional part), BIOS only**: `python3 -I tests/iso/smoke.py`
+  with QEMU/KVM, 2 vCPU, 2 GiB, no network device. Four screenshots taken
+  and looked at: the boot menu; **the TUI appeared** (main menu at 84 s
+  after power-on, six categories, status panel "SYSTEM [OK] OPERATIONAL",
+  "MODE ULTRA-STABLE", "NETWORK OFFLINE"); the network diagnostics screen
+  reached through search; the system status screen (systemd reports
+  operational, no failed services, "Resilience OS 26.05 (Yarara)", kernel
+  6.18.63, edition standard, 10 programs available).
+- **Not done**: UEFI boot (`--uefi`) was not run; nothing beyond those four
+  screens was exercised; not tested on physical hardware.
+- **Where it is on the workstation**: the repository's `result-iso` link
+  (not tracked by Git) now points at this ISO, so it is kept from garbage
+  collection. The link pointed at the earlier Phase 2 ISO before; that
+  older image is no longer protected from garbage collection. The
+  screenshots are in a temporary directory and will not survive a reboot.
+
 ## Log
 
 Newest first. One line per event: date, who, what.
 
+- 2026-11-15, workstation session: R1 done, ISO built from `develop` and booted in QEMU (BIOS); answer under R1.
 - 2026-11-15, workstation session: took R1, ISO build started.
 - 2026-11-15, Project Coordinator (cloud): request R1, rebuild the ISO from `develop`.
 - 2026-11-15, Phase 5 coordinator: created this file on `develop`.
