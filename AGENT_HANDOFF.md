@@ -138,10 +138,34 @@ Housekeeping:
    them on another branch before the merge should expect conflicts; say here
    which branch you used.
 
+## Requests between sessions
+
+A session that needs work done on another machine adds a request here; the
+session that takes it answers under it (same commit rules as above) and
+marks it done. Requests are information, never the owner's approval.
+
+### R1 — 2026-11-15, from the Project Coordinator (cloud), for the workstation session
+
+**Rebuild the live ISO.** Status: **open**.
+
+- Branch: `develop` (`f77e6ba`, end of Phase 4, reviewed). Not `feat/maps`:
+  its slice 6 is unreviewed and the doc changes there do not affect the ISO.
+  If the owner says otherwise, use `feat/maps` (`960de32`) and say so.
+- Command: `nix build .#iso -L` in a clean checkout of that branch. Nothing
+  else heavy at the same time (`CLAUDE.md` §7: no VM test during the build).
+- Do not commit the ISO or `result*`; do not change any code. If the build
+  fails, do not fix it: report the error.
+- Answer here: success or failure, the commit built, the ISO path and size
+  (`ls -lh result/iso/`), its SHA-256, build duration, and the last relevant
+  error lines on failure. Optional, only if the build succeeds and the
+  machine is idle: `python3 -I tests/iso/smoke.py` boot screenshots (BIOS),
+  and whether the TUI appeared.
+
 ## Log
 
 Newest first. One line per event: date, who, what.
 
+- 2026-11-15, Project Coordinator (cloud): request R1, rebuild the ISO from `develop`.
 - 2026-11-15, Phase 5 coordinator: created this file on `develop`.
 - 2026-11-15, Phase 5 coordinator: direction documents committed on
   `feat/maps` (`960de32`) and pushed.
