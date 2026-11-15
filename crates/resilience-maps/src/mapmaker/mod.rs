@@ -1,0 +1,31 @@
+//! The map pack builder `resilience-mapmaker` (ADR 0016 §2), for build
+//! machines only: it is not installed in the system image.
+//!
+//! ```text
+//! osmium tags-filter | osmium export -f geojsonseq
+//!   -> classify   OSM tags -> layer, class, per-feature minimum zoom
+//!                 (GeoJSON sequence for tippecanoe) + search/POI rows
+//!   -> tippecanoe
+//!   -> finish     tiles in (z, x, y) order, metadata, rs_ tables, VACUUM
+//! ```
+//!
+//! - [`tags`]: the readable table from OSM tags to the eight layers of
+//!   `resilience-1`, names, `ele` and `population` parsing;
+//! - [`geom`]: the few geometry calculations the builder needs;
+//! - [`classify`]: the streaming `classify` step;
+//! - [`rows`]: the side file of search and POI rows between the two steps;
+//! - [`fold`]: names folded for comparison (`rs_place.fold`);
+//! - [`poly`]: Geofabrik `.poly` coverage files;
+//! - [`finish`]: the `finish` step, which writes the pack.
+//!
+//! Input is untrusted and messy (OSM tags are free text): strings are
+//! bounded, what does not parse is skipped and counted, nothing panics.
+//! Output is deterministic: the same input gives the same bytes.
+
+pub mod classify;
+pub mod finish;
+pub mod fold;
+pub mod geom;
+pub mod poly;
+pub mod rows;
+pub mod tags;
