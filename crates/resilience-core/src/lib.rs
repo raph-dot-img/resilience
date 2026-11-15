@@ -19,6 +19,7 @@ pub mod files;
 pub mod handbook;
 pub mod launch;
 pub mod manpage;
+pub mod maps;
 pub mod media;
 pub mod mode;
 pub mod network;
