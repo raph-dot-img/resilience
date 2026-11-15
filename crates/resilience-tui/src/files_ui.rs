@@ -70,6 +70,7 @@ impl App {
             idx: Box::new(idx),
             query: String::new(),
             list: ListState::default(),
+            pick: None,
         }
     }
 

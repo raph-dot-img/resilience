@@ -132,13 +132,27 @@ TUI Offline library ── Enter / s WORDS
         lynx -restrictions=<all but redirects> -localhost http://localhost:P/content/<book>/ ; stopped
 ```
 
+## 6b. Cryptography (ADR 0015)
+
+```
+TUI Security & cryptography ── picker (Find & view files) / "Encrypt for" checklist / checksum box
+  └─► resilience-crypto OP [--passphrase | --me | --to NAME]… [SUM] [FILE]   (as the user, foreground)
+        encrypt:  age --encrypt (-p | -r KEY…) FILE  ──► .NAME.age.partial ──RENAME_NOREPLACE──► NAME.age
+        decrypt:  age --decrypt [-i own/encryption.age] FILE ──► ~/Decrypted/.partial ──► ~/Decrypted/NAME
+        messages: text on stdin ──► age -a ──► ~/Messages/…;  read: age -d ──► memory ──► less (LESSSECURE=1)
+        keys:     age-keygen | age -p -a ──► own/encryption.age (secret only in the pipe); minisign -G
+        sign/verify: minisign -S / -V -P <contact's key, matched by key number>
+        checksums: sha256sum/sha512sum/b2sum/… (LC_ALL=C), --check --strict for lists
+  passphrases: typed into age/minisign on /dev/tty, never through the TUI or our process
+```
+
 ## 7. Planned components (not implemented)
 
 | Component | Phase | Sketch |
 |---|---|---|
 | More `resilience-admin` operations | 8 | ApplyUpdate: one polkit action, same validation/audit pattern |
-| Packs read from a stick | 3 | open a catalog pack directly from a mounted stick (live system) |
-| Crypto workflows | 4 | guided age/minisign/GnuPG operations, secrets via stdin/fd |
+| OpenPGP (GnuPG) workflows | 4 | interoperability: import/verify/decrypt/encrypt, pinentry-curses |
+| Encrypted USB sticks (LUKS) | later | unlock existing LUKS sticks in the media screens |
 | Maps | 5 | MBTiles/GeoPackage rendering with block characters |
 | Local messaging | 6 | evaluate Reticulum (rns, in nixpkgs) before writing anything |
 | Installer | 8 | text installer, explicit disk confirmation, optional LUKS |

@@ -78,6 +78,20 @@ pub struct ToolPaths {
     /// Document viewing: PDF text and archive listings.
     pub pdftotext: String,
     pub bsdtar: String,
+    /// Cryptography (ADR 0015): the unprivileged `resilience-crypto` and the
+    /// established tools it runs.
+    pub crypto: String,
+    pub age_keygen: String,
+    pub age_inspect: String,
+    pub minisign: String,
+    pub sha512sum: String,
+    pub sha1sum: String,
+    pub md5sum: String,
+    pub b2sum: String,
+    pub xkcdpass: String,
+    pub openssl: String,
+    /// GnuPG, for OpenPGP interoperability (passphrases via pinentry-curses).
+    pub gpg: String,
 }
 
 impl Default for ToolPaths {
@@ -97,6 +111,17 @@ impl Default for ToolPaths {
             less: "less".into(),
             pdftotext: "pdftotext".into(),
             bsdtar: "bsdtar".into(),
+            crypto: "resilience-crypto".into(),
+            age_keygen: "age-keygen".into(),
+            age_inspect: "age-inspect".into(),
+            minisign: "minisign".into(),
+            sha512sum: "sha512sum".into(),
+            sha1sum: "sha1sum".into(),
+            md5sum: "md5sum".into(),
+            b2sum: "b2sum".into(),
+            xkcdpass: "xkcdpass".into(),
+            openssl: "openssl".into(),
+            gpg: "gpg".into(),
         }
     }
 }

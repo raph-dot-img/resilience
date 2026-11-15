@@ -146,6 +146,18 @@ let
     less = "${pkgs.less}/bin/less";
     pdftotext = "${lib.getBin pkgs.poppler-utils}/bin/pdftotext";
     bsdtar = "${lib.getBin pkgs.libarchive}/bin/bsdtar";
+    # Cryptography (ADR 0015).
+    crypto = "${cfg.package}/bin/resilience-crypto";
+    age_keygen = "${pkgs.age}/bin/age-keygen";
+    age_inspect = "${pkgs.age}/bin/age-inspect";
+    minisign = lib.getExe pkgs.minisign;
+    sha512sum = "${pkgs.coreutils}/bin/sha512sum";
+    sha1sum = "${pkgs.coreutils}/bin/sha1sum";
+    md5sum = "${pkgs.coreutils}/bin/md5sum";
+    b2sum = "${pkgs.coreutils}/bin/b2sum";
+    xkcdpass = "${pkgs.xkcdpass}/bin/xkcdpass";
+    openssl = "${lib.getBin pkgs.openssl}/bin/openssl";
+    gpg = "${config.programs.gnupg.package}/bin/gpg";
   };
 
   systemConfigUnchecked = toml.generate "resilience-system.toml" {

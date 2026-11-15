@@ -13,8 +13,9 @@ use resilience_core::config::{SystemConfig, ThemeName, ToolPaths, UserSettings};
 use resilience_core::mode::{Detected, Mode};
 
 use crate::app::{
-    App, BACKUP_LABEL, Builtin, CHECK_LABEL, Effect, Entry, ItemPlace, MediaPurpose, Modal,
-    PACKS_LABEL, PackRow, Paths, Pending, RESTORE_LABEL, Startup, View, stick_items,
+    App, BACKUP_LABEL, Builtin, CHECK_LABEL, CRYPTO_LABEL, Effect, EncryptTarget, Entry, ItemPlace,
+    MediaPurpose, Modal, PACKS_LABEL, PackRow, Paths, Pending, Pick, RESTORE_LABEL, Recipient,
+    SearchHit, Startup, View, stick_items,
 };
 use crate::ui;
 
@@ -306,6 +307,18 @@ esac
             "#!/bin/sh\necho \"PDF TEXT of $6\"\n".to_string(),
         ),
         (
+            "xkcdpass",
+            "#!/bin/sh\necho 'With the current options, your word list contains 7227 words.'\n\
+             echo 'A 6 word password from this list will have roughly 76 (12.82 * 6) bits of entropy,'\n\
+             echo\necho \"graceful encore snooze reoccur factor $5\"\n"
+                .to_string(),
+        ),
+        (
+            "openssl",
+            "#!/bin/sh\n[ \"$2\" = -hex ] && echo 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff || echo 'q2Fz+R0b/x9kLm3nT7uVwYzA'\n"
+                .to_string(),
+        ),
+        (
             "bsdtar",
             "#!/bin/sh\n[ \"$1\" = -tvf ] && echo \"-rw-r--r-- 0 a a 5 Jan 1 2026 inside.txt\"\n"
                 .to_string(),
@@ -325,6 +338,9 @@ esac
         less: "/store/bin/less".into(),
         pdftotext: sys.join("pdftotext").display().to_string(),
         bsdtar: sys.join("bsdtar").display().to_string(),
+        crypto: "/store/bin/resilience-crypto".into(),
+        xkcdpass: sys.join("xkcdpass").display().to_string(),
+        openssl: sys.join("openssl").display().to_string(),
         ..ToolPaths::default()
     }
 }
@@ -691,6 +707,25 @@ fn dump_screens() {
     println!("{}\n", render(&mut a, 80, 24));
     a.modal = None;
     open(&mut a, Builtin::Library);
+    println!("{}\n", render(&mut a, 80, 24));
+    // Cryptography.
+    while a.stack.len() > 1 {
+        press(&mut a, KeyCode::Esc);
+    }
+    press(&mut a, KeyCode::Char('3'));
+    println!("{}\n", render(&mut a, 80, 24));
+    make_keys(&a);
+    open(&mut a, Builtin::Keys);
+    println!("{}\n", render(&mut a, 80, 24));
+    std::fs::write(a.home.join("plan.txt"), "x").expect("w");
+    open(&mut a, Builtin::Encrypt);
+    type_text(&mut a, "plan");
+    println!("{}\n", render(&mut a, 80, 24));
+    press(&mut a, KeyCode::Enter);
+    println!("{}\n", render(&mut a, 80, 24));
+    a.modal = None;
+    open(&mut a, Builtin::Random);
+    press(&mut a, KeyCode::Enter);
     println!("{}\n", render(&mut a, 80, 24));
 }
 
@@ -2426,4 +2461,377 @@ fn files_are_found_by_name_and_shown_read_only() {
         "{:?}",
         a.modal
     );
+}
+
+// ----- cryptography (ADR 0015) ------------------------------------------------
+
+const AGE_PUB: &str = "age1fnc4atdyhfzcxgdtr7zmcgx6mgwzd4x4gehhge7myxhn4kjdy9ps7jmt65";
+const MS_PUB: &str = "RWQAfmjhd7nnGUBTzemb8G8wF9ElertEKU4C1kTZoS2w7SMHLeK0wIfG";
+
+fn crypto_argv(e: &Effect) -> (Vec<String>, Vec<PathBuf>) {
+    match e {
+        Effect::Run(r) => {
+            assert_eq!(r.argv[0], "/store/bin/resilience-crypto");
+            assert!(r.pause_after && r.polkit_agent.is_none());
+            (r.argv[1..].to_vec(), r.extra_args.clone())
+        }
+        other => panic!("expected a run, got {other:?}"),
+    }
+}
+
+/// Own keys and one contact (Alice) in the key store of `a`'s home.
+fn make_keys(a: &App) {
+    use resilience_core::crypto::{Contact, KeyStore};
+    let ks = KeyStore::for_home(&a.home);
+    ks.ensure_dirs().expect("dirs");
+    std::fs::write(ks.encryption_key(), "-----BEGIN AGE ENCRYPTED FILE-----\n").expect("w");
+    std::fs::write(ks.encryption_pub(), format!("{AGE_PUB}\n")).expect("w");
+    std::fs::write(
+        ks.signing_key(),
+        "untrusted comment: minisign encrypted secret key\n",
+    )
+    .expect("w");
+    std::fs::write(
+        ks.signing_pub(),
+        format!("untrusted comment: minisign public key\n{MS_PUB}\n"),
+    )
+    .expect("w");
+    ks.save_contact(&Contact {
+        name: "Alice".into(),
+        age: Some(AGE_PUB.into()),
+        minisign: None,
+        added: None,
+    })
+    .expect("contact");
+}
+
+#[test]
+fn security_tools_are_offered_in_every_mode() {
+    for mode in [Mode::UltraStable, Mode::Stable, Mode::Advanced] {
+        let mut a = app(mode, "crypto-modes");
+        let names: Vec<&str> = a
+            .search("encrypt")
+            .iter()
+            .filter_map(|h| match h {
+                SearchHit::Entry(Entry::Builtin(b)) => Some(b.name()),
+                _ => None,
+            })
+            .collect();
+        assert!(names.contains(&"Encrypt a file"), "{mode:?}: {names:?}");
+        assert!(names.contains(&"Encrypted messages"), "{mode:?}: {names:?}");
+        for b in [
+            Builtin::Verify,
+            Builtin::Checksums,
+            Builtin::Keys,
+            Builtin::Random,
+        ] {
+            assert_eq!(b.category(), Category::Security);
+            assert!(mode.allows(b.min_mode()));
+        }
+        let screen = render(&mut a, 80, 24);
+        assert!(screen.contains("SECURITY & CRYPTOGRAPHY"), "{screen}");
+    }
+}
+
+#[test]
+fn encrypting_a_file_asks_for_whom_then_runs_the_tool() {
+    let mut a = app(Mode::UltraStable, "crypto-encrypt");
+    std::fs::write(a.home.join("plan.txt"), "meet at the bridge").expect("w");
+    open(&mut a, Builtin::Encrypt);
+    assert!(matches!(
+        a.view(),
+        View::Files {
+            pick: Some(Pick::Encrypt),
+            ..
+        }
+    ));
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("CHOOSE THE FILE TO ENCRYPT"), "{screen}");
+    assert!(screen.contains("Enter Choose this file"), "{screen}");
+    type_text(&mut a, "plan");
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    // No keys yet: only a passphrase, ticked.
+    let Some(Modal::Recipients { rows, ticked, .. }) = &a.modal else {
+        panic!("recipients: {:?}", a.modal)
+    };
+    assert_eq!(rows, &vec![Recipient::Passphrase]);
+    assert_eq!(ticked, &vec![true]);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("[x] A passphrase"), "{screen}");
+    assert_console_glyphs(&screen);
+    let (args, extra) = crypto_argv(&press(&mut a, KeyCode::Enter));
+    assert_eq!(args, vec!["encrypt", "--passphrase"]);
+    assert_eq!(extra, vec![a.home.join("plan.txt")]);
+    // The picker closed.
+    assert!(!matches!(a.view(), View::Files { .. }));
+
+    // With keys: me and Alice, never together with a passphrase.
+    make_keys(&a);
+    open(&mut a, Builtin::Encrypt);
+    type_text(&mut a, "plan");
+    press(&mut a, KeyCode::Enter);
+    let Some(Modal::Recipients { rows, .. }) = &a.modal else {
+        panic!("recipients")
+    };
+    assert_eq!(
+        rows,
+        &vec![
+            Recipient::Passphrase,
+            Recipient::Me,
+            Recipient::Contact("Alice".into())
+        ]
+    );
+    press(&mut a, KeyCode::Char(' ')); // untick the passphrase
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(&a.modal, Some(Modal::Recipients { error: Some(e), .. }) if e.contains("Tick")),
+        "nothing ticked: {:?}",
+        a.modal
+    );
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Char(' '));
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Char(' '));
+    let Some(Modal::Recipients { ticked, .. }) = &a.modal else {
+        panic!("recipients")
+    };
+    assert_eq!(ticked, &vec![false, true, true]);
+    press(&mut a, KeyCode::Up);
+    press(&mut a, KeyCode::Up);
+    press(&mut a, KeyCode::Char(' ')); // the passphrase unticks the keys
+    let Some(Modal::Recipients { ticked, .. }) = &a.modal else {
+        panic!("recipients")
+    };
+    assert_eq!(ticked, &vec![true, false, false]);
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Char(' '));
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Char(' '));
+    let (args, _) = crypto_argv(&press(&mut a, KeyCode::Enter));
+    assert_eq!(args, vec!["encrypt", "--me", "--to", "Alice"]);
+    // Esc cancels without running anything.
+    open(&mut a, Builtin::Encrypt);
+    type_text(&mut a, "plan");
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(press(&mut a, KeyCode::Esc), Effect::None);
+    assert!(a.modal.is_none());
+}
+
+#[test]
+fn decrypt_verify_and_inspect_pick_a_file_and_run_the_tool() {
+    let mut a = app(Mode::UltraStable, "crypto-pick");
+    std::fs::write(a.home.join("plan.txt.age"), "age-encryption.org/v1\n").expect("w");
+    std::fs::write(a.home.join("release.txt"), "1.0").expect("w");
+    std::fs::write(a.home.join("release.txt.minisig"), "untrusted comment: x\n").expect("w");
+    for (b, query_ok, op, name) in [
+        (Builtin::Decrypt, ".age", "decrypt", "plan.txt.age"),
+        (Builtin::Verify, ".minisig", "verify", "release.txt.minisig"),
+        (Builtin::Inspect, "", "inspect", "plan.txt.age"),
+    ] {
+        open(&mut a, b);
+        let View::Files { query, .. } = a.view() else {
+            panic!("picker")
+        };
+        assert_eq!(query, query_ok);
+        if query.is_empty() {
+            type_text(&mut a, "plan");
+        }
+        let (args, extra) = crypto_argv(&press(&mut a, KeyCode::Enter));
+        assert_eq!(args, vec![op]);
+        assert_eq!(extra, vec![a.home.join(name)]);
+    }
+    // Signing needs a key: explained, nothing opens.
+    let (v, e) = a.activate(Entry::Builtin(Builtin::Sign));
+    assert!(v.is_none() && e == Effect::None);
+    assert!(matches!(&a.modal, Some(Modal::Message { title, .. }) if title == "NO KEY YET"));
+    a.modal = None;
+    make_keys(&a);
+    open(&mut a, Builtin::Sign);
+    type_text(&mut a, "release.txt");
+    let (args, extra) = crypto_argv(&press(&mut a, KeyCode::Enter));
+    assert_eq!(args, vec!["sign"]);
+    assert_eq!(extra, vec![a.home.join("release.txt")]);
+}
+
+#[test]
+fn messages_and_checksums_menus() {
+    let mut a = app(Mode::UltraStable, "crypto-menus");
+    std::fs::write(a.home.join("debian.iso"), "x").expect("w");
+    open(&mut a, Builtin::Messages);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("Write an encrypted message"), "{screen}");
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(
+        &a.modal,
+        Some(Modal::Recipients {
+            target: EncryptTarget::Message,
+            ..
+        })
+    ));
+    let (args, extra) = crypto_argv(&press(&mut a, KeyCode::Enter));
+    assert_eq!(args, vec!["write-message", "--passphrase"]);
+    assert!(extra.is_empty());
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(
+        a.view(),
+        View::Files {
+            pick: Some(Pick::ReadMessage),
+            ..
+        }
+    ));
+    press(&mut a, KeyCode::Esc);
+
+    // Compare with a published checksum: the input is checked first.
+    while a.stack.len() > 1 {
+        press(&mut a, KeyCode::Esc);
+    }
+    open(&mut a, Builtin::Checksums);
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    type_text(&mut a, "debian");
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(&a.modal, Some(Modal::ExpectedSum { .. })));
+    type_text(&mut a, "not a sum");
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    assert!(
+        matches!(&a.modal, Some(Modal::ExpectedSum { error: Some(e), .. }) if e.contains("hexadecimal"))
+    );
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("COMPARE WITH A CHECKSUM"), "{screen}");
+    for _ in 0..9 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    let sum = format!("SHA256 (debian.iso) = {}", "ab".repeat(32));
+    type_text(&mut a, &sum);
+    let (args, extra) = crypto_argv(&press(&mut a, KeyCode::Enter));
+    assert_eq!(args, vec!["compare".to_string(), sum]);
+    assert_eq!(extra, vec![a.home.join("debian.iso")]);
+}
+
+#[test]
+fn random_secrets_are_shown_once_and_never_logged() {
+    let mut a = app(Mode::UltraStable, "crypto-random");
+    open(&mut a, Builtin::Random);
+    press(&mut a, KeyCode::Enter);
+    let Some(Modal::Message { body, error, .. }) = &a.modal else {
+        panic!("{:?}", a.modal)
+    };
+    assert!(!error);
+    assert!(
+        body.contains("graceful encore snooze reoccur factor 6"),
+        "{body}"
+    );
+    assert!(body.contains("about 76 bits"), "{body}");
+    let screen = render(&mut a, 80, 24);
+    assert_console_glyphs(&screen);
+    a.modal = None;
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { body, .. }) if body.contains("q2Fz+R0b/x9kLm3nT7uVwYzA") && body.contains("144 bits"))
+    );
+    a.modal = None;
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { body, .. }) if body.contains("00112233 44556677"))
+    );
+    for n in &a.notices {
+        assert!(
+            !n.text.contains("graceful") && !n.text.contains("q2Fz"),
+            "{}",
+            n.text
+        );
+    }
+}
+
+#[test]
+fn keys_screen_creates_adds_exports_and_removes() {
+    let mut a = app(Mode::UltraStable, "crypto-keys");
+    open(&mut a, Builtin::Keys);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("not created yet"), "{screen}");
+    assert!(screen.contains("No contacts yet"), "{screen}");
+    assert_console_glyphs(&screen);
+    let (args, _) = crypto_argv(&press(&mut a, KeyCode::Enter));
+    assert_eq!(args, vec!["new-keys"]);
+    let (args, extra) = crypto_argv(&press(&mut a, KeyCode::Char('t')));
+    assert_eq!(args, vec!["add-contact"]);
+    assert!(extra.is_empty());
+    press(&mut a, KeyCode::Char('a'));
+    assert!(matches!(
+        a.view(),
+        View::Files {
+            pick: Some(Pick::AddContact),
+            ..
+        }
+    ));
+    press(&mut a, KeyCode::Esc);
+    // No keys: nothing to export.
+    press(&mut a, KeyCode::Char('e'));
+    assert!(matches!(&a.modal, Some(Modal::Message { title, .. }) if title == "NO KEY YET"));
+    a.modal = None;
+
+    // After a run, the list shows the keys and the contact.
+    make_keys(&a);
+    let ok: std::io::Result<std::process::ExitStatus> = Ok(std::process::ExitStatus::default());
+    a.after_run(CRYPTO_LABEL, &ok);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("ends with ...ps7j mt65"), "{screen}");
+    assert!(screen.contains("number 19E7B977E1687E00"), "{screen}");
+    assert!(screen.contains("Alice"), "{screen}");
+    assert!(screen.contains("1 contact)"), "{screen}");
+    // Enter now shows details (public keys only).
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(a.view(), View::Pager { text, .. } if text.contains(AGE_PUB) && text.contains(MS_PUB))
+    );
+    press(&mut a, KeyCode::Esc);
+
+    // Export to a stick: the list of sticks, then the tool on the mount.
+    press(&mut a, KeyCode::Char('e'));
+    assert!(matches!(
+        a.view(),
+        View::Media {
+            purpose: MediaPurpose::ExportKeys,
+            ..
+        }
+    ));
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("SAVE YOUR PUBLIC KEYS"), "{screen}");
+    let (args, extra) = crypto_argv(&press(&mut a, KeyCode::Enter));
+    assert_eq!(args, vec!["export-keys"]);
+    assert_eq!(extra, vec![PathBuf::from("/run/media/tester/STICK")]);
+    a.after_run(CRYPTO_LABEL, &ok);
+    assert!(matches!(a.view(), View::Keys { .. }));
+
+    // Remove Alice: confirmation, Cancel by default.
+    press(&mut a, KeyCode::End);
+    press(&mut a, KeyCode::Delete);
+    assert!(matches!(
+        &a.modal,
+        Some(Modal::Confirm {
+            yes_focused: false,
+            ..
+        })
+    ));
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        resilience_core::crypto::KeyStore::for_home(&a.home)
+            .contacts()
+            .len()
+            == 1,
+        "cancel keeps the contact"
+    );
+    press(&mut a, KeyCode::Delete);
+    press(&mut a, KeyCode::Char('y'));
+    assert!(
+        resilience_core::crypto::KeyStore::for_home(&a.home)
+            .contacts()
+            .is_empty()
+    );
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("0 contacts"), "{screen}");
 }

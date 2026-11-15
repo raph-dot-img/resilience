@@ -32,8 +32,10 @@ safety-critical use.
 | Secret | Rule |
 |---|---|
 | Passwords | Set interactively (`passwd`) or via `hashedPasswordFile` outside the Nix store. Never in Nix expressions, Git or logs. |
-| Private keys (age, GnuPG, minisign) | Stored in the user's home with mode 0600 (future tools enforce it); never logged; never passed in argv. |
-| Passphrases | Read from the terminal or passed through stdin/fd to the tool, never as command-line arguments. Backup passphrases are read by age itself from `/dev/tty`; Resilience code never sees them. |
+| Private keys (age, minisign) | In `~/.local/share/resilience/keys` (0700), files 0600, **always encrypted with the user's passphrase**: the age key goes from `age-keygen` straight into `age --passphrase` through a pipe, and minisign encrypts its own key. Never logged, never in argv; the interface never replaces or deletes them (ADR 0015). Included in the user's encrypted backups. |
+| Passphrases | Read from the terminal by the tool itself (age, minisign; later pinentry for GnuPG), never typed into the interface, never in argv, environment, logs or files. Resilience code never sees them (backups ADR 0008, cryptography ADR 0015). The Wi-Fi password is the one exception: typed in the TUI (masked) and given to nmcli on stdin (ADR 0010). |
+| Decrypted data | Files go to `~/Decrypted` (0700, files 0600), never over an existing file; partial output is deleted on failure. Decrypted messages are kept in memory and shown in `less` (secure mode), never written. |
+| Generated passwords | Shown once in a dialog; not stored, not logged, not in the notification history. |
 | Temporary files | Created with `O_EXCL` and mode 0600 in a private directory; removed after use. |
 | Logs | `~/.local/state/resilience/tui.log` contains navigation events and program names only. |
 

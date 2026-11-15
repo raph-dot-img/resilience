@@ -31,10 +31,15 @@ use resilience_core::wifi::{self, Network, Overview};
 
 use crate::theme::Theme;
 
+#[path = "crypto_ui.rs"]
+mod crypto_ui;
 #[path = "files_ui.rs"]
 mod files_ui;
 #[path = "library.rs"]
 mod library;
+#[cfg(test)]
+pub use crypto_ui::CRYPTO_LABEL;
+pub use crypto_ui::{Choice, EncryptTarget, KeyRow, Pick, Recipient};
 pub use files_ui::Table;
 #[cfg(test)]
 pub use library::{ItemPlace, stick_items};
@@ -93,6 +98,8 @@ pub enum MediaPurpose {
     InstallPacks,
     /// Read packs on it without installing them (from the Offline library).
     ReadPacks,
+    /// Save the user's public keys on it (from Keys & contacts).
+    ExportKeys,
 }
 
 /// Entries of the Recovery section.
@@ -151,6 +158,15 @@ pub enum Builtin {
     Notes,
     Network,
     Wifi,
+    Encrypt,
+    Decrypt,
+    Messages,
+    Sign,
+    Verify,
+    Checksums,
+    Inspect,
+    Random,
+    Keys,
     SystemStatus,
     Notifications,
     Settings,
@@ -166,7 +182,7 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 20] = [
+    pub const ALL: [Builtin; 29] = [
         Builtin::Handbook,
         Builtin::Files,
         Builtin::Manual,
@@ -175,6 +191,15 @@ impl Builtin {
         Builtin::Notes,
         Builtin::Network,
         Builtin::Wifi,
+        Builtin::Encrypt,
+        Builtin::Decrypt,
+        Builtin::Messages,
+        Builtin::Sign,
+        Builtin::Verify,
+        Builtin::Checksums,
+        Builtin::Inspect,
+        Builtin::Random,
+        Builtin::Keys,
         Builtin::SystemStatus,
         Builtin::Recovery,
         Builtin::Backup,
@@ -199,6 +224,15 @@ impl Builtin {
             Builtin::Notes => "Notes",
             Builtin::Network => "Network status & diagnostics",
             Builtin::Wifi => "Wi-Fi networks",
+            Builtin::Encrypt => "Encrypt a file",
+            Builtin::Decrypt => "Decrypt a file",
+            Builtin::Messages => "Encrypted messages",
+            Builtin::Sign => "Sign a file",
+            Builtin::Verify => "Check a signature",
+            Builtin::Checksums => "Checksums: is a file intact?",
+            Builtin::Inspect => "What is this file?",
+            Builtin::Random => "Random passwords & keys",
+            Builtin::Keys => "Keys & contacts",
             Builtin::SystemStatus => "System status",
             Builtin::Notifications => "Notification history",
             Builtin::Settings => "Settings",
@@ -248,6 +282,42 @@ impl Builtin {
                 "See nearby Wi-Fi networks and join one. Networks you join are saved for \
                  your account only; their passwords are kept by the system, not shown."
             }
+            Builtin::Encrypt => {
+                "Make an encrypted copy of a file (age), with a passphrase or for the keys \
+                 of chosen people. The copy is saved next to the original as NAME.age."
+            }
+            Builtin::Decrypt => {
+                "Open a file encrypted with age, with its passphrase or your key. The result \
+                 goes into your Decrypted folder; nothing is overwritten."
+            }
+            Builtin::Messages => {
+                "Write a message only chosen people can read, as text you can copy, print \
+                 or send; read messages sent to you without saving them."
+            }
+            Builtin::Sign => {
+                "Sign a file with your key (minisign), so others can check it comes from \
+                 you and was not changed. Saves NAME.minisig next to it."
+            }
+            Builtin::Verify => {
+                "Check a file's signature (NAME.minisig) against the keys of your contacts: \
+                 who signed it, and whether it was changed since."
+            }
+            Builtin::Checksums => {
+                "Compute SHA-256/SHA-512 checksums, compare a file with a published \
+                 checksum, or check every file of a SHA256SUMS list."
+            }
+            Builtin::Inspect => {
+                "Tells what kind of file this is: encrypted (age, OpenPGP, LUKS, ZIP...), \
+                 a signature, a public or PRIVATE key, a checksum list, or plain."
+            }
+            Builtin::Random => {
+                "Strong passphrases and passwords, made by the system's random generator. \
+                 Shown once, never saved."
+            }
+            Builtin::Keys => {
+                "Create your keys, give your public keys to others, and keep your \
+                 contacts' public keys to encrypt for them and check their signatures."
+            }
             Builtin::SystemStatus => {
                 "Detailed health report: services, storage, memory, power, system generation."
             }
@@ -284,6 +354,15 @@ impl Builtin {
             }
             Builtin::Notes | Builtin::Files => Category::Productivity,
             Builtin::Network | Builtin::Wifi => Category::Networking,
+            Builtin::Encrypt
+            | Builtin::Decrypt
+            | Builtin::Messages
+            | Builtin::Sign
+            | Builtin::Verify
+            | Builtin::Checksums
+            | Builtin::Inspect
+            | Builtin::Random
+            | Builtin::Keys => Category::Security,
             _ => Category::System,
         }
     }
@@ -316,6 +395,22 @@ impl Builtin {
             Builtin::Wifi => {
                 "wifi wi-fi wireless wlan hotspot ssid password connect join network internet"
             }
+            Builtin::Encrypt => {
+                "encrypt encryption age secret protect password passphrase crypto file"
+            }
+            Builtin::Decrypt => "decrypt decryption age open encrypted secret crypto file",
+            Builtin::Messages => "message messages encrypted secret letter text armor age crypto",
+            Builtin::Sign => "sign signature minisign authenticate crypto",
+            Builtin::Verify => {
+                "verify signature check minisign authentic authenticity tampered crypto"
+            }
+            Builtin::Checksums => {
+                "checksum checksums hash sha256 sha512 sha256sums md5 integrity verify \
+                 compare intact corrupt download iso"
+            }
+            Builtin::Inspect => "inspect format identify encrypted gpg pgp openpgp luks zip what",
+            Builtin::Random => "random password passphrase generate diceware key pin",
+            Builtin::Keys => "keys key contact contacts public private export import age minisign",
             Builtin::SystemStatus => "health battery disk storage memory",
             Builtin::Settings => "theme colour color preferences",
             Builtin::Clock => "clock time date hour timezone zone ntp calendar rtc wrong",
@@ -370,6 +465,7 @@ pub enum HelpTopic {
     Backup,
     Library,
     Files,
+    Crypto,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -440,10 +536,23 @@ pub enum View {
         list: ListState,
         purpose: MediaPurpose,
     },
-    /// File search: the index is built when the view opens.
+    /// File search: the index is built when the view opens. With `pick`,
+    /// Enter chooses the file for a cryptography operation instead.
     Files {
         idx: Box<resilience_core::files::Index>,
         query: String,
+        list: ListState,
+        pick: Option<Pick>,
+    },
+    /// A small menu (messages, checksums, random).
+    Choices {
+        title: &'static str,
+        items: Vec<Choice>,
+        list: ListState,
+    },
+    /// The user's keys and their contacts.
+    Keys {
+        rows: Vec<KeyRow>,
         list: ListState,
     },
     /// A CSV/TSV file.
@@ -519,6 +628,9 @@ pub enum Pending {
         remove: Vec<String>,
         from: Option<PathBuf>,
     },
+    RemoveContact {
+        name: String,
+    },
 }
 
 #[derive(Debug)]
@@ -554,6 +666,20 @@ pub enum Modal {
     },
     /// Words to search for in one pack.
     PackSearch { item: LibItem, value: String },
+    /// Who to encrypt for: Space ticks, Enter goes on.
+    Recipients {
+        target: EncryptTarget,
+        rows: Vec<Recipient>,
+        ticked: Vec<bool>,
+        sel: usize,
+        error: Option<String>,
+    },
+    /// The checksum a file should have.
+    ExpectedSum {
+        file: PathBuf,
+        value: String,
+        error: Option<String>,
+    },
     /// Type a new local date and time.
     SetTime {
         value: String,
@@ -915,9 +1041,14 @@ impl App {
             View::Settings { .. } => HelpTopic::Settings,
             View::Users { .. } | View::ChooseMode { .. } => HelpTopic::Users,
             View::Recovery { .. } | View::Generations { .. } => HelpTopic::Recovery,
+            View::Media {
+                purpose: MediaPurpose::ExportKeys,
+                ..
+            } => HelpTopic::Crypto,
             View::Media { .. } | View::Backups { .. } => HelpTopic::Backup,
             View::Wifi { .. } => HelpTopic::Network,
-            View::Files { .. } | View::Table(_) => HelpTopic::Files,
+            View::Files { pick: None, .. } | View::Table(_) => HelpTopic::Files,
+            View::Files { .. } | View::Choices { .. } | View::Keys { .. } => HelpTopic::Crypto,
             View::Library { .. } | View::Packs { .. } | View::PackSets { .. } => HelpTopic::Library,
             View::Search { .. } => HelpTopic::Search,
         }
@@ -1152,6 +1283,10 @@ impl App {
                     if let Some(v) = selected
                         && let Some(mount) = self.mount_volume(&v)
                     {
+                        if *purpose == MediaPurpose::ExportKeys {
+                            // The list stays below; after_run closes it.
+                            return (Some(view), self.export_to(&mount));
+                        }
                         if *purpose == MediaPurpose::InstallPacks {
                             self.packs_from_mount(&mount);
                         } else {
@@ -1352,7 +1487,12 @@ impl App {
                     _ => library::nav_rows(list, &rows, key),
                 }
             }
-            View::Files { idx, query, list } => {
+            View::Files {
+                idx,
+                query,
+                list,
+                pick,
+            } => {
                 let hits: Vec<(PathBuf, String)> = resilience_core::files::search(idx, query)
                     .iter()
                     .map(|e| (e.path.clone(), e.shown.clone()))
@@ -1373,6 +1513,10 @@ impl App {
                     }
                     KeyCode::Enter => {
                         if let Some((p, shown)) = selected {
+                            if let Some(pk) = *pick {
+                                // The picker closes; the operation runs.
+                                return (None, self.picked(pk, &p));
+                            }
                             let (v, e) = self.view_file(&p, &shown);
                             next = v;
                             effect = e;
@@ -1410,6 +1554,36 @@ impl App {
                     KeyCode::End | KeyCode::Char('G') => t.row = rows.saturating_sub(1),
                     KeyCode::Backspace => return (None, Effect::None),
                     _ => {}
+                }
+            }
+            View::Choices { items, list, .. } => {
+                if is_activate(key) {
+                    if let Some(c) = list.selected().and_then(|i| items.get(i)).copied() {
+                        let (v, e) = self.choose(c);
+                        next = v;
+                        effect = e;
+                    }
+                } else if is_back(key) {
+                    return (None, Effect::None);
+                } else {
+                    nav(list, items.len(), key);
+                }
+            }
+            View::Keys { rows, list } => {
+                if matches!(
+                    key.code,
+                    KeyCode::Up | KeyCode::Down | KeyCode::Char('k' | 'j')
+                ) || matches!(
+                    key.code,
+                    KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown
+                ) {
+                    nav(list, rows.len(), key);
+                } else if is_back(key) {
+                    return (None, Effect::None);
+                } else {
+                    let (v, e) = self.keys_key(rows, list.selected(), key);
+                    next = v;
+                    effect = e;
                 }
             }
             View::PackSets { list } => {
@@ -1634,6 +1808,15 @@ impl App {
                 });
                 none
             }
+            Builtin::Encrypt
+            | Builtin::Decrypt
+            | Builtin::Messages
+            | Builtin::Sign
+            | Builtin::Verify
+            | Builtin::Checksums
+            | Builtin::Inspect
+            | Builtin::Random
+            | Builtin::Keys => self.open_crypto(b),
             Builtin::Library => (self.open_library(), Effect::None),
             Builtin::Files => (Some(self.open_files()), Effect::None),
             Builtin::Packs => (self.open_packs(), Effect::None),
@@ -1745,7 +1928,8 @@ impl App {
             | Pending::ForgetWifi { .. }
             | Pending::Backup { .. }
             | Pending::Restore { .. }
-            | Pending::ChangePacks { .. } => return,
+            | Pending::ChangePacks { .. }
+            | Pending::RemoveContact { .. } => return,
             Pending::Logout => (
                 "LOG OUT",
                 "End this session? Programs you started from here will be closed.",
@@ -1910,6 +2094,14 @@ impl App {
                     Effect::None
                 }
             },
+            Modal::Recipients {
+                target,
+                rows,
+                ticked,
+                sel,
+                ..
+            } => self.recipients_key(target, rows, ticked, sel, key),
+            Modal::ExpectedSum { file, value, .. } => self.expected_sum_key(file, value, key),
             Modal::PackSearch { item, mut value } => match key.code {
                 KeyCode::Esc => Effect::None,
                 KeyCode::Enter if !value.trim().is_empty() => {
@@ -1998,6 +2190,10 @@ impl App {
             Pending::ChangePacks { get, remove, from } => {
                 return self.change_packs_effect(&get, &remove, from.as_deref());
             }
+            Pending::RemoveContact { name } => {
+                self.remove_contact(&name);
+                return Effect::None;
+            }
             Pending::Reboot => "reboot",
             Pending::PowerOff => "poweroff",
         };
@@ -2071,6 +2267,18 @@ impl App {
                 self.stack.pop();
             }
             self.reload_packs();
+        }
+        if label == crypto_ui::CRYPTO_LABEL {
+            while matches!(
+                self.view(),
+                View::Media {
+                    purpose: MediaPurpose::ExportKeys,
+                    ..
+                }
+            ) {
+                self.stack.pop();
+            }
+            self.reload_keys();
         }
         if label == SET_DEFAULT_GENERATION_LABEL {
             let fresh = self.load_generations();

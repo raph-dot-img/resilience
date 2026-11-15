@@ -5,6 +5,7 @@
     ./core.nix
     ./admin.nix
     ./media.nix
+    ./crypto.nix
     ./packs.nix
     ./users.nix
     ./interface.nix

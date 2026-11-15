@@ -184,7 +184,12 @@ fn footer_hints(view: &View) -> &'static str {
         View::Backups { .. } => "Enter Back up/Restore  c Check  e Eject  Esc Back  F1 Help",
         View::Packs { .. } => "Space Tick  s Sets  d Download  u From USB  f Language  Enter Info",
         View::PackSets { .. } => "Enter Tick this set  Esc Back",
+        View::Files { pick: Some(_), .. } => {
+            "Type a name  Enter Choose this file  F3 Details  F2 Rescan  Esc Cancel"
+        }
         View::Files { .. } => "Type a name  Enter View  F3 Details & checksum  F2 Rescan  Esc",
+        View::Choices { .. } => "Enter Open  Esc Back  F1 Help",
+        View::Keys { .. } => "Enter Open  a Add (file)  t Add (typed)  e Export  Del Remove  Esc",
         View::Table(_) => "Arrows Rows & columns  PgUp/PgDn  Esc Back",
         View::Library { .. } => "Enter Read  s Search  c Check  u USB stick  p Get packs  Esc Back",
     }
@@ -332,7 +337,14 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
             purpose,
         } => draw_media(f, app, area, volumes, error.as_deref(), list, *purpose),
         View::PackSets { list } => draw_pack_sets(f, app, area, list),
-        View::Files { idx, query, list } => draw_files(f, app, area, idx, query, list),
+        View::Files {
+            idx,
+            query,
+            list,
+            pick,
+        } => draw_files(f, app, area, idx, query, list, *pick),
+        View::Choices { title, items, list } => draw_choices(f, app, area, title, items, list),
+        View::Keys { rows, list } => draw_keys(f, app, area, rows, list),
         View::Table(tbl) => draw_table(f, app, area, tbl),
         View::Library { items, list } => draw_library(f, app, area, items, list),
         View::Packs { s, list } => draw_packs(f, app, area, s, list),
@@ -1144,6 +1156,70 @@ fn draw_choose_mode(f: &mut Frame, app: &App, area: Rect, row: &AccountRow, list
     }
 }
 
+fn draw_choices(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    title: &str,
+    items: &[crate::app::Choice],
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    let rows: Vec<ListItem> = items
+        .iter()
+        .enumerate()
+        .map(|(i, c)| ListItem::new(format!("[{}] {}", i + 1, c.name())))
+        .collect();
+    let [l, d] = two_panes(area);
+    draw_list(f, &t, l, title, rows, list, "");
+    if let Some(c) = list.selected().and_then(|i| items.get(i)) {
+        details(f, &t, d, vec![Line::from(c.description())]);
+    }
+}
+
+fn draw_keys(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    rows: &[crate::app::KeyRow],
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    let items: Vec<ListItem> = rows
+        .iter()
+        .map(|r| ListItem::new(app.key_row_text(r)))
+        .collect();
+    let contacts = rows.len().saturating_sub(2);
+    let [l, d] = Layout::vertical([Constraint::Min(6), Constraint::Length(6)]).areas(area);
+    draw_list(
+        f,
+        &t,
+        l,
+        &format!(
+            "KEYS & CONTACTS ({contacts} contact{})",
+            if contacts == 1 { "" } else { "s" }
+        ),
+        items,
+        list,
+        "",
+    );
+    let help = if contacts == 0 {
+        "No contacts yet. To exchange encrypted files or check signatures, get the public \
+         key file of the other person (a USB stick) and press a, or type their key with t. \
+         Check the keys with them in person or by phone."
+    } else {
+        "Your keys come first, then your contacts. Enter shows the details. Encrypting for \
+         a contact uses their encryption key; their signing key checks their signatures."
+    };
+    f.render_widget(
+        Paragraph::new(help)
+            .wrap(Wrap { trim: true })
+            .style(t.dim)
+            .block(block("ABOUT KEYS", &t)),
+        d,
+    );
+}
+
 fn draw_recovery(f: &mut Frame, app: &App, area: Rect, list: &mut ListState) {
     let t = app.theme;
     let items: Vec<ListItem> = RecoveryItem::ALL
@@ -1262,6 +1338,7 @@ fn draw_media(
         MediaPurpose::InstallPacks => "COPY PACKS FROM A USB STICK",
         MediaPurpose::ReadPacks => "READ PACKS ON A USB STICK",
         MediaPurpose::Backups => "BACKUPS & USB STICKS",
+        MediaPurpose::ExportKeys => "SAVE YOUR PUBLIC KEYS ON A USB STICK",
     };
     if let Some(e) = error {
         let p = Paragraph::new(format!(
@@ -1742,8 +1819,12 @@ fn draw_files(
     idx: &resilience_core::files::Index,
     query: &str,
     list: &mut ListState,
+    pick: Option<crate::app::Pick>,
 ) {
     let t = app.theme;
+    let title = pick
+        .map(|p| p.title())
+        .unwrap_or("FIND FILES (home folder and open USB sticks)");
     let [input, results] =
         Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(area);
     let cursor = if (app.tick / 2) % 2 == 0 { "█" } else { " " };
@@ -1752,7 +1833,7 @@ fn draw_files(
             Span::styled(query.to_string(), t.accent),
             Span::styled(cursor, t.base),
         ]))
-        .block(block("FIND FILES (home folder and open USB sticks)", &t)),
+        .block(block(title, &t)),
         input,
     );
     let hits = resilience_core::files::search(idx, query);
@@ -1998,6 +2079,68 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
                 )),
             ];
             ("SEARCH", l, t.base)
+        }
+        Modal::Recipients {
+            target,
+            rows,
+            ticked,
+            sel,
+            error,
+        } => {
+            let what = match target {
+                crate::app::EncryptTarget::File(p) => format!(
+                    "Encrypt '{}' for:",
+                    p.file_name()
+                        .map(|n| n.to_string_lossy())
+                        .unwrap_or_default()
+                ),
+                crate::app::EncryptTarget::Message => "Encrypt the message for:".to_string(),
+            };
+            let mut l = vec![Line::from(what), Line::from("")];
+            for (i, (r, on)) in rows.iter().zip(ticked).enumerate() {
+                let name = match r {
+                    crate::app::Recipient::Passphrase => {
+                        "A passphrase (you type it; give it to the reader)".to_string()
+                    }
+                    crate::app::Recipient::Me => "Me (my encryption key)".to_string(),
+                    crate::app::Recipient::Contact(n) => resilience_core::printable(n),
+                };
+                let mark = if *on { "[x]" } else { "[ ]" };
+                let style = if i == *sel { t.selected } else { t.base };
+                l.push(Line::from(Span::styled(format!(" {mark} {name}"), style)));
+            }
+            l.push(Line::from(""));
+            match error {
+                Some(e) => l.push(Line::from(Span::styled(format!("[!!] {e}"), t.error))),
+                None => l.push(Line::from(Span::styled(
+                    "Space tick | Enter encrypt | Esc cancel | Several people: tick each",
+                    t.dim,
+                ))),
+            }
+            ("ENCRYPT FOR", l, t.base)
+        }
+        Modal::ExpectedSum { file, value, error } => {
+            let mut l = vec![
+                Line::from(format!(
+                    "Checksum that '{}' should have:",
+                    file.file_name()
+                        .map(|n| n.to_string_lossy())
+                        .unwrap_or_default()
+                )),
+                Line::from(vec![
+                    Span::styled(format!("> {value}"), t.accent),
+                    Span::styled("█", t.base),
+                ]),
+                Line::from(""),
+            ];
+            match error {
+                Some(e) => l.push(Line::from(Span::styled(format!("[!!] {e}"), t.error))),
+                None => l.push(Line::from(Span::styled(
+                    "SHA-256, SHA-512, SHA-1 or MD5, as published | Enter compare, Esc cancel",
+                    t.dim,
+                ))),
+            }
+            ("COMPARE WITH A CHECKSUM", l, t.base)
         }
         Modal::SetTime { value, zone, error } => {
             let mut l = vec![
