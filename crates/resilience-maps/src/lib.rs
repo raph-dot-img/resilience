@@ -14,15 +14,35 @@
 //! - [`rlimit`]: the process's address-space limit;
 //! - [`info`]: the `info` command's output;
 //! - [`text`]: cleaning untrusted strings before they reach a terminal.
+//!
+//! The viewer (`view`, ADR §9 item 6):
+//!
+//! - [`args`]: its command line;
+//! - [`app`]: the state machine `MapApp` (keys, reader answers, status);
+//! - [`ui`]: drawing its screens with ratatui;
+//! - [`render`]: packs and a view to a canvas (pure);
+//! - [`area`]: coverage areas and point-in-polygon;
+//! - [`loader`]: the reader thread (opening, checks, tiles) and which
+//!   files count as checked;
+//! - [`cache`]: the bounded cache of decoded tiles;
+//! - [`position`]: the last position file.
 
+pub mod app;
+pub mod area;
+pub mod args;
+pub mod cache;
 pub mod inflate;
 pub mod info;
+pub mod loader;
 pub mod metadata;
 pub mod pack;
+pub mod position;
 pub mod profile;
+pub mod render;
 pub mod rlimit;
 pub mod schema;
 pub mod text;
+pub mod ui;
 
 // The test fixtures name this crate `resilience_maps`, so that
 // `tests/cli.rs` can include the same file.
@@ -30,3 +50,5 @@ pub mod text;
 extern crate self as resilience_maps;
 #[cfg(test)]
 mod fixtures;
+#[cfg(test)]
+mod view_tests;

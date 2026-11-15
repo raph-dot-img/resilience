@@ -157,9 +157,34 @@ fn refusals_and_usage_errors_have_their_own_exit_codes() {
     assert_eq!(o.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&o.stderr).starts_with("Error: "));
 
-    for args in [&["info"][..], &["view"], &["info", "a", "b"], &[]] {
+    for args in [
+        &["info"][..],
+        &["view", "--bogus"],
+        &["view", "--pack", "relative.mbtiles"],
+        &["view", "--scale", "1"],
+        &["info", "a", "b"],
+        &[],
+    ] {
         let a: Vec<&std::ffi::OsStr> = args.iter().map(|s| s.as_ref()).collect();
         assert_eq!(run(&a).status.code(), Some(64), "{args:?}");
     }
     assert!(run(&["--version".as_ref()]).status.success());
+}
+
+#[test]
+fn the_viewer_needs_a_terminal_and_opens_nothing_without_one() {
+    let dir = TempDir::new("cli-view");
+    let path = dir.file("map.mbtiles");
+    write_pack(&path);
+    // Standard input and output are pipes here: refused before any file
+    // is opened or written, the terminal untouched.
+    let o = unchanged(dir.path(), || {
+        run(&["view".as_ref(), "--pack".as_ref(), path.as_os_str()])
+    });
+    assert_eq!(o.status.code(), Some(1));
+    assert!(o.stdout.is_empty(), "nothing written to the terminal");
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("needs a terminal"),
+        "{o:?}"
+    );
 }

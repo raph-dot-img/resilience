@@ -302,9 +302,27 @@ impl Canvas {
     /// too, so panning does not make dashes jump. Segments with a
     /// non-finite end are skipped. Cost: O(points + drawn pixels).
     pub fn polyline(&mut self, points: &[Point], colour: Colour, pattern: LinePattern) {
+        self.polyline_from(points, colour, pattern, 0.0);
+    }
+
+    /// [`Canvas::polyline`] whose pattern starts at `phase` pixels into its
+    /// period instead of 0 (a non-finite phase counts as 0). The map viewer
+    /// passes a phase derived from the line's absolute position, so the two
+    /// pieces of a line cut at a tile edge continue each other's dashes.
+    pub fn polyline_from(
+        &mut self,
+        points: &[Point],
+        colour: Colour,
+        pattern: LinePattern,
+        phase: f64,
+    ) {
         let (on, off) = pattern.period();
         let period = f64::from(on + off);
-        let mut phase = 0.0_f64;
+        let mut phase = if phase.is_finite() {
+            phase.rem_euclid(period)
+        } else {
+            0.0
+        };
         let w = self.width() as f64;
         let h = self.height() as f64;
         for seg in points.windows(2) {
@@ -864,6 +882,41 @@ mod tests {
             LinePattern::Dashed,
         );
         assert_eq!(off.pixel_picture(), direct.pixel_picture());
+    }
+
+    #[test]
+    fn a_start_phase_shifts_the_pattern() {
+        let mut c = Canvas::new(12, 1);
+        c.polyline_from(
+            &[(0.0, 0.0), (11.0, 0.0)],
+            Colour::Magenta,
+            LinePattern::Dashed,
+            2.0,
+        );
+        // Phase 2 is the last "on" pixel of the period 3 on, 2 off.
+        c.polyline_from(
+            &[(0.0, 1.0), (11.0, 1.0)],
+            Colour::White,
+            LinePattern::Dotted,
+            -1.0,
+        );
+        assert_eq!(
+            c.pixel_picture(),
+            picture(&["M..MMM..MMM.", ".W..W..W..W."])
+        );
+        // A phase of a whole number of periods, or a non-finite one, is 0.
+        for phase in [5.0, -10.0, f64::NAN, f64::INFINITY] {
+            let mut a = Canvas::new(12, 1);
+            a.polyline_from(
+                &[(0.0, 0.0), (11.0, 0.0)],
+                Colour::Red,
+                LinePattern::Dashed,
+                phase,
+            );
+            let mut b = Canvas::new(12, 1);
+            b.line((0.0, 0.0), (11.0, 0.0), Colour::Red, LinePattern::Dashed);
+            assert_eq!(a.pixel_picture(), b.pixel_picture(), "{phase}");
+        }
     }
 
     #[test]
