@@ -756,6 +756,22 @@ Decided by the coordinator on 2026-11-15:
   computed from that build, are listed. A region nobody built is not
   listed.
 
+Decided during implementation:
+
+- **Characters the console lacks**: `©` and `°` are not in the console
+  font's allowed set. Attribution is shown as `(c) OpenStreetMap
+  contributors` and the degrees-minutes-seconds readout as
+  `49d36'41.8" N  6d07'54.8" E`. The coordinate parser accepts `°`.
+- **Map packs need `data_date`, `coverage` and `attribution`** in the
+  catalog (a build error otherwise), and the `maps` category holds only
+  `.mbtiles` files.
+- **Tiles per view**: 1 to 6 holds up to 70° of latitude. Near ±85° at the
+  coarsest scales the world repeats sideways and more tiles are needed;
+  the hard bound is 64 tiles per view.
+- **MVT policy**: a layer whose version is not 2 and a feature of unknown
+  geometry type are skipped and counted; any other malformed content
+  rejects the whole tile.
+
 Open for the project owner:
 
 1. **Hosting.** Should pack builds be published somewhere public (for
