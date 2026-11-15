@@ -80,6 +80,19 @@ let
             && !c.resilience.security.userNamespaces
           );
         # ADR 0013: packs are written by an unprivileged system account only.
+        # ADR 0015: like age and minisign, GnuPG asks every time; no setuid
+        # crypto helper exists.
+        "gpg-agent keeps no passphrase in its cache" =
+          c.programs.gnupg.agent.settings.default-cache-ttl or null == 0
+          && c.programs.gnupg.agent.settings.max-cache-ttl or null == 0;
+        "no cryptography program runs with privileges" = !(lib.any (
+          n: lib.elem n [
+            "resilience-crypto"
+            "age"
+            "minisign"
+            "gpg"
+          ]
+        ) (lib.attrNames c.security.wrappers));
         "pack store is an unprivileged system account" =
           !c.resilience.packs.enable
           || (

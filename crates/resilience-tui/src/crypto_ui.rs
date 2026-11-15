@@ -12,6 +12,7 @@ use std::time::Duration;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
 use resilience_core::crypto::{self, Contact, KeyStore};
+use resilience_core::openpgp::{self, PgpKey};
 use resilience_core::printable;
 use resilience_core::proc::run_full;
 
@@ -38,24 +39,21 @@ impl Pick {
     pub fn title(self) -> &'static str {
         match self {
             Pick::Encrypt => "CHOOSE THE FILE TO ENCRYPT",
-            Pick::Decrypt => "CHOOSE THE ENCRYPTED FILE (.age)",
+            Pick::Decrypt => "CHOOSE THE ENCRYPTED FILE (.age, .gpg, .asc)",
             Pick::ReadMessage => "CHOOSE THE ENCRYPTED MESSAGE",
             Pick::Sign => "CHOOSE THE FILE TO SIGN",
-            Pick::Verify => "CHOOSE THE SIGNED FILE (or its .minisig)",
+            Pick::Verify => "CHOOSE THE SIGNED FILE (or its .minisig, .sig, .asc)",
             Pick::Checksum | Pick::Compare => "CHOOSE THE FILE TO CHECK",
             Pick::CheckList => "CHOOSE THE CHECKSUM LIST (e.g. SHA256SUMS)",
             Pick::Inspect => "CHOOSE THE FILE TO INSPECT",
-            Pick::AddContact => "CHOOSE THE PUBLIC KEY FILE",
+            Pick::AddContact => "CHOOSE THE PUBLIC KEY FILE (Resilience or OpenPGP)",
         }
     }
 
     /// Search text typed for the user when the picker opens.
     fn query(self) -> &'static str {
         match self {
-            Pick::Decrypt => ".age",
-            Pick::Verify => ".minisig",
             Pick::CheckList => "sum",
-            Pick::AddContact => "key",
             _ => "",
         }
     }
@@ -144,6 +142,22 @@ pub enum Recipient {
     Passphrase,
     Me,
     Contact(String),
+    /// An OpenPGP key of the GnuPG keyring (can encrypt).
+    OpenPgp {
+        fingerprint: String,
+        name: String,
+    },
+}
+
+impl Recipient {
+    /// Only one group per file: a passphrase, age keys, or OpenPGP keys.
+    fn group(&self) -> u8 {
+        match self {
+            Recipient::Passphrase => 0,
+            Recipient::Me | Recipient::Contact(_) => 1,
+            Recipient::OpenPgp { .. } => 2,
+        }
+    }
 }
 
 /// What is being encrypted.
@@ -158,12 +172,61 @@ pub enum EncryptTarget {
 pub enum KeyRow {
     Encryption,
     Signing,
+    /// The user has no OpenPGP key yet (Enter or g creates one).
+    NoPgpKey,
     Contact(Contact),
+    Pgp(PgpKey),
 }
 
 impl App {
     fn keystore(&self) -> KeyStore {
         KeyStore::for_home(&self.home)
+    }
+
+    /// GnuPG's folder for this account.
+    fn gnupg_home(&self) -> PathBuf {
+        std::env::var_os("GNUPGHOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.home.join(".gnupg"))
+    }
+
+    /// The OpenPGP keys of the keyring (own keys marked). Nothing is created
+    /// when the user has never used GnuPG.
+    pub(super) fn pgp_keys(&self) -> Vec<PgpKey> {
+        let dir = self.gnupg_home();
+        if !dir.is_dir() {
+            return Vec::new();
+        }
+        let d = dir.to_string_lossy();
+        let list = |what: &str| {
+            run_full(
+                &[
+                    &self.sys.tools.gpg,
+                    "--batch",
+                    "--no-tty",
+                    "--homedir",
+                    &d,
+                    "--with-colons",
+                    "--fingerprint",
+                    "--fingerprint",
+                    what,
+                ],
+                Duration::from_secs(10),
+            )
+            .map(|o| openpgp::parse_keys(&o.stdout))
+            .unwrap_or_default()
+        };
+        let secret: Vec<String> = list("--list-secret-keys")
+            .into_iter()
+            .map(|k| k.fingerprint)
+            .collect();
+        let mut keys = list("--list-keys");
+        for k in &mut keys {
+            k.secret = secret.contains(&k.fingerprint);
+        }
+        // Own keys first.
+        keys.sort_by_key(|k| !k.secret);
+        keys
     }
 
     /// Open one of the Security entries.
@@ -356,6 +419,15 @@ impl App {
                 .filter(|c| c.age.is_some())
                 .map(|c| Recipient::Contact(c.name)),
         );
+        rows.extend(
+            self.pgp_keys()
+                .into_iter()
+                .filter(|k| k.can_encrypt && !k.unusable)
+                .map(|k| Recipient::OpenPgp {
+                    name: format!("{}{}", k.uid, if k.secret { " (me)" } else { "" }),
+                    fingerprint: k.fingerprint,
+                }),
+        );
         let mut ticked = vec![false; rows.len()];
         ticked[0] = true;
         self.modal = Some(Modal::Recipients {
@@ -382,12 +454,15 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => sel = (sel + 1).min(rows.len() - 1),
             KeyCode::Char(' ') => {
                 ticked[sel] = !ticked[sel];
-                // A passphrase cannot be combined with keys (age -p alone).
+                // A passphrase, age keys and OpenPGP keys cannot be mixed
+                // (different programs and formats): ticking one group
+                // unticks the others.
                 if ticked[sel] {
-                    if rows[sel] == Recipient::Passphrase {
-                        ticked.iter_mut().skip(1).for_each(|t| *t = false);
-                    } else {
-                        ticked[0] = false;
+                    let g = rows[sel].group();
+                    for (r, t) in rows.iter().zip(ticked.iter_mut()) {
+                        if r.group() != g {
+                            *t = false;
+                        }
                     }
                 }
             }
@@ -398,6 +473,9 @@ impl App {
                         Recipient::Passphrase => args.push("--passphrase".into()),
                         Recipient::Me => args.push("--me".into()),
                         Recipient::Contact(n) => args.extend(["--to".into(), n.clone()]),
+                        Recipient::OpenPgp { fingerprint, .. } => {
+                            args.extend(["--to-pgp".into(), fingerprint.clone()])
+                        }
                     }
                 }
                 if args.is_empty() {
@@ -473,7 +551,12 @@ impl App {
 
     pub(super) fn key_rows(&self) -> Vec<KeyRow> {
         let mut rows = vec![KeyRow::Encryption, KeyRow::Signing];
+        let pgp = self.pgp_keys();
+        if !pgp.iter().any(|k| k.secret) {
+            rows.push(KeyRow::NoPgpKey);
+        }
         rows.extend(self.keystore().contacts().into_iter().map(KeyRow::Contact));
+        rows.extend(pgp.into_iter().map(KeyRow::Pgp));
         rows
     }
 
@@ -522,6 +605,29 @@ impl App {
                     parts.push(format!("signs {id}"));
                 }
                 format!("{:<22}{}", printable(&c.name), parts.join("  "))
+            }
+            KeyRow::NoPgpKey => {
+                "Your OpenPGP key      none (optional, for GnuPG users): g creates one".into()
+            }
+            KeyRow::Pgp(k) => {
+                let name: String = k.uid.chars().take(21).collect();
+                let short = &k.fingerprint[k.fingerprint.len().saturating_sub(8)..];
+                let label = if k.secret {
+                    "Your OpenPGP key   "
+                } else {
+                    "OpenPGP key        "
+                };
+                format!(
+                    "{:<22}{label}...{} {}{}",
+                    name,
+                    &short[..4.min(short.len())],
+                    &short[4.min(short.len())..],
+                    if k.unusable {
+                        "  (revoked/expired)"
+                    } else {
+                        ""
+                    }
+                )
             }
         }
     }
@@ -582,6 +688,48 @@ impl App {
                 );
                 s
             }
+            KeyRow::NoPgpKey => "YOUR OPENPGP KEY\n\nYou have none. You only need one to \
+                 exchange with people who use GnuPG or other OpenPGP programs. Press g on the \
+                 list to create one; others' OpenPGP keys can be added with a."
+                .to_string(),
+            KeyRow::Pgp(k) => {
+                let date = |t: Option<i64>| {
+                    t.map(|t| {
+                        resilience_core::admin::rfc3339_utc(t)
+                            .chars()
+                            .take(10)
+                            .collect()
+                    })
+                    .unwrap_or_else(|| "never".to_string())
+                };
+                format!(
+                    "{}OPENPGP KEY (GnuPG)\n\n{}\n\nFingerprint:\n  {}\n\nCreated: {}\nExpires: \
+                     {}\nCan encrypt: {}{}\n\n{}",
+                    if k.secret { "YOUR " } else { "" },
+                    printable(&k.uid),
+                    openpgp::grouped_fingerprint(&k.fingerprint),
+                    date(k.created),
+                    date(k.expires),
+                    if k.can_encrypt {
+                        "yes"
+                    } else {
+                        "no (signing only)"
+                    },
+                    if k.unusable {
+                        "\nWARNING: this key is revoked or expired."
+                    } else {
+                        ""
+                    },
+                    if k.secret {
+                        "Its secret part is in ~/.gnupg, protected by your passphrase. Press \
+                         e on the list to save the public part on a USB stick."
+                    } else {
+                        "Compare this fingerprint with the one its owner gives you (in \
+                         person, by phone, or published by a software project). Press Delete \
+                         on the list to remove it."
+                    }
+                )
+            }
         };
         View::Pager {
             title: "KEY DETAILS".into(),
@@ -607,6 +755,10 @@ impl App {
                     None,
                     self.crypto_run("Create your keys", &["new-keys"], None),
                 ),
+                Some(KeyRow::NoPgpKey) => (
+                    None,
+                    self.crypto_run("Create your OpenPGP key", &["new-openpgp-key"], None),
+                ),
                 Some(r) => (Some(self.key_details(r)), Effect::None),
                 None => (None, Effect::None),
             },
@@ -614,13 +766,18 @@ impl App {
                 None,
                 self.crypto_run("Create your keys", &["new-keys"], None),
             ),
+            KeyCode::Char('g') if rows.contains(&KeyRow::NoPgpKey) => (
+                None,
+                self.crypto_run("Create your OpenPGP key", &["new-openpgp-key"], None),
+            ),
             KeyCode::Char('a') => (Some(self.open_picker(Pick::AddContact)), Effect::None),
             KeyCode::Char('t') => (
                 None,
                 self.crypto_run("Add a contact", &["add-contact"], None),
             ),
             KeyCode::Char('e') => {
-                if ks.own() == crypto::OwnKeys::default() {
+                let has_pgp = rows.iter().any(|r| matches!(r, KeyRow::Pgp(k) if k.secret));
+                if ks.own() == crypto::OwnKeys::default() && !has_pgp {
                     self.no_key_message("encryption");
                     return (None, Effect::None);
                 }
@@ -637,8 +794,34 @@ impl App {
                 )
             }
             KeyCode::Delete | KeyCode::Char('x') => {
-                if let Some(KeyRow::Contact(c)) = row {
-                    self.confirm_remove_contact(&c.name);
+                match row {
+                    Some(KeyRow::Contact(c)) => self.confirm_remove_contact(&c.name),
+                    Some(KeyRow::Pgp(k)) if k.secret => {
+                        self.modal = Some(Modal::Message {
+                            title: "YOUR OWN KEY".into(),
+                            body: "Your own OpenPGP key is not deleted from here: without \
+                                   it, nothing encrypted for it can be opened again."
+                                .into(),
+                            error: false,
+                        });
+                    }
+                    Some(KeyRow::Pgp(k)) => {
+                        self.modal = Some(Modal::Confirm {
+                            title: "REMOVE AN OPENPGP KEY".into(),
+                            body: format!(
+                                "Remove the OpenPGP key of {} from your keyring?\n\nYou will \
+                                 no longer be able to encrypt for it or check its signatures \
+                                 until you add it again.",
+                                printable(&k.uid)
+                            ),
+                            confirm: "Remove".into(),
+                            action: Pending::RemovePgpKey {
+                                fingerprint: k.fingerprint.clone(),
+                            },
+                            yes_focused: false,
+                        });
+                    }
+                    _ => {}
                 }
                 (None, Effect::None)
             }
@@ -673,6 +856,40 @@ impl App {
                 Level::Error,
                 format!("Cannot remove {}: {e}", printable(name)),
             ),
+        }
+        self.reload_keys();
+    }
+
+    /// Remove a public (not own) key from the GnuPG keyring.
+    pub(super) fn remove_pgp_key(&mut self, fingerprint: &str) {
+        let is_own = self
+            .pgp_keys()
+            .iter()
+            .any(|k| k.fingerprint == fingerprint && k.secret);
+        if is_own || !openpgp::is_fingerprint(fingerprint) {
+            return;
+        }
+        let d = self.gnupg_home().to_string_lossy().into_owned();
+        let out = run_full(
+            &[
+                &self.sys.tools.gpg,
+                "--batch",
+                "--no-tty",
+                "--yes",
+                "--homedir",
+                &d,
+                "--delete-keys",
+                fingerprint,
+            ],
+            Duration::from_secs(10),
+        );
+        match out {
+            Some(o) if o.success() => self.notify(Level::Info, "The OpenPGP key was removed."),
+            Some(o) => self.notify(
+                Level::Error,
+                format!("The key was not removed: {}", printable(o.stderr.trim())),
+            ),
+            None => self.notify(Level::Error, "gpg did not answer."),
         }
         self.reload_keys();
     }

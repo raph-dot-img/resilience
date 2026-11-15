@@ -82,6 +82,24 @@ RANDOM PASSWORDS & KEYS
   and 256-bit keys, from the system's secure random generator. They are
   shown once and saved nowhere: write them down now.
 
+OPENPGP (GnuPG): WITH PEOPLE WHO USE IT
+  Many people and software projects use OpenPGP (GnuPG, "PGP", e-mail
+  encryption). Resilience recognises its files and keys by itself:
+    - an OpenPGP key file (often .asc): add it with a in Keys & contacts;
+      its FINGERPRINT is shown: compare it with the one its owner gives you
+      or publishes (website, paper) before saying yes;
+    - a signature NAME.sig or NAME.asc next to a file: "Check a signature";
+    - an OpenPGP encrypted file (.gpg, .asc): "Decrypt a file" or "Read an
+      encrypted message".
+  To receive OpenPGP files, create your own OpenPGP key with g in Keys &
+  contacts (a name, and an e-mail address if you want: others will see
+  them). GnuPG asks its passphrase in a box on the screen, every time. When
+  it asks for a new passphrase twice in the same box, press Tab to go to the
+  second line ("Repeat"), then Enter.
+  Encrypt for: OpenPGP keys appear as "OpenPGP: name". One file is for one
+  kind of key: a passphrase, OR Resilience keys, OR OpenPGP keys.
+  GnuPG never looks for keys on the Internet here.
+
 FOR STABLE AND ADVANCED ACCOUNTS
-  The same tools exist on the command line: age, age-keygen, minisign,
+  The same tools exist on the command line: age, age-keygen, minisign, gpg,
   sha256sum... and resilience-crypto (resilience-crypto --help).

@@ -314,6 +314,21 @@ esac
                 .to_string(),
         ),
         (
+            // Fake gpg: one OpenPGP contact (Bob), no own key; deletions logged.
+            "gpg",
+            format!(
+                "#!/bin/sh\necho \"$@\" >> {d}/gpg.log\n\
+                 case \"$*\" in\n\
+                 *--list-secret-keys*) ;;\n\
+                 *--list-keys*) cat <<K\n\
+                 pub:-:255:22:B0B0B0B0B0B0B0B0:1794734011:::-:::scESC:::::ed25519:::0:\n\
+                 fpr:::::::::0123456789ABCDEF0123456789ABCDEFB0B0B0B0:\n\
+                 uid:-::::1794734011::AA::Bob Builder <bob@example.org>::::::::::0:\n\
+                 K\n;;\n\
+                 esac\n"
+            ),
+        ),
+        (
             "openssl",
             "#!/bin/sh\n[ \"$2\" = -hex ] && echo 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff || echo 'q2Fz+R0b/x9kLm3nT7uVwYzA'\n"
                 .to_string(),
@@ -341,6 +356,7 @@ esac
         crypto: "/store/bin/resilience-crypto".into(),
         xkcdpass: sys.join("xkcdpass").display().to_string(),
         openssl: sys.join("openssl").display().to_string(),
+        gpg: sys.join("gpg").display().to_string(),
         ..ToolPaths::default()
     }
 }
@@ -2623,19 +2639,14 @@ fn decrypt_verify_and_inspect_pick_a_file_and_run_the_tool() {
     std::fs::write(a.home.join("plan.txt.age"), "age-encryption.org/v1\n").expect("w");
     std::fs::write(a.home.join("release.txt"), "1.0").expect("w");
     std::fs::write(a.home.join("release.txt.minisig"), "untrusted comment: x\n").expect("w");
-    for (b, query_ok, op, name) in [
+    for (b, query, op, name) in [
         (Builtin::Decrypt, ".age", "decrypt", "plan.txt.age"),
         (Builtin::Verify, ".minisig", "verify", "release.txt.minisig"),
-        (Builtin::Inspect, "", "inspect", "plan.txt.age"),
+        (Builtin::Inspect, "plan", "inspect", "plan.txt.age"),
     ] {
         open(&mut a, b);
-        let View::Files { query, .. } = a.view() else {
-            panic!("picker")
-        };
-        assert_eq!(query, query_ok);
-        if query.is_empty() {
-            type_text(&mut a, "plan");
-        }
+        assert!(matches!(a.view(), View::Files { query, .. } if query.is_empty()));
+        type_text(&mut a, query);
         let (args, extra) = crypto_argv(&press(&mut a, KeyCode::Enter));
         assert_eq!(args, vec![op]);
         assert_eq!(extra, vec![a.home.join(name)]);
@@ -2834,4 +2845,76 @@ fn keys_screen_creates_adds_exports_and_removes() {
     );
     let screen = render(&mut a, 80, 24);
     assert!(screen.contains("0 contacts"), "{screen}");
+}
+
+#[test]
+fn openpgp_keys_are_listed_offered_and_removable() {
+    let mut a = app(Mode::UltraStable, "crypto-pgp");
+    std::fs::write(a.home.join("plan.txt"), "x").expect("w");
+    // gpg is only asked once the user has a GnuPG folder.
+    open(&mut a, Builtin::Keys);
+    assert!(!render(&mut a, 80, 24).contains("Bob Builder"));
+    press(&mut a, KeyCode::Esc);
+    std::fs::create_dir_all(a.home.join(".gnupg")).expect("mkdir");
+    open(&mut a, Builtin::Keys);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("Bob Builder"), "{screen}");
+    assert!(
+        screen.contains("OpenPGP key        ...B0B0 B0B0"),
+        "{screen}"
+    );
+    assert!(screen.contains("g creates one"), "{screen}");
+    assert!(screen.contains("(1 contact)"), "{screen}");
+    assert_console_glyphs(&screen);
+    let (args, _) = crypto_argv(&press(&mut a, KeyCode::Char('g')));
+    assert_eq!(args, vec!["new-openpgp-key"]);
+    // Details, then removal (confirmed) through gpg --delete-keys.
+    press(&mut a, KeyCode::End);
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(a.view(), View::Pager { text, .. } if text.contains("0123 4567 89AB CDEF")));
+    press(&mut a, KeyCode::Esc);
+    press(&mut a, KeyCode::Delete);
+    press(&mut a, KeyCode::Char('y'));
+    let log = std::fs::read_to_string(a.home.join("sys/gpg.log")).expect("log");
+    assert!(
+        log.contains("--yes --homedir")
+            && log.contains("--delete-keys 0123456789ABCDEF0123456789ABCDEFB0B0B0B0"),
+        "{log}"
+    );
+
+    // Encrypt for: OpenPGP keys are offered, never mixed with age.
+    while a.stack.len() > 1 {
+        press(&mut a, KeyCode::Esc);
+    }
+    make_keys(&a);
+    open(&mut a, Builtin::Encrypt);
+    type_text(&mut a, "plan.txt");
+    press(&mut a, KeyCode::Enter);
+    let Some(Modal::Recipients { rows, .. }) = &a.modal else {
+        panic!("recipients")
+    };
+    assert_eq!(rows.len(), 4, "{rows:?}");
+    assert!(
+        matches!(&rows[3], Recipient::OpenPgp { name, .. } if name == "Bob Builder <bob@example.org>")
+    );
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("OpenPGP: Bob Builder"), "{screen}");
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Char(' ')); // me (age)
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Char(' ')); // Bob (OpenPGP): unticks me
+    let Some(Modal::Recipients { ticked, .. }) = &a.modal else {
+        panic!("recipients")
+    };
+    assert_eq!(ticked, &vec![false, false, false, true]);
+    let (args, _) = crypto_argv(&press(&mut a, KeyCode::Enter));
+    assert_eq!(
+        args,
+        vec![
+            "encrypt",
+            "--to-pgp",
+            "0123456789ABCDEF0123456789ABCDEFB0B0B0B0"
+        ]
+    );
 }

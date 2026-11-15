@@ -10,6 +10,23 @@ versions follow [Semantic Versioning](https://semver.org/).
   `LICENSE` added. Bundled software keeps its own license.
 
 ### Added
+- *Security & cryptography* (ADR 0015, Phase 4), for every account. New
+  unprivileged tool `resilience-crypto`, run in the foreground by the TUI:
+  encrypt a file (age: passphrase, or own key and contacts' keys) next to
+  it; decrypt into `~/Decrypted`; encrypted messages (typed, saved armored
+  in `~/Messages`, read in memory only); sign files and check signatures
+  (minisign); checksums (show, compare with a published one, check a
+  SHA256SUMS list); "what is this file?" (age, OpenPGP, LUKS, ZIP,
+  OpenSSL, keys, checksum lists); random passphrases (xkcdpass, EFF and
+  French lists) and passwords/keys (openssl rand); Keys & contacts (own
+  keys always stored encrypted, contacts' public keys checked, export to a
+  stick). OpenPGP interoperability through GnuPG and pinentry-curses:
+  signatures (.sig/.asc), decryption, encryption to imported keys, key
+  import with fingerprint confirmation, own OpenPGP key; no key server,
+  no passphrase cache. Passphrases are always typed into age, minisign or
+  pinentry, never into the interface. Find & view files doubles as the
+  file picker. Handbook page "Encryption, signatures and checksums"; VM
+  test `vm-crypto`; two new security invariants.
 - *Offline library* and *Resource packs* (ADR 0013, Phase 3): a catalog of
   20 Kiwix packs (Wikipedia, Wiktionary, medicine, practical guides,
   Wikivoyage, computing; English and French) with pinned sizes and

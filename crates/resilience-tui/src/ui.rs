@@ -189,7 +189,9 @@ fn footer_hints(view: &View) -> &'static str {
         }
         View::Files { .. } => "Type a name  Enter View  F3 Details & checksum  F2 Rescan  Esc",
         View::Choices { .. } => "Enter Open  Esc Back  F1 Help",
-        View::Keys { .. } => "Enter Open  a Add (file)  t Add (typed)  e Export  Del Remove  Esc",
+        View::Keys { .. } => {
+            "Enter Open  a Add file  t Type key  g OpenPGP key  e Export  Del Remove"
+        }
         View::Table(_) => "Arrows Rows & columns  PgUp/PgDn  Esc Back",
         View::Library { .. } => "Enter Read  s Search  c Check  u USB stick  p Get packs  Esc Back",
     }
@@ -1189,7 +1191,14 @@ fn draw_keys(
         .iter()
         .map(|r| ListItem::new(app.key_row_text(r)))
         .collect();
-    let contacts = rows.len().saturating_sub(2);
+    let contacts = rows
+        .iter()
+        .filter(|r| match r {
+            crate::app::KeyRow::Contact(_) => true,
+            crate::app::KeyRow::Pgp(k) => !k.secret,
+            _ => false,
+        })
+        .count();
     let [l, d] = Layout::vertical([Constraint::Min(6), Constraint::Length(6)]).areas(area);
     draw_list(
         f,
@@ -2104,6 +2113,9 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
                     }
                     crate::app::Recipient::Me => "Me (my encryption key)".to_string(),
                     crate::app::Recipient::Contact(n) => resilience_core::printable(n),
+                    crate::app::Recipient::OpenPgp { name, .. } => {
+                        format!("OpenPGP: {}", resilience_core::printable(name))
+                    }
                 };
                 let mark = if *on { "[x]" } else { "[ ]" };
                 let style = if i == *sel { t.selected } else { t.base };

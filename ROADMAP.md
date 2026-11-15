@@ -55,9 +55,17 @@ test in docs/TESTING.md actually ran and passed (VM only so far).
 - ✅ Manual pages from the TUI, less in secure mode, search of the manuals (ADR 0014)
 - ✅ Find & view files: name search, text, PDF (pdftotext), CSV/TSV table, archive listing, SHA-256 (ADR 0014)
 
-## Phase 4 — Cryptography ⬜
+## Phase 4 — Cryptography ✅
 Guided age/minisign/GnuPG workflows, checksums, random data, key management;
-secrets never in argv or logs.
+secrets never in argv or logs (ADR 0015).
+- [x] Encrypt/decrypt files and messages (age; OpenPGP via GnuPG)
+- [x] Own keys (stored encrypted), contacts' public keys, export/import
+- [x] Sign files (minisign), verify signatures (minisign and OpenPGP)
+- [x] Checksums: show, compare, check SHA256SUMS lists
+- [x] Random passphrases, passwords and keys
+- [x] Inspect encryption formats
+- [ ] Unlock encrypted (LUKS) USB sticks in the media screens (later)
+- [ ] OpenPGP signing in the interface (minisign signs; gpg on the command line)
 
 ## Phase 5 — Offline maps ⬜
 MBTiles/GeoPackage storage, block-character renderer, place search, routing study.

@@ -33,8 +33,7 @@ armor or a trust model is to use this correctly.
 | Random passwords and keys | **openssl rand** | Established; 144-bit passwords and 256-bit hexadecimal keys. |
 | Format details | **age-inspect** and a pure recogniser in `resilience-core::crypto` | The recogniser only reads magic numbers and text headers, never decrypts. |
 
-GnuPG (OpenPGP interoperability) is the next slice of this phase. Its
-section is added here when it lands.
+| OpenPGP interoperability | **GnuPG** 2.4 with **pinentry-curses** | The format of e-mail encryption and of most software signatures. |
 
 ### One unprivileged program, run in the foreground
 
@@ -113,6 +112,83 @@ to 1 MiB, and a binary result is refused ("use Decrypt a file").
 - Exported keys are a commented text file (`USER-public-keys.txt`) on a
   stick. It holds both public keys and says it contains no secret.
 
+### OpenPGP (GnuPG), for interoperability
+
+age and minisign are the default. GnuPG is used when the files or the
+people require it:
+
+- **Files and keys are recognised, so there is nothing to choose:**
+  - decrypting or reading an OpenPGP message runs gpg instead of age;
+  - "Check a signature" finds `NAME.sig` or `NAME.asc` next to the file
+    (or a clear-signed text);
+  - adding a contact from an OpenPGP key file imports it into the GnuPG
+    keyring;
+  - "What is this file?" lists the keys a message is encrypted for, with
+    the matching names in the keyring, without decrypting anything
+    (`--list-only`).
+- **Keys & contacts** also lists the keyring: the user's own OpenPGP key,
+  and the others with the end of their fingerprint. `g` creates an
+  OpenPGP key: name and optional e-mail are checked, then `gpg
+  --quick-generate-key UID future-default default 2y`, and gpg's
+  revocation certificate is pointed out. Delete removes someone else's
+  key after confirmation; the user's own key is never deleted from here.
+  The exported keys file also contains the user's OpenPGP public key.
+- **"Encrypt for"** also offers the OpenPGP keys that can encrypt. A file
+  is for one kind only (passphrase, age keys or OpenPGP keys), and
+  ticking one kind unticks the others. The result is `NAME.gpg`; messages
+  are armored `.asc` files.
+- **Passphrases** are asked by gpg-agent's pinentry-curses on the
+  terminal (`GPG_TTY` set by `resilience-crypto`). gpg-agent keeps no
+  cache (`default-cache-ttl 0`, `max-cache-ttl 0`), so like age and
+  minisign every operation asks again.
+- **Offline and predictable.** gpg always runs with `--batch` (no
+  question of its own; results read from `--status-fd`, gpg's documented
+  machine interface, by pure parsers in `resilience-core::openpgp`). It
+  also runs with `--no-auto-key-retrieve` and `--no-auto-key-locate`, and
+  no key server is configured.
+- **Trust is the user's, not GnuPG's.** Before a key is imported, its
+  fingerprint is shown (`--show-keys`) with the request to compare it with
+  its owner's, and confirmation is asked. Files with a private key are
+  refused. When encrypting, `--trust-model always` uses the key the user
+  chose: the web of trust is not used. A valid signature shows the signer
+  and the full fingerprint, and says that checking the key belongs to
+  them is up to the user. A decryption without integrity protection
+  (no MDC or AEAD) is refused, and the partial output deleted.
+- OpenPGP signing is not offered in the interface: minisign signs, and
+  Stable and Advanced accounts can still use `gpg --detach-sign`.
+
+### Independent review
+
+A security review of the first complete version found eight problems,
+all fixed:
+
+1. **A clear-signed text next to a file of the same name.** Checking
+   `evil.iso.asc` (clear-signed announcement) would have said VALID while
+   covering nothing in `evil.iso`; and the clear-signed path itself was
+   broken (`--output` after the file). Now such a signature beside a
+   same-named file is refused ("does NOT cover any other file"), and a
+   standalone clear-signed or inline-signed text is shown exactly as
+   signed, under its verdict. gpg's "not a detached signature" warning is
+   a refusal.
+2. **gpg options through the name of a new key** (`--status-file=...`
+   could overwrite a file). Names must start with a letter or digit, and
+   the user id follows `--`. Key files are passed as absolute paths.
+3. **Ctrl-C left partial plaintext.** A handler (SIGINT, SIGTERM,
+   SIGHUP) deletes the partial file before exiting. Partial files of dead
+   processes are removed at the next start.
+4. **"What is this file?" mixed a signed file's content with gpg's status
+   lines**, which allowed fake recipients. It now runs only on encrypted
+   messages, with output to `/dev/null`.
+5. **Unbounded memory when reading a compressed message.** At most 1 MiB
+   is kept; gpg is stopped beyond that.
+6. **A crafted armored age file could crash the recogniser** (cut inside a
+   multi-byte character). Only base64 characters are kept before cutting.
+7. **Escape sequences in a PEM label** were printed raw. They are now
+   filtered like every other displayed name.
+8. **Wording.** Decryption now says that integrity does not prove who
+   wrote the file; minisign accepts an empty password, so key creation
+   warns against it.
+
 ### Honest results
 
 - A valid signature "proves that the file was not changed since that key
@@ -153,8 +229,12 @@ history or the log.
 - **GnuPG for everything.** One tool for keys, encryption and signatures,
   and interoperable. But its model (keyrings, trust database, agent, many
   algorithms and options) is hard to present safely to beginners, and its
-  long keys and fingerprints are hard to check by voice. Kept for
-  interoperability (next slice).
+  long keys and fingerprints are hard to check by voice. It is kept for
+  interoperability, behind the same guided screens.
+- **GnuPG's web of trust** (signing others' keys, owner trust): a
+  powerful model, but hard to explain, and it needs key exchanges that an
+  offline group does in person anyway. The user's own fingerprint check
+  replaces it.
 - **The interface asks for passphrases and passes them on (stdin or a file
   descriptor).** Keeping the secret out of our process entirely is
   stronger and simpler. age and minisign already have good terminal

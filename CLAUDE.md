@@ -30,6 +30,7 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            org.resilience.admin.{set-mode,set-time,set-default-generation} (auth_admin),
    │                            tmpfiles for state/audit, activation `apply-state`
    │            media.nix       udisks2 (removable media; its polkit defaults, no overrides)
+   │            crypto.nix      gpg-agent (pinentry-curses, cache TTL 0); age/minisign on PATH
    │            packs.nix       resource packs (ADR 0013): /etc/resilience/packs.toml (catalog with
    │                            pinned size+SHA-256, default nix/packs/kiwix.nix), system user
    │                            resilience-packs owns /var/lib/resilience/packs, polkit action
@@ -46,14 +47,17 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
    ├─ packages: resilience, resilience-session, resilience-handbook, iso, iso-minimal, vm
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
-              vm-backup, vm-wifi, vm-generations, vm-packs, security-invariants, eval-live-iso
+              vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto,
+              security-invariants, eval-live-iso
 
 crates/resilience-core  library: status, network (passive + on-demand probe),
                         mode detection, catalog, config, handbook, notes, launch, proc,
                         admin (pure mode-change rules), clock (time parsing/bounds),
                         recovery (generations, default-generation rules, report),
                         media (lsblk parsing, udisksctl mount/eject), files (name
-                        index, kinds, text caps, CSV), manpage (names, secure env), backup (tar|zstd|age
+                        index, kinds, text caps, CSV), manpage (names, secure env), crypto (key store,
+                        key/format recognition, output names, checksums), openpgp
+                        (gpg status/colons parsers), backup (tar|zstd|age
                         pipeline, checksum, restore into ~/Restored), wifi (nmcli parsing,
                         private profiles, password via stdin), packs (catalog, inventory,
                         stdin chunk framing, receive+hash, remove, reader URLs)
@@ -66,6 +70,11 @@ crates/resilience-library binaries (ADR 0013): `resilience-library` (as the user
                         change [--from M] [--remove F].. [--get ID].. | open FILE [--search W])
                         and `resilience-pack-store` (as resilience-packs via pkexec --user,
                         never root: change; stdin bytes only hashed, never parsed)
+crates/resilience-crypto binary `resilience-crypto` (UNPRIVILEGED, ADR 0015, foreground):
+                        encrypt TO FILE | decrypt | write-message TO | read-message | sign |
+                        verify | checksum | compare SUM FILE | check-list | inspect | new-keys |
+                        add-contact [FILE] | export-keys DIR | new-openpgp-key;
+                        src/pgp.rs = GnuPG paths (status-fd parsers in core openpgp.rs)
 crates/resilience-tui   binary `resilience`: app.rs (state machine, returns Effects),
                         ui.rs (rendering), theme.rs, help.rs, tests.rs
 nix/packages/resilience-session  login shell: runs TUI, restarts after crash, refuses -c
@@ -110,6 +119,15 @@ packs (`[[builtin]]`, the docs ZIM from nix/packages/resilience-docs) and packs 
 mounted sticks (`u` opens one, `c` → `resilience-library check FILE`).
 Reading: Offline library → `resilience-library open FILE` → kiwix-serve
 127.0.0.1:<free port> + lynx with every restriction (`-restrictions=…`, not `all`) and `-localhost`.
+
+Crypto flow (ADR 0015): TUI Security entries → Find & view files as picker
+(`View::Files { pick: Some(Pick) }`) → "Encrypt for" checklist (passphrase | age
+keys | OpenPGP keys, one kind) or checksum box → `resilience-crypto OP … FILE`
+in the foreground → age / minisign / gpg (pinentry-curses, GPG_TTY) read
+passphrases on the tty themselves; outputs `.partial` + RENAME_NOREPLACE;
+decrypted files only in ~/Decrypted; keys in ~/.local/share/resilience/keys
+(age identity = age-keygen | age -p, never in clear). Random passwords: TUI
+runs xkcdpass/openssl and shows them in a dialog (never notified/logged).
 
 Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
 with `connection.permissions user:U`, no secret → thread: `nmcli connection
@@ -186,6 +204,11 @@ it concurrently with VM tests.
   `config.resilience.packs.configFile` (mkForce the etc file). A second node
   serves HTTPS with a test certificate (`security.pki.certificateFiles`) and
   `limit_rate` to interrupt a download. See vm-packs.
+- Crypto in VM tests: type passphrases into age/minisign/pinentry prompts on
+  tty1 (`type_secret`); grep for secrets with `grep -F -f FILE` (patterns in a
+  file, never in grep's argv). In Nix `''` strings an empty shell argument
+  must be written `""`, not `''`. Peer keys (Bob) are made by root with
+  `gpg --homedir /root/bob --batch --pinentry-mode loopback`. See vm-crypto.
 - pkexec in VM tests: run it under `setsid -w` when no agent is wanted,
   otherwise its text agent writes into the driver's terminal protocol.
 - USB sticks in VM tests: `-device qemu-xhci,id=xhci` + QEMU monitor
@@ -282,9 +305,10 @@ needlessly. Watch `free -h` during VM tests.
 
 ## 14. Current implementation status (2026-11-14)
 
-Phase 0 (foundation), Phase 1 (core), Phase 2 and Phase 3 done (Phase 3:
-resource packs, sets, built-in docs, packs on sticks, ADR 0013; Find & view
-files and manual pages, ADR 0014).
+Phase 0 (foundation), Phase 1 (core), Phase 2, Phase 3 and Phase 4 done
+(Phase 3: resource packs, sets, built-in docs, packs on sticks, ADR 0013;
+Find & view files and manual pages, ADR 0014. Phase 4: guided cryptography
+with age, minisign, checksums, random data and GnuPG interop, ADR 0015).
 A future `build_resilience.sh` (interactive custom ISO) is described in ROADMAP. Phase 2:
 privileged helper with set-mode, TUI Users & security modes, TUI Recovery &
 diagnostics, faillock (ADR 0007); removable media + encrypted backups (ADR
@@ -318,15 +342,16 @@ See docs/TESTING.md for what has actually been executed and passed.
   recovery (TUI Recovery, other ttys + Advanced/sudo, generations, live ISO).
 - Resource packs: installing needs an administrator (none on the live ISO;
   packs can be read from a stick there); Kiwix deletes old files,
-  so ageing catalog entries become USB-only. No maps, crypto workflows,
-  comms or SDR yet.
+  so ageing catalog entries become USB-only. No maps, comms or SDR yet.
+- Cryptography: no LUKS sticks, no OpenPGP signing in the TUI (minisign
+  signs), no secure deletion of originals (the user is told); contacts'
+  keys are only as trustworthy as the user's own check.
 - Power profiles not implemented (schedutil governor only). Not measured yet.
 - Not tested on physical hardware.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Next: Phase 4 (cryptography: guided age/minisign/GnuPG
-workflows, signature verification).
+See ROADMAP.md. Next: Phase 5 (offline maps).
 
 ## 17. Important decisions (docs/decisions/)
 
@@ -344,6 +369,7 @@ workflows, signature verification).
 - 0012 User namespaces: off (max_user_namespaces=0, no Nix sandbox) when every account is Ultra-Stable
 - 0013 Resource packs: hash-pinned catalog, unprivileged store via pkexec --user, kiwix-serve + restricted lynx
 - 0014 Find & view files inside the TUI (read-only viewers); man in less secure mode
+- 0015 Guided cryptography: resilience-crypto (age, minisign, coreutils, xkcdpass, openssl, GnuPG), secrets only typed into the tools
 
 ## 18. How to continue safely
 

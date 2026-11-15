@@ -28,6 +28,8 @@ activity as known on 2026-11-14; re-check before each release.
 | Kiwix ZIM content (catalog) | 2024–2026 files | CC-BY-SA-4.0 and others (per pack) | https://download.kiwix.org | yes | not shipped: chosen by the user, hashes pinned in `nix/packs/kiwix.nix` |
 | age (age, age-keygen, age-inspect) | 1.3.2 | BSD-3-Clause | https://age-encryption.org | yes | backup encryption (ADR 0008); file and message encryption, own keys, format details (ADR 0015) |
 | minisign | 0.12 | ISC | https://jedisct1.github.io/minisign/ | yes | signing and verifying files (ADR 0015) |
+| GnuPG | 2.4.9 | GPL-3.0-or-later | https://gnupg.org | yes | OpenPGP interoperability: verify, decrypt, encrypt, import, own key (ADR 0015); agent without passphrase cache, no key server |
+| pinentry-curses | 1.3.2 | GPL-2.0-or-later | https://gnupg.org/related_software/pinentry/ | yes | GnuPG's passphrase dialog on the console |
 | xkcdpass | 1.30.0 | BSD-3-Clause | https://github.com/redacted/XKCD-password-generator | yes | random passphrases from the EFF long list and a French list (ADR 0015) |
 | OpenSSL (`openssl rand`) | 3.6.5 | Apache-2.0 | https://openssl.org | yes | random passwords and keys (ADR 0015) |
 | coreutils checksums | (coreutils) | GPL-3.0+ | https://gnu.org/software/coreutils | yes | sha256sum, sha512sum, b2sum, sha1sum, md5sum (ADR 0015) |
@@ -63,7 +65,6 @@ is to be run before each release (cargo-deny is in the dev shell).
 |---|---|---|---|---|
 | kiwix-tools | 3.8.2 | GPL-3.0+ | ZIM serving (Phase 3) | `kiwix-serve` on 127.0.0.1 + text browser |
 | w3m / lynx / links2 / elinks / chawan | 0.5.6 / 2.9.2 / 2.30 / 0.19.1 / 0.3.3 | MIT / GPL-2.0+ / GPL-2.0+ / GPL-2.0 / Unlicense | text browser for Kiwix | to compare (UTF-8, tables, link navigation) |
-| GnuPG | 2.4.9 | GPL-3.0+ | OpenPGP (Phase 4) | |
 | cryptsetup | 2.8.6 | GPL-2.0+ | LUKS (installer) | |
 | poppler-utils (pdftotext) | 26.10.0 | GPL-2.0+ | PDF text reading | |
 | visidata | 3.3 | GPL-3.0 | CSV/spreadsheet | Python closure: evaluate size |

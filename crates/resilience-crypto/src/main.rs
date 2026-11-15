@@ -25,12 +25,15 @@ use resilience_core::crypto::{
 };
 use resilience_core::{human_bytes, printable};
 
+mod pgp;
+
 const EXIT_ERROR: u8 = 1;
 const EXIT_REFUSED: u8 = 2;
 const EXIT_USAGE: u8 = 64;
 
 const USAGE: &str = "\
-Usage (TO is --passphrase, or one or more of --me and --to CONTACT):
+Usage (TO is --passphrase, or one or more of --me and --to CONTACT, or
+one or more --to-pgp FINGERPRINT for OpenPGP keys):
   resilience-crypto encrypt TO FILE       Encrypt FILE into FILE.age next to it
   resilience-crypto decrypt FILE          Decrypt into ~/Decrypted (never overwrites)
   resilience-crypto write-message TO      Type a message; save it encrypted in ~/Messages
@@ -43,7 +46,10 @@ Usage (TO is --passphrase, or one or more of --me and --to CONTACT):
   resilience-crypto inspect FILE          Tell what kind of file this is
   resilience-crypto new-keys              Create your encryption and signing keys
   resilience-crypto add-contact [FILE]    Add someone's public keys (typed or a file)
-  resilience-crypto export-keys DIR       Save your public keys into DIR";
+  resilience-crypto export-keys DIR       Save your public keys into DIR
+  resilience-crypto new-openpgp-key       Create your OpenPGP (GnuPG) key
+
+OpenPGP files (.gpg, .asc, .sig) are handled with GnuPG automatically.";
 
 enum Failure {
     Usage,
@@ -62,10 +68,16 @@ struct Ctx {
 /// Who a file or message is encrypted for.
 enum Recipients {
     Passphrase,
-    Keys { me: bool, to: Vec<String> },
+    Keys {
+        me: bool,
+        to: Vec<String>,
+    },
+    /// OpenPGP keys (fingerprints) in the GnuPG keyring.
+    OpenPgp(Vec<String>),
 }
 
 fn main() -> ExitCode {
+    install_signal_handlers();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
     let result = match argv.as_slice() {
@@ -126,6 +138,7 @@ fn dispatch(c: &Ctx, op: &str, rest: &[&str]) -> Res {
             _ => Err(Failure::Usage),
         },
         "export-keys" => export_keys(c, &file(rest)?),
+        "new-openpgp-key" if rest.is_empty() => pgp::new_key(c),
         _ => Err(Failure::Usage),
     }
 }
@@ -139,6 +152,10 @@ fn ctx() -> Result<Ctx, Failure> {
         .filter(|h| h.is_absolute())
         .ok_or_else(|| Failure::Error("HOME is not set.".into()))?;
     let keys = KeyStore::for_home(&home);
+    for d in [crypto::DECRYPTED_DIR, crypto::MESSAGES_DIR] {
+        clean_stale_partials(&home.join(d));
+    }
+    clean_stale_partials(&keys.own_dir());
     Ok(Ctx { tools, home, keys })
 }
 
@@ -146,19 +163,28 @@ fn recipients(args: &[&str]) -> Result<Recipients, Failure> {
     match args {
         ["--passphrase"] => Ok(Recipients::Passphrase),
         _ => {
-            let (mut me, mut to) = (false, Vec::new());
+            let (mut me, mut to, mut pgp) = (false, Vec::new(), Vec::new());
             let mut it = args.iter();
             while let Some(a) = it.next() {
                 match *a {
                     "--me" => me = true,
                     "--to" => to.push(it.next().ok_or(Failure::Usage)?.to_string()),
+                    "--to-pgp" => {
+                        let f = it.next().ok_or(Failure::Usage)?.to_ascii_uppercase();
+                        if !resilience_core::openpgp::is_fingerprint(&f) {
+                            return Err(Failure::Usage);
+                        }
+                        pgp.push(f);
+                    }
                     _ => return Err(Failure::Usage),
                 }
             }
-            if !me && to.is_empty() {
-                return Err(Failure::Usage);
+            match (me || !to.is_empty(), !pgp.is_empty()) {
+                (true, false) => Ok(Recipients::Keys { me, to }),
+                (false, true) => Ok(Recipients::OpenPgp(pgp)),
+                // age and OpenPGP keys cannot be mixed in one file.
+                _ => Err(Failure::Usage),
             }
-            Ok(Recipients::Keys { me, to })
         }
     }
 }
@@ -167,6 +193,7 @@ fn recipients(args: &[&str]) -> Result<Recipients, Failure> {
 fn recipient_args(c: &Ctx, r: &Recipients) -> Result<(Vec<String>, String), Failure> {
     match r {
         Recipients::Passphrase => Ok((vec!["--passphrase".into()], "a passphrase".into())),
+        Recipients::OpenPgp(f) => Ok((Vec::new(), pgp::names(c, f)?)),
         Recipients::Keys { me, to } => {
             let mut args = Vec::new();
             let mut who = Vec::new();
@@ -276,6 +303,71 @@ struct Partial {
     keep: bool,
 }
 
+/// The partial file being written, for the signal handler: Ctrl-C (which
+/// the banner offers), a hang-up or a kill must not leave partial
+/// plaintext behind. One partial file exists at a time.
+static PARTIAL: std::sync::atomic::AtomicPtr<libc::c_char> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+extern "C" fn on_signal(_: libc::c_int) {
+    let p = PARTIAL.swap(std::ptr::null_mut(), std::sync::atomic::Ordering::SeqCst);
+    // SAFETY: unlink and _exit are async-signal-safe; p is a leaked,
+    // NUL-terminated CString or NULL.
+    unsafe {
+        if !p.is_null() {
+            libc::unlink(p);
+        }
+        libc::_exit(130);
+    }
+}
+
+/// Catch SIGINT/SIGTERM/SIGHUP. A caught signal is reset to the default in
+/// programs we start (exec), so Ctrl-C still stops age, gpg or minisign.
+fn install_signal_handlers() {
+    for sig in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        // SAFETY: installing a handler that only calls async-signal-safe
+        // functions.
+        unsafe {
+            libc::signal(sig, on_signal as *const () as libc::sighandler_t);
+        }
+    }
+}
+
+fn set_partial(path: Option<&Path>) {
+    let new = path
+        .and_then(|p| std::ffi::CString::new(p.as_os_str().as_bytes()).ok())
+        .map(|c| c.into_raw())
+        .unwrap_or(std::ptr::null_mut());
+    let old = PARTIAL.swap(new, std::sync::atomic::Ordering::SeqCst);
+    if !old.is_null() {
+        // SAFETY: old came from CString::into_raw above and is no longer
+        // reachable by the handler (swapped out).
+        drop(unsafe { std::ffi::CString::from_raw(old) });
+    }
+}
+
+/// Remove partial files left by an earlier run that was killed without its
+/// handler (SIGKILL, power loss): `.NAME.partial-PID` whose PID is gone.
+fn clean_stale_partials(dir: &Path) {
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let name = e.file_name();
+        let Some(n) = name.to_str() else { continue };
+        let Some(pid) = n
+            .rsplit_once(".partial-")
+            .and_then(|(_, p)| p.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        // SAFETY: kill with signal 0 only checks whether the process exists.
+        let gone = unsafe { libc::kill(pid, 0) } != 0
+            && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+        if n.starts_with('.') && gone {
+            let _ = fs::remove_file(e.path());
+        }
+    }
+}
+
 impl Partial {
     fn create(target: &Path, mode: u32) -> Result<(Partial, fs::File), Failure> {
         let dir = target.parent().unwrap_or(Path::new("."));
@@ -286,6 +378,7 @@ impl Partial {
         let path = dir.join(OsStr::from_bytes(&tmp_name));
         let f = create_new(&path, mode)
             .map_err(|e| Failure::Refused(format!("Cannot write in {}: {e}", shown(dir))))?;
+        set_partial(Some(&path));
         Ok((Partial { path, keep: false }, f))
     }
 
@@ -294,6 +387,7 @@ impl Partial {
             .map_err(|e| Failure::Error(format!("Cannot save {}: {e}", shown(target))))?;
         rename_noreplace(&self.path, target)
             .map_err(|e| Failure::Error(format!("Cannot save {}: {e}", shown(target))))?;
+        set_partial(None);
         self.keep = true;
         Ok(())
     }
@@ -302,6 +396,7 @@ impl Partial {
 impl Drop for Partial {
     fn drop(&mut self) {
         if !self.keep {
+            set_partial(None);
             let _ = fs::remove_file(&self.path);
         }
     }
@@ -362,6 +457,9 @@ fn stamp() -> String {
 // ----- encrypt / decrypt -------------------------------------------------------
 
 fn encrypt(c: &Ctx, file: &Path, r: &Recipients) -> Res {
+    if let Recipients::OpenPgp(f) = r {
+        return pgp::encrypt(c, file, f);
+    }
     let file = absolute(file)?;
     let (meta, head) = head_of(&file)?;
     if detect(&head).is_age() {
@@ -418,6 +516,9 @@ fn decrypt(c: &Ctx, file: &Path) -> Res {
     let file = absolute(file)?;
     let (meta, head) = head_of(&file)?;
     let fmt = detect(&head);
+    if is_pgp_message(&fmt) {
+        return pgp::decrypt(c, &file, meta.len());
+    }
     if !fmt.is_age() {
         return Err(not_age(&fmt, &file));
     }
@@ -453,11 +554,18 @@ fn decrypt(c: &Ctx, file: &Path) -> Res {
     partial.finish(&out, &target)?;
     heading("DONE");
     say(&format!(
-        "Decrypted into: {}\n\nage checked that the content was not changed. The decrypted \
-         copy is readable by your account only; delete it when you no longer need it.",
+        "Decrypted into: {}\n\nage checked that the content was not changed since it was \
+         encrypted. That does not prove who wrote it: anyone with your public key can \
+         encrypt for you (a signature proves the author). The decrypted copy is readable \
+         by your account only; delete it when you no longer need it.",
         shown(&target)
     ));
     Ok(())
+}
+
+/// An OpenPGP encrypted message (not a key or a detached signature).
+fn is_pgp_message(fmt: &Format) -> bool {
+    matches!(fmt, Format::OpenPgp { what, .. } if what.contains("message"))
 }
 
 fn not_age(fmt: &Format, file: &Path) -> Failure {
@@ -513,6 +621,9 @@ fn write_message(c: &Ctx, r: &Recipients) -> Res {
             "The message is empty: nothing was saved.".into(),
         ));
     }
+    if let Recipients::OpenPgp(f) = r {
+        return pgp::write_message(c, &text, f);
+    }
     let dir = c.home.join(crypto::MESSAGES_DIR);
     ensure_private_dir(&dir)?;
     let target = free_path(&dir, OsStr::new(&format!("message-{}.age.txt", stamp())))
@@ -567,6 +678,14 @@ fn read_message(c: &Ctx, file: &Path) -> Res {
     let file = absolute(file)?;
     let (meta, head) = head_of(&file)?;
     let fmt = detect(&head);
+    if meta.len() > 4 * MAX_MESSAGE as u64 {
+        return Err(Failure::Refused(
+            "This is too big for a message: use \"Decrypt a file\".".into(),
+        ));
+    }
+    if is_pgp_message(&fmt) {
+        return pgp::read_message(c, &file);
+    }
     if !fmt.is_age() {
         return Err(not_age(&fmt, &file));
     }
@@ -609,7 +728,8 @@ fn read_message(c: &Ctx, file: &Path) -> Res {
     }
     let text = String::from_utf8_lossy(&out.stdout);
     let page = format!(
-        "DECRYPTED MESSAGE (shown only, not saved). age checked that it was not changed.\n\
+        "DECRYPTED MESSAGE (shown only, not saved). age checked that it was not changed \
+         since it was encrypted; that does not prove who wrote it.\n\
          Press q to close.\n\n{text}"
     );
     show_text(c, &page)
@@ -719,13 +839,19 @@ fn verify(c: &Ctx, file: &Path) -> Res {
         s.extend_from_slice(b".minisig");
         (file.clone(), file.with_file_name(OsStr::from_bytes(&s)))
     };
+    // OpenPGP (GnuPG) signatures: NAME.sig, NAME.asc, or a signed text.
+    if !sig.is_file() {
+        if let Some((pgp_sig, pgp_data)) = pgp::signature_for(&file) {
+            return pgp::verify(c, &pgp_sig, pgp_data.as_deref());
+        }
+    }
     head_of(&data)?;
     heading("CHECK A SIGNATURE");
     say(&format!("File:      {}", shown(&data)));
     if !sig.is_file() {
         return Err(Failure::Refused(format!(
-            "No signature found. A minisign signature is a file named {} next to the \
-             signed file.",
+            "No signature found. A signature is a file next to the signed file, named \
+             {} (minisign) or ending in .sig or .asc (OpenPGP).",
             shown(&sig)
         )));
     }
@@ -959,6 +1085,9 @@ fn inspect(c: &Ctx, file: &Path) -> Res {
             }
         }
     }
+    if is_pgp_message(&fmt) {
+        pgp::inspect(c, &file);
+    }
     if let Format::MinisignSignature = fmt {
         if let Some(id) = crypto::minisign_signature_key_id(&String::from_utf8_lossy(&head)) {
             let who = match c.keys.signer(&id) {
@@ -1031,7 +1160,10 @@ fn new_keys(c: &Ctx) -> Res {
         ));
     }
     if !has_sig {
-        say("\n2. SIGNING KEY (minisign): choose its password (asked twice).\n");
+        say(
+            "\n2. SIGNING KEY (minisign): choose its password (asked twice). Do not \
+             leave it empty: an empty password leaves the key unprotected.\n",
+        );
         let tmp = c
             .keys
             .own_dir()
@@ -1100,6 +1232,12 @@ fn age_accepts(c: &Ctx, key: &str) -> bool {
 }
 
 fn add_contact(c: &Ctx, file: Option<&Path>) -> Res {
+    if let Some(f) = file {
+        let (_, head) = head_of(f)?;
+        if let Format::OpenPgp { .. } = detect(&head) {
+            return pgp::add_contact(c, f);
+        }
+    }
     heading("ADD A CONTACT");
     let text = match file {
         Some(f) => {
@@ -1215,11 +1353,6 @@ fn add_contact(c: &Ctx, file: Option<&Path>) -> Res {
 
 fn export_keys(c: &Ctx, dir: &Path) -> Res {
     let own = c.keys.own();
-    if own.encryption.is_none() && own.signing.is_none() {
-        return Err(Failure::Refused(
-            "You have no keys yet. Create them in Keys & contacts.".into(),
-        ));
-    }
     let dir = absolute(dir)?;
     if !dir.is_dir() {
         return Err(Failure::Refused(format!(
@@ -1232,15 +1365,29 @@ fn export_keys(c: &Ctx, dir: &Path) -> Res {
         .chars()
         .filter(|ch| ch.is_alphanumeric() || matches!(ch, '-' | '_' | '.'))
         .collect();
-    let date = resilience_core::admin::now_rfc3339();
-    let text = crypto::export_text(&user, &own, date.get(..10).unwrap_or(&date));
-    let target = free_path(&dir, OsStr::new(&format!("{user}-public-keys.txt")))
-        .ok_or_else(|| Failure::Refused("Too many files with this name.".into()))?;
-    let (partial, mut out) = Partial::create(&target, 0o644)?;
-    out.write_all(text.as_bytes())
-        .map_err(|e| Failure::Error(format!("Cannot write: {e}")))?;
-    partial.finish(&out, &target)?;
     heading("PUBLIC KEYS SAVED");
-    say(&format!("Saved: {}\n\n{text}", shown(&target)));
+    let mut saved = false;
+    if own.encryption.is_some() || own.signing.is_some() {
+        let date = resilience_core::admin::now_rfc3339();
+        let text = crypto::export_text(&user, &own, date.get(..10).unwrap_or(&date));
+        let target = free_path(&dir, OsStr::new(&format!("{user}-public-keys.txt")))
+            .ok_or_else(|| Failure::Refused("Too many files with this name.".into()))?;
+        let (partial, mut out) = Partial::create(&target, 0o644)?;
+        out.write_all(text.as_bytes())
+            .map_err(|e| Failure::Error(format!("Cannot write: {e}")))?;
+        partial.finish(&out, &target)?;
+        say(&format!("Saved: {}\n\n{text}", shown(&target)));
+        saved = true;
+    }
+    if let Some(p) = pgp::export(c, &dir, &user)? {
+        say(&format!("Saved: {}\n", shown(&p)));
+        saved = true;
+    }
+    if !saved {
+        return Err(Failure::Refused(
+            "You have no keys yet. Create them in Keys & contacts.".into(),
+        ));
+    }
+    say("These files contain no secret.");
     Ok(())
 }

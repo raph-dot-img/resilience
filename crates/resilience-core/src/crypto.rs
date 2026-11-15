@@ -466,7 +466,12 @@ pub fn detect(head: &[u8]) -> Format {
             .take_while(|l| !l.starts_with("-----END"))
             .map(str::trim)
             .collect();
-        // Decode whole 4-character groups only: the head may be cut.
+        // Base64 characters only (ASCII, so cutting is safe), and whole
+        // 4-character groups only: the head may be cut.
+        let body: String = body
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '='))
+            .collect();
         let cut = body.len() - body.len() % 4;
         let stanzas = base64_decode(&body[..cut])
             .map(|raw| age_stanzas(&raw))
@@ -701,7 +706,7 @@ pub fn describe(f: &Format) -> (String, String) {
             "It may or may not be encrypted (7-Zip uses AES-256 when a password is set).",
         ),
         Format::Pem(label) => (
-            format!("A PEM block: {label}"),
+            format!("A PEM block: {}", crate::printable(label)),
             if label.contains("PRIVATE") {
                 "This is a PRIVATE key: never share it.".to_string()
             } else {
@@ -1199,6 +1204,10 @@ dfqiX2FQVLiTMfb7hTcmQ9B9KiBhyTyLsZVhh5CFMuCWDcmMyollHa70tF+BK45z8CHz+6UegRXiR4e7
         assert_eq!(detect(sums.as_bytes()), Format::ChecksumList);
         assert_eq!(detect(b"hello world\n"), Format::Text);
         assert_eq!(detect(b"\x7fELF\x02\x01\x00\x00"), Format::Unknown);
+        // Crafted armor with a multi-byte character: no panic.
+        assert!(detect("-----BEGIN AGE ENCRYPTED FILE-----\nabcé".as_bytes()).is_age());
+        let (t, _) = describe(&detect(b"-----BEGIN \x1b[2J-----\n"));
+        assert!(!t.contains('\x1b'), "{t:?}");
         for f in [
             Format::Unknown,
             Format::Luks,

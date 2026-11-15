@@ -631,6 +631,9 @@ pub enum Pending {
     RemoveContact {
         name: String,
     },
+    RemovePgpKey {
+        fingerprint: String,
+    },
 }
 
 #[derive(Debug)]
@@ -1929,7 +1932,8 @@ impl App {
             | Pending::Backup { .. }
             | Pending::Restore { .. }
             | Pending::ChangePacks { .. }
-            | Pending::RemoveContact { .. } => return,
+            | Pending::RemoveContact { .. }
+            | Pending::RemovePgpKey { .. } => return,
             Pending::Logout => (
                 "LOG OUT",
                 "End this session? Programs you started from here will be closed.",
@@ -2192,6 +2196,10 @@ impl App {
             }
             Pending::RemoveContact { name } => {
                 self.remove_contact(&name);
+                return Effect::None;
+            }
+            Pending::RemovePgpKey { fingerprint } => {
+                self.remove_pgp_key(&fingerprint);
                 return Effect::None;
             }
             Pending::Reboot => "reboot",

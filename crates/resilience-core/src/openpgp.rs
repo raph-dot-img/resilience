@@ -128,6 +128,27 @@ pub fn parse_import(status: &str) -> Vec<String> {
     out
 }
 
+/// Recipients of an encrypted message, from `gpg --list-only --status-fd 1
+/// --decrypt` (nothing is decrypted): the key ids it is encrypted to, and
+/// whether a passphrase also opens it.
+pub fn parse_enc_to(status: &str) -> (Vec<String>, bool) {
+    let mut ids: Vec<String> = Vec::new();
+    let mut passphrase = false;
+    for l in status.lines() {
+        let Some(r) = l.strip_prefix("[GNUPG:] ") else {
+            continue;
+        };
+        if let Some(id) = r.strip_prefix("ENC_TO ").and_then(|x| x.split(' ').next()) {
+            if !ids.iter().any(|i| i == id) {
+                ids.push(id.to_string());
+            }
+        } else if r.starts_with("NEED_PASSPHRASE_SYM") || r.starts_with("SYMKEY_ENC") {
+            passphrase = true;
+        }
+    }
+    (ids, passphrase)
+}
+
 /// A key of the GnuPG keyring, from `--with-colons --fingerprint`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PgpKey {
@@ -143,6 +164,19 @@ pub struct PgpKey {
     pub secret: bool,
     /// Can encrypt (has an encryption subkey or capability).
     pub can_encrypt: bool,
+    /// Fingerprints of its subkeys (messages name the subkey they are
+    /// encrypted to).
+    pub subkeys: Vec<String>,
+}
+
+impl PgpKey {
+    /// This key, or one of its subkeys, has the 16-digit key id `id`.
+    pub fn has_id(&self, id: &str) -> bool {
+        let id = id.to_ascii_uppercase();
+        std::iter::once(&self.fingerprint)
+            .chain(&self.subkeys)
+            .any(|f| f.ends_with(&id))
+    }
 }
 
 /// Parse a `gpg --with-colons --fingerprint --list-keys` (or
@@ -150,6 +184,7 @@ pub struct PgpKey {
 pub fn parse_keys(colons: &str) -> Vec<PgpKey> {
     let mut keys: Vec<PgpKey> = Vec::new();
     let mut want_fpr = false;
+    let mut want_sub = false;
     for line in colons.lines() {
         let f: Vec<&str> = line.split(':').collect();
         match f.first().copied() {
@@ -164,14 +199,21 @@ pub fn parse_keys(colons: &str) -> Vec<PgpKey> {
                     unusable: matches!(validity, "r" | "e" | "d" | "i") || caps.contains('D'),
                     secret: kind == "sec",
                     can_encrypt: caps.contains('E'),
+                    subkeys: Vec::new(),
                 });
                 want_fpr = true;
+                want_sub = false;
             }
-            Some("fpr") if want_fpr => {
+            Some("fpr") if want_fpr || want_sub => {
                 if let (Some(k), Some(fpr)) = (keys.last_mut(), f.get(9)) {
-                    k.fingerprint = fpr.to_string();
+                    if want_fpr {
+                        k.fingerprint = fpr.to_string();
+                    } else {
+                        k.subkeys.push(fpr.to_string());
+                    }
                 }
                 want_fpr = false;
+                want_sub = false;
             }
             Some("uid") => {
                 if let Some(k) = keys.last_mut() {
@@ -180,7 +222,10 @@ pub fn parse_keys(colons: &str) -> Vec<PgpKey> {
                     }
                 }
             }
-            Some("sub" | "ssb") => want_fpr = false,
+            Some("sub" | "ssb") => {
+                want_fpr = false;
+                want_sub = true;
+            }
             _ => {}
         }
     }
@@ -235,6 +280,10 @@ pub fn user_id(name: &str, email: &str) -> Result<String, &'static str> {
         .any(|c| c.is_control() || matches!(c, '<' | '>' | ':' | '"'))
     {
         return Err("The name cannot contain < > : or quotes.");
+    }
+    // Never something gpg could read as an option.
+    if !name.chars().next().is_some_and(char::is_alphanumeric) {
+        return Err("The name must start with a letter or a digit.");
     }
     if email.is_empty() {
         return Ok(name.to_string());
@@ -360,6 +409,12 @@ uid:r::::1700000000::AA::Old Key \\x3a revoked::::::::::0:
         assert_eq!(keys[0].expires, Some(1857806011));
         assert!(keys[0].can_encrypt && !keys[0].unusable && !keys[0].secret);
         assert!(keys[1].unusable && !keys[1].can_encrypt);
+        assert_eq!(
+            keys[0].subkeys,
+            vec!["2BE0AD4644D8CA0B7638EA45C3B7C7F0176BFEFA".to_string()]
+        );
+        assert!(keys[0].has_id("C3B7C7F0176BFEFA") && keys[0].has_id("e9bd41b619251f40"));
+        assert!(!keys[1].has_id("C3B7C7F0176BFEFA"));
         assert_eq!(keys[1].uid, "Old Key : revoked");
         // A bad escape followed by a multi-byte character does not panic.
         assert_eq!(unescape("a\\xé"), "a\\xé");
@@ -372,6 +427,25 @@ uid:r::::1700000000::AA::Old Key \\x3a revoked::::::::::0:
     }
 
     #[test]
+    fn recipients_of_a_message() {
+        let st = "[GNUPG:] ENC_TO C3B7C7F0176BFEFA 18 0\n[GNUPG:] ENC_TO C3B7C7F0176BFEFA 18 0\n[GNUPG:] ENC_TO 1122334455667788 1 0\n";
+        assert_eq!(
+            parse_enc_to(st),
+            (
+                vec![
+                    "C3B7C7F0176BFEFA".to_string(),
+                    "1122334455667788".to_string()
+                ],
+                false
+            )
+        );
+        assert_eq!(
+            parse_enc_to("[GNUPG:] NEED_PASSPHRASE_SYM 9 3 2\n"),
+            (vec![], true)
+        );
+    }
+
+    #[test]
     fn user_ids() {
         assert_eq!(
             user_id("Alice Martin", "alice@example.org"),
@@ -380,6 +454,8 @@ uid:r::::1700000000::AA::Old Key \\x3a revoked::::::::::0:
         assert_eq!(user_id("  Bob ", ""), Ok("Bob".into()));
         assert!(user_id("A", "").is_err());
         assert!(user_id("Eve <x>", "").is_err());
+        assert!(user_id("--status-file=/tmp/x", "").is_err());
+        assert!(user_id("-x", "").is_err());
         assert!(user_id("Eve", "not-an-address").is_err());
         assert!(user_id("Eve", "a@b").is_err());
         assert!(user_id("Eve", "a b@c.d").is_err());
