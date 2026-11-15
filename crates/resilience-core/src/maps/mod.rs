@@ -5,7 +5,10 @@
 //!   a view, tile-to-screen transforms, sphere distance and direction,
 //!   coordinate formatting and parsing, scale bars.
 //! - [`mvt`]: the bounded Mapbox Vector Tile decoder.
+//! - [`canvas`], [`style`], [`label`]: the pixel canvas, the
+//!   `resilience-1` style table and label placement.
 
+pub mod canvas;
 pub mod geo;
 pub mod mvt;
 #[cfg(any(test, feature = "test-support"))]
