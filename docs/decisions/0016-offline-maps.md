@@ -1,7 +1,6 @@
 # ADR 0016: Offline maps
 
-Status: accepted (2026-11-15). Questions 1 and 5 at the end remain open for
-the project owner; neither blocks the implementation.
+Status: accepted (2026-11-15).
 
 ## Context
 
@@ -772,14 +771,15 @@ Decided during implementation:
   geometry type are skipped and counted; any other malformed content
   rejects the whole tile.
 
-Open for the project owner:
+Decided by the project owner on 2026-11-15:
 
-1. **Hosting.** Should pack builds be published somewhere public (for
-   example GitHub Release assets of the project, at most 2 GiB each,
-   which fits per-région packs but not all of France)? Without it,
-   `urls` stay empty and regional maps come only from sticks.
-5. **ODbL**: is the Nix derivation acceptable as the offer of the method
-   of creation, if packs are distributed?
+- **Hosting**: built packs are published as GitHub Release assets of the
+  project (at most 2 GiB each, so per-région packs; all of France as one
+  file does not fit and stays stick-only or is split by région). Catalog
+  `urls` point at those assets once a pack is built and uploaded.
+- **ODbL**: the Nix derivation that builds a pack is the offer of the
+  method of creation. Packs are distributed under ODbL 1.0 with the
+  OpenStreetMap attribution.
 
 Tested by: the experiments above (throwaway, 2026-11-15). The tests
 listed in §8 come with the slices.
