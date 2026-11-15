@@ -128,6 +128,14 @@ passphrases on the tty themselves; outputs `.partial` + RENAME_NOREPLACE;
 decrypted files only in ~/Decrypted; keys in ~/.local/share/resilience/keys
 (age identity = age-keygen | age -p, never in clear). Random passwords: TUI
 runs xkcdpass/openssl and shows them in a dialog (never notified/logged).
+Invariants kept from the ADR 0015 review (do not regress): a non-detached
+OpenPGP signature `NAME.asc` beside `NAME` is refused (never VALID for NAME);
+clear-signed text is shown exactly as signed; gpg always `--batch
+--no-auto-key-retrieve --no-auto-key-locate`, file paths absolute, user id
+after `--`, names start alphanumeric; gpg output into memory is bounded
+(`pgp::capture`); the binary's SIGINT/SIGTERM/SIGHUP handler unlinks the
+current `.partial` (one at a time, `PARTIAL` atomic) and stale partials of
+dead PIDs are removed at start; checksum tools run with LC_ALL=C.
 
 Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
 with `connection.permissions user:U`, no secret → thread: `nmcli connection
@@ -303,7 +311,7 @@ needlessly. Watch `free -h` during VM tests.
 4. The build-time catalog check ensures the binary exists. Add a VM test
    assertion if the app is important.
 
-## 14. Current implementation status (2026-11-14)
+## 14. Current implementation status (2026-11-15)
 
 Phase 0 (foundation), Phase 1 (core), Phase 2, Phase 3 and Phase 4 done
 (Phase 3: resource packs, sets, built-in docs, packs on sticks, ADR 0013;
@@ -322,6 +330,10 @@ notes, handbook, network diagnostics, system status, notifications, power and
 logout with confirmation), session wrapper with crash recovery, group-based
 modes with Nix-daemon and sudo restrictions, VM tests.
 See docs/TESTING.md for what has actually been executed and passed.
+Git state (2026-11-15): `main` = `develop` = end of Phase 4, both pushed to
+origin; last full `nix flake check -L --max-jobs 1` passed (9 VM tests,
+26 invariants × 3 configurations). Rust: 121 core, 3 library, 1 store,
+60 TUI tests; clippy clean. The ISO was not rebuilt since Phase 2.
 
 ## 15. Known bugs and limitations
 
