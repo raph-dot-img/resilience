@@ -40,7 +40,7 @@ the system therefore chose the content, its source and its exact bytes, the
 same way Nix pins fixed-output downloads. HTTPS protects privacy and gives
 early errors; the hash gives integrity and authenticity. A stick prepared by
 anyone can be used, because a file that does not match is refused. The
-starting catalog has 20 packs (English and French), with sizes and hashes
+catalog now has 29 packs (English and French), with sizes and hashes
 from Kiwix's metalinks of 2026-11-14.
 
 Only content that reads well in a text browser is listed. Wikimedia
@@ -103,7 +103,8 @@ there gives nothing an attacker could not get as the user.
 
 `resilience-library open FILE [--search WORDS]` (as the user) starts
 `kiwix-serve` for that one file on 127.0.0.1, on a free port, with
-`--blockexternal` and `--attachToProcess`. It then runs **lynx with every restriction and `-localhost`**: no shell escape, no saving or
+`--blockexternal` and `--attachToProcess`. It then runs **lynx with every
+restriction and `-localhost`**: no shell escape, no saving or
 printing, no external programs, no address to type, no remote host. The
 restrictions are listed one by one (`nix/modules/packs.nix`), because
 `-restrictions=all` also refuses the server's redirects, and `-localhost`
@@ -193,8 +194,8 @@ Added the same day, after the first version:
 
 - An administrator chooses, with one password, what every account can read.
   Ultra-Stable users can choose packs; the administrator authorises.
-- On the live system (no administrator) packs cannot be installed. Reading
-  directly from a stick is not offered yet.
+- On the live system (no administrator) packs cannot be installed; they can
+  be read directly from a stick.
 - The catalog ages: Kiwix deletes old files, and those packs can then only
   be installed from a stick, until a system update brings newer entries.
   A failed download says so. Updating the catalog without a system update

@@ -316,8 +316,8 @@ See docs/TESTING.md for what has actually been executed and passed.
   those programs; they are usability measures, not a sandbox.
 - Emergency/rescue shell requires root, which is locked, by design: layered
   recovery (TUI Recovery, other ttys + Advanced/sudo, generations, live ISO).
-- Resource packs: installing needs an administrator (none on the live ISO);
-  packs cannot yet be read directly from a stick; Kiwix deletes old files,
+- Resource packs: installing needs an administrator (none on the live ISO;
+  packs can be read from a stick there); Kiwix deletes old files,
   so ageing catalog entries become USB-only. No maps, crypto workflows,
   comms or SDR yet.
 - Power profiles not implemented (schedutil governor only). Not measured yet.
