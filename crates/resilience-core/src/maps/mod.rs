@@ -9,6 +9,7 @@
 //!   `resilience-1` style table and label placement.
 
 pub mod canvas;
+pub mod style;
 pub mod geo;
 pub mod mvt;
 #[cfg(any(test, feature = "test-support"))]
