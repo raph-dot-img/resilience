@@ -1483,7 +1483,7 @@ impl App {
                     }
                     KeyCode::Enter => {
                         if let Some(r) = row {
-                            self.pack_details(s, r);
+                            next = self.pack_details(s, r);
                         }
                     }
                     _ if is_back(key) => return (None, Effect::None),
@@ -3024,7 +3024,7 @@ impl App {
 
     fn reload_packs_in(&mut self, items: &mut Vec<LibItem>, list: &mut ListState) {
         if let Ok(c) = resilience_core::packs::PackConfig::load(&self.paths.packs_config) {
-            *items = self.all_library_items(&c);
+            *items = self.all_library_items(&c, resilience_core::packs::PackKind::Zim);
             clamp_selection(list, items.len());
         }
     }

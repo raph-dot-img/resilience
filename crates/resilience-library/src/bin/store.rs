@@ -278,6 +278,30 @@ mod tests {
         ] {
             assert!(parse(&s(bad)).is_err(), "{bad:?}");
         }
+        // Map packs (ADR 0016): the same rules, a second extension.
+        let r = parse(&s(&[
+            "change",
+            "--remove",
+            "map-osm-luxembourg_2025-07.mbtiles",
+            "--get",
+            "map-osm-luxembourg",
+        ]))
+        .expect("map names");
+        assert_eq!(r.remove, vec!["map-osm-luxembourg_2025-07.mbtiles"]);
+        assert_eq!(r.get, vec!["map-osm-luxembourg"]);
+        for bad in [
+            ".mbtiles",
+            "../x.mbtiles",
+            "/var/lib/resilience/packs/x.mbtiles",
+            "x.mbtiles.part",
+            "x.mbtiles-wal",
+            "x.mbtiles-journal",
+            "x..mbtiles",
+            "x y.mbtiles",
+            "lock",
+        ] {
+            assert!(parse(&s(&["change", "--remove", bad])).is_err(), "{bad}");
+        }
         let many: Vec<String> = std::iter::once("change".to_string())
             .chain((0..65).flat_map(|i| ["--get".to_string(), format!("p{i}")]))
             .collect();

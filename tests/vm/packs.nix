@@ -5,7 +5,9 @@
 # copied from a hot-plugged USB stick, reading it in lynx (links, full-text
 # search, no shell escape, no other address), a download interrupted with
 # Ctrl-C and resumed, a file that does not match the catalog, a wrong
-# password, and removing a pack.
+# password, and removing a pack. A map pack (.mbtiles, ADR 0016; fake bytes,
+# the store never reads them) goes through the same install and removal,
+# with its catalog fields, and is never offered to the text browser.
 { self }:
 { hostPkgs, ... }:
 let
@@ -48,6 +50,11 @@ let
   '';
   zim = "${fieldnotes}/fieldnotes_en_2026-01.zim";
 
+  # A "map pack": only its name, size and hash matter to the pack machinery.
+  mapContent = "Not a real map: bytes for the Resilience vm-packs test.\n";
+  mapFile = pkgs.writeText "map-osm-testland_2026-01.mbtiles" mapContent;
+  mapCoverage = "Testland only (a test region): streets and places. Outside it, no detail. END-OF-COVERAGE";
+
   # A USB stick image with the pack in its Resilience-packs folder.
   stick =
     pkgs.runCommand "pack-stick.img"
@@ -62,6 +69,7 @@ let
         mkfs.vfat -n PACKSTICK $out
         mmd -i $out ::/Resilience-packs
         mcopy -i $out ${zim} ::/Resilience-packs/
+        mcopy -i $out ${mapFile} ::/Resilience-packs/map-osm-testland_2026-01.mbtiles
       '';
 in
 {
@@ -173,6 +181,21 @@ in
           urls = [ "https://mirror/zim/tampered_2026-01.zim" ];
           license = "CC0-1.0";
           source = "Resilience test suite";
+        }
+        {
+          id = "map-osm-testland";
+          title = "Testland (test map)";
+          description = "A map pack with fake bytes";
+          category = "maps";
+          language = "en";
+          file = "map-osm-testland_2026-01.mbtiles";
+          size = builtins.stringLength mapContent;
+          sha256 = builtins.hashString "sha256" mapContent;
+          license = "ODbL-1.0";
+          source = "Resilience test suite";
+          data_date = "2026-01-01";
+          coverage = mapCoverage;
+          attribution = "© OpenStreetMap contributors";
         }
       ];
       environment.etc."resilience/packs.toml".source = lib.mkForce catalog;
@@ -288,6 +311,16 @@ in
         assert "Tampered" not in tty_text("1")
         machine.send_chars("ff")
         wait_tty("1", "all languages")
+        # The map pack: its own category, and its details in full.
+        wait_tty("1", "-- MAPS --")
+        select(r"\[ \] Testland \(test map\)")
+        machine.send_key("ret")
+        wait_tty("1", "PACK DETAILS")
+        wait_tty("1", "END-OF-COVERAGE")
+        wait_tty("1", "Data date: 2026-01-01")
+        wait_tty("1", "Attribution: . OpenStreetMap contributors")
+        machine.send_key("esc")
+        wait_tty("1", "RESOURCE PACKS")
 
     with subtest("USB: a pack copied from a stick is checked and installed"):
         img = os.path.join(os.environ.get("TMPDIR", "/tmp"), "packstick.img")
@@ -303,11 +336,18 @@ in
         machine.send_key("ret")
         wait_tty("1", "Copy from the USB stick")
         wait_tty("1", r"\+ Field notes \(test\)")
+        wait_tty("1", r"\+ Testland \(test map\)")
         machine.send_chars("y")
         authenticate("carol-pw")
-        wait_tty("1", "installed and checked", timeout=60)
+        wait_tty("1", r"Field notes \(test\): installed and checked", timeout=60)
+        wait_tty("1", r"Testland \(test map\): installed and checked", timeout=60)
         back_to_packs()
         wait_tty("1", r"\[\*\] Field notes \(test\)")
+        wait_tty("1", r"\[\*\] Testland \(test map\)")
+        out = machine.succeed(f"stat -c '%U %a %s' {library}/map-osm-testland_2026-01.mbtiles")
+        assert out.strip() == "resilience-packs 644 ${toString (builtins.stringLength mapContent)}", out
+        got = machine.succeed(f"sha256sum {library}/map-osm-testland_2026-01.mbtiles").split()[0]
+        assert got == "${builtins.hashString "sha256" mapContent}", got
         out = machine.succeed(f"stat -c '%U %a %s' {library}/fieldnotes_en_2026-01.zim")
         assert out.startswith("resilience-packs 644 "), out
         want = machine.succeed("sed -n '/fieldnotes/,$ s/^sha256 = \"\\(.*\\)\"$/\\1/p' /etc/resilience/packs.toml").strip()
@@ -327,6 +367,8 @@ in
         wait_tty("1", r"Built in\s+System documentation \(built in\)")
         wait_tty("1", r"Practical\s+Field notes \(test\)")
         wait_tty("1", r"USB stick\s+Field notes \(test\)")
+        # Maps are not read in the text browser: not listed, installed or not.
+        assert "Testland" not in tty_text("1"), tty_text("1")
         select(r"Built in")
         machine.send_key("ret")
         wait_tty("1", "Offline documentation of this computer", timeout=60)
@@ -389,6 +431,17 @@ in
         assert ps.startswith("alice ") and "/run/media/alice/PACKSTICK/" in ps, ps
         quit_lynx()
 
+    with subtest("library: a map pack is refused, never given to kiwix-serve"):
+        lib_bin = store.replace("/bin/resilience-pack-store", "/bin/resilience-library")
+        for f in [f"{library}/map-osm-testland_2026-01.mbtiles",
+                  "/run/media/alice/PACKSTICK/Resilience-packs/map-osm-testland_2026-01.mbtiles"]:
+            rc, out = machine.execute(f"runuser -u alice -- {lib_bin} open {f} 2>&1 </dev/null")
+            assert rc == 2 and "Maps & navigation" in out, (f, rc, out)
+        machine.fail("pgrep -x kiwix-serve")
+        # Checking it against the catalog works as for any pack.
+        rc, out = machine.execute(f"runuser -u alice -- {lib_bin} check /run/media/alice/PACKSTICK/Resilience-packs/map-osm-testland_2026-01.mbtiles 2>&1")
+        assert rc == 0 and "MATCHES" in out, (rc, out)
+
     with subtest("download: a wrong password changes nothing"):
         machine.send_chars("p")
         wait_tty("1", "RESOURCE PACKS")
@@ -446,13 +499,17 @@ in
     with subtest("remove: a ticked installed pack is removed for everyone"):
         tick("Field notes")
         wait_tty("1", r"\[-\] Field notes")
+        tick("Testland")
+        wait_tty("1", r"\[-\] Testland")
         machine.send_chars("d")
         wait_tty("1", "Remove \\(for every account\\)")
         machine.send_chars("y")
         authenticate("carol-pw")
         wait_tty("1", "fieldnotes_en_2026-01.zim: removed", timeout=60)
+        wait_tty("1", "map-osm-testland_2026-01.mbtiles: removed", timeout=60)
         back_to_packs()
         machine.fail(f"test -e {library}/fieldnotes_en_2026-01.zim")
+        machine.fail(f"test -e {library}/map-osm-testland_2026-01.mbtiles")
         machine.succeed(f"test -e {library}/zeros_2026-01.zim")
         machine.succeed("systemctl is-system-running --wait | grep -qx running")
   '';
