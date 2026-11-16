@@ -31,14 +31,18 @@ x86-64 machine**. That was the original idea, and older documents, ADRs and
   keyboard, storage, battery and power, radios, boot firmware), ask the
   owner or look for the hardware specification; do not assume generic PC
   hardware and do not invent the cyberdeck's characteristics.
-- **V1 hardware (owner decision, 2026-11-15):** the first cyberdeck is a
-  **recycled old x86_64 laptop**, rebuilt into a 3D-printed case. Resilience
-  OS stays **x86_64 only**: no ARM port. LoRa 868 MHz and SDR come in **V2**,
-  not V1. The laptop has not been chosen yet, so its exact hardware (CPU,
-  boot firmware, screen and console size, RAM, storage, Wi-Fi/Bluetooth,
-  GPS, battery) is **not recorded yet**: do not assume any of it; ask, or
-  read the report of `scripts/hw-report.sh` once it has run on the machine.
-  Everything has run only in QEMU so far.
+- **V1 hardware (owner decisions, 2026-11-15 and 2026-11-16):** the first
+  cyberdeck is a **recycled Lenovo ThinkPad E540**, rebuilt into a
+  3D-printed case: Intel Core **i3-4000M** (Haswell, x86_64), **4 to 8 GB of
+  RAM**, a **16 GB SSD** (upgradeable; see ROADMAP "Cyberdeck hardware" for
+  the size estimate). Resilience OS stays **x86_64 only**: no ARM port. LoRa
+  868 MHz and SDR come in **V2**, not V1. Keyboard: **French AZERTY** by
+  default (`resilience.keyboard.layout`).
+  **To confirm with `scripts/hw-report.sh` on the machine itself** (not
+  verified, do not assume): screen resolution and therefore console size,
+  Wi-Fi/Bluetooth card and its firmware, boot firmware (UEFI/CSM, Secure
+  Boot), exact RAM and SSD, battery. Resilience OS has booted on one real
+  laptop so far (a ThinkPad L15 Gen 1, not the E540).
 - Work whose purpose was "runs on any PC" (broad hardware support, a
   generic installer, images for other people's machines) is not a goal on
   its own any more. Before starting such work, ask whether the cyberdeck
@@ -79,7 +83,8 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            org.resilience.packs.change (auth_admin), lynx restrictions
    │            users.nix       resilience.users.<n>.mode -> groups, login shell,
    │                            nix allowed-users
-   │            interface.nix   getty branding, console font ter-i16n, tty1-only
+   │            interface.nix   resilience.keyboard.layout (console keymap, default "fr",
+   │                            checked at build), getty branding, console font ter-i16n, tty1-only
    │                            autologin via getty@tty1 drop-in (NOT services.getty.autologinUser)
    │            security.nix    sudo (wheel+password), pam_faillock, sysctls, no ssh,
    │                            user namespaces off on Ultra-Stable-only machines (ADR 0012)
@@ -265,8 +270,12 @@ it concurrently with VM tests.
   `drive_add`/`device_add usb-storage` (new ids per plug), see vm-backup.
 - The age round-trip unit test needs age in PATH (Nix build has it; on the
   host prepend the store path of `nixpkgs#age`, otherwise it prints SKIPPED).
-- ISO: `python3 -I tests/iso/smoke.py ISO OUTDIR [--uefi OVMF.fd]` takes
-  screenshots; look at them (the Read tool displays PNGs).
+- ISO: `python3 -I tests/iso/smoke.py ISO OUTDIR [--uefi OVMF.fd] [--keymap fr|us]`
+  takes screenshots; look at them (the Read tool displays PNGs).
+- Keyboard: the system default is AZERTY (`resilience.keyboard.layout =
+  "fr"`), but the NixOS test driver types US key codes, so `flake.nix`
+  sets `defaults.resilience.keyboard.layout = "us"` for every VM test node.
+  smoke.py translates typed text for the ISO's layout (`--keymap`, default fr).
 - Rust: `cargo test` (unit + TUI behaviour via ratatui TestBackend) and
   `cargo clippy --all-targets` must be clean. `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` prints screens.
 - Nix/VM: `nix flake check` runs everything including VM tests.

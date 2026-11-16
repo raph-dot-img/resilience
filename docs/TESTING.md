@@ -2,7 +2,7 @@
 
 Every result below is **PASS**, **FAIL**, **BLOCKED** or **NOT TESTED**.
 A test is only PASS if it was actually executed. "VM" means QEMU/KVM on the
-development host — **no test has been run on physical hardware**.
+development host — physical hardware: one boot of the live ISO on a ThinkPad L15 Gen 1 (see "ISO boot"), nothing on the cyberdeck yet.
 
 Last full run (`nix flake check -L --max-jobs 1`, all VM tests): 2026-11-14 on the Phase 2 commits (privileged helper, Users & modes, Recovery, backups, Date & time, Wi-Fi, default generation, user namespaces), nixpkgs `f1e5c356`. ISO last built and boot-tested 2026-11-16 from the end of Phase 4 (see "ISO boot"; bit-for-bit reproducibility not verified).
 
@@ -222,8 +222,11 @@ ZIM file is built with `zimwriterfs` during the build.
 | Legacy BIOS (SeaBIOS, syslinux) — boots to TUI, offline, menus render, system OPERATIONAL | PASS (end-of-Phase-4 build, 2026-11-16) |
 | UEFI (OVMF 202602 from pinned nixpkgs, GRUB 2.12 text mode) — boots to TUI, same screens | PASS (end-of-Phase-4 build, 2026-11-16) |
 | Low memory: BIOS at 2048, 1024, 768 and 512 MiB; UEFI at 2048 and 1024 MiB — TUI, network diagnostics and system status shown, no failed service, no OOM message on the serial console | PASS (2026-11-16) |
+| Console keymap French AZERTY (default `resilience.keyboard.layout`): search typed with AZERTY key positions (`--keymap fr`) opens network diagnostics (BIOS, 2 GiB) | PASS (2026-11-16, `feat/maps` build) |
+| Build refuses an unknown keymap (`resilience.keyboard.layout = "azerty-nope"`) | PASS (manual, once) |
 | Heavy use at low memory (Kiwix reader, backups, map viewer at ≤1 GiB) | NOT TESTED |
-| Physical hardware | NOT TESTED |
+| Physical hardware: Lenovo ThinkPad L15 Gen 1 (not the cyberdeck), ISO built from `develop` (end of Phase 4) — boots without problem | PASS (owner, 2026-11-16; firmware mode, ISO hash and checklist items not recorded) |
+| Physical hardware: the cyberdeck (ThinkPad E540) | NOT TESTED |
 
 Last ISO run (2026-11-16): `develop` at `44f33b4` (code identical to
 `f77e6ba`, end of Phase 4), `resilience-standard-0.1.0-x86_64-linux.iso`,
