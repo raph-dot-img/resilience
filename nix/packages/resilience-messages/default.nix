@@ -11,7 +11,7 @@ runCommand "resilience-messages-0.1.0"
   {
     meta = {
       description = "Per-user local messaging program of Resilience OS (needs Reticulum and LXMF)";
-      license = lib.licenses.bsd0;
+      license = import ../../lib/license.nix;
       mainProgram = "resilience-messages";
     };
     passthru = { inherit reticulum; };

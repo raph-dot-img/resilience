@@ -11,8 +11,9 @@ versions follow [Semantic Versioning](https://semver.org/).
   by the new helper operation `resilience-admin set-keymap` without a
   password at the console; the system layout is loaded again before every
   login prompt (ADR 0017).
-- Resilience's own code is now licensed 0BSD (was GPL-3.0-or-later);
-  `LICENSE` added. Bundled software keeps its own license.
+- Resilience's own code is now licensed under the Hippocratic License 2.1
+  (was 0BSD, and GPL-3.0-or-later before that); see `LICENSE`. Bundled
+  software keeps its own license.
 
 ### Added
 - *Security & cryptography* (ADR 0015, Phase 4), for every account. New

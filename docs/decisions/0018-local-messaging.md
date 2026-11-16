@@ -30,9 +30,11 @@ to purposefully do harm to human beings", nor "in the creation of an
 artificial intelligence, machine learning or language model training
 dataset". This is not a free software licence (it restricts fields of
 use), and nixpkgs marks both packages unfree. The project owner decided
-on 2026-11-16 to ship them **as an opt-in module**: nothing else in
-Resilience is under such terms, and a system without the module contains
-none of this code.
+on 2026-11-16 to ship them **as an opt-in module**: a system without the
+module contains none of this code. (Resilience's own code has since been
+put under the Hippocratic License 2.1, which also restricts uses; the two
+licences are different texts with different conditions, and both apply to
+a system that has the module.)
 
 **Experiments** (dev host, throwaway scripts, 2026-11-16, rns 1.2.9 and
 lxmf 0.9.8 from the pinned nixpkgs):
@@ -162,8 +164,9 @@ lxmf 0.9.8 from the pinned nixpkgs):
   the Internet, and exists only when the module is enabled; it is the
   one exception to "no background network traffic" and is documented in
   docs/OFFLINE_OPERATIONS.md.
-- Resilience with the module is no longer entirely free software. A
-  licence audit (Phase 9) must list `rns` and `lxmf` apart.
+- A system with the module carries the Reticulum License's conditions in
+  addition to those of Resilience's own licence. A licence audit
+  (Phase 9) must list `rns` and `lxmf` apart.
 - Python code enters the project (the per-user program). It is kept
   small and tested with the real libraries.
 - Not tested yet: more than two machines, Wi-Fi with client isolation
