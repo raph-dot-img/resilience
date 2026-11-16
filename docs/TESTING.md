@@ -58,7 +58,7 @@ which corrupts text next to box-drawing characters with our console font.
 |---|---|
 | Flake evaluation (`nix flake check --no-build`) | PASS |
 | `eval-live-iso`: live-standard, live-minimal, dev-vm evaluate | PASS |
-| `security-invariants`: 26 invariants × 3 configurations | PASS |
+| `security-invariants`: 28 invariants × 3 configurations (the firewall one now allows exactly UDP 29716 and 42671 where local messaging is on, and nothing else; two new ones: the messaging service is unprivileged with nothing of Reticulum in `PATH`, and the minimal edition has no local messaging) | PASS (2026-11-16) |
 | Invariant checker rejects a live configuration with user namespaces forced on | PASS (manual, once) |
 | Invariant checker rejects a deliberately broken configuration (ssh on, root password) | PASS (manual, once) |
 | Invariant checker rejects a privileged autologin account and an extra polkit admin identity | PASS (manual, once; this found that the autologin invariant had been vacuous) |
@@ -70,6 +70,8 @@ which corrupts text next to box-drawing characters with our console font.
 | `map-world`: the built-in world overview (`nix build .#resilience-world-map`, Natural Earth 5.1.2: 10 land features, 515 country and 4,616 region border lines, 1,355 lakes, 1,454 rivers, 7,342 places; 11,362 tiles, zooms 0-7, largest tile 50 KB compressed) read by `resilience-maps info --check` (profile, data date, licence, attribution, coverage, zoom 0-7, centre, search available, integrity ok), size between 8 and 16 MB (**11,735,040 bytes**), 7,342 settlements, Luxembourg a city at its position, Rhine and Lake Victoria searchable, prefix search without accents finds Reykjavík, one zoom-0 tile and 8 zooms | PASS (2026-11-16) |
 | World overview in a system image: opened from the TUI in `vm-maps` (minimal system) | PASS (2026-11-16) |
 | ISO rebuilt with the world overview, closure growth measured | NOT TESTED (live-standard and live-minimal evaluate) |
+| Standard edition with local messaging on by default: live-standard and dev-vm evaluate with the service, live-minimal without it | PASS (evaluation only, 2026-11-16) |
+| Standard image with local messaging built and booted; messaging on the live ISO | NOT TESTED |
 | World overview reproducibility (two builds, same bytes) | NOT TESTED |
 | `vm-packs` re-run with the built-in world map in `packs.toml` (the system of the test holds the map; packs screens, library and stick listings unchanged) | PASS (2026-11-16) |
 

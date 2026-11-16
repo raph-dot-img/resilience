@@ -51,7 +51,8 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            user namespaces off on Ultra-Stable-only machines (ADR 0012)
    │            networking.nix  NetworkManager (no connectivity check), polkit allowlist for
    │                            accounts without its group (ADR 0010), firewall, no NTP
-   │            comms.nix       OPT-IN local messaging network (ADR 0018): resilience.comms.enable
+   │            comms.nix       local messaging network (ADR 0018): resilience.comms.enable
+   │                            (default off; the STANDARD profile turns it on)
    │                            -> resilience-reticulum.service (rnsd, DynamicUser, AutoInterface
    │                            only, UDP 29716+42671), /run/resilience-reticulum/client/config
    │                            (instance name + RPC key, world-readable by design), and the
@@ -407,7 +408,9 @@ messages" under Communications, views Chats / Nearby / Chat, dialog
 the TUI. Open: whether the standard edition turns the module on (owner);
 a propagation node (store-and-forward); file exchange; multi-line
 messages; Internet messengers (toxic, signal-cli); Yggdrasil/BATMAN.
-`resilience.comms.enable` is on in no edition yet.
+`resilience.comms.enable` is ON by default in the standard edition
+(owner, 2026-11-16; `nix/profiles/standard.nix`, mkDefault) and off in
+minimal. Not yet done after that change: ISO rebuild, full flake check.
 
 Phase 5 state when parked:
 
@@ -471,7 +474,9 @@ booted once on a ThinkPad L15 Gen 1.
 - Cryptography: no LUKS sticks, no OpenPGP signing in the TUI (minisign
   signs), no secure deletion of originals (the user is told); contacts'
   keys are only as trustworthy as the user's own check.
-- Local messaging: off in every edition; two machines tested, in VMs only;
+- Local messaging: on in standard, off in minimal; two machines tested, in
+  VMs only (with the minimal profile plus the option; the standard image
+  with it has only been evaluated, not built or booted);
   no store-and-forward node (both computers must be on at the same time at
   some point within 7 days); one-line messages; no "read" state; received
   messages are not announced outside the messages screens.

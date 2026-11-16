@@ -28,8 +28,33 @@ let
         "sudo requires a password" = c.security.sudo.wheelNeedsPassword;
         "only wheel may execute sudo" = c.security.sudo.execWheelOnly;
         "firewall is enabled" = c.networking.firewall.enable;
-        "no open firewall ports" =
-          c.networking.firewall.allowedTCPPorts == [ ] && c.networking.firewall.allowedUDPPorts == [ ];
+        # Nothing is open, except the two UDP ports of the local messaging
+        # network where it is enabled (ADR 0018): exactly those, never TCP.
+        "no open firewall ports except local messaging" =
+          c.networking.firewall.allowedTCPPorts == [ ]
+          && c.networking.firewall.allowedTCPPortRanges == [ ]
+          && c.networking.firewall.allowedUDPPortRanges == [ ]
+          && lib.sort lib.lessThan c.networking.firewall.allowedUDPPorts == (
+            if c.resilience.comms.enable then
+              [
+                29716
+                42671
+              ]
+            else
+              [ ]
+          );
+        "local messaging runs unprivileged and offers no remote access" =
+          !c.resilience.comms.enable
+          || (
+            c.systemd.services.resilience-reticulum.serviceConfig.DynamicUser
+            && c.systemd.services.resilience-reticulum.serviceConfig.NoNewPrivileges
+            && c.systemd.services.resilience-reticulum.serviceConfig.CapabilityBoundingSet == ""
+            && !(lib.any (
+              p: lib.hasInfix "reticulum" (p.name or "") || lib.hasInfix "rns" (p.pname or "")
+            ) c.environment.systemPackages)
+          );
+        "the minimal edition has no local messaging" =
+          c.resilience.edition != "minimal" || !c.resilience.comms.enable;
         "no NTP in the background" = !c.services.timesyncd.enable;
         "no X server" = !c.services.xserver.enable;
         "nix daemon refuses ultra-stable accounts" =

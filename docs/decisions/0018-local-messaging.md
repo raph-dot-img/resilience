@@ -160,6 +160,14 @@ lxmf 0.9.8 from the pinned nixpkgs):
   sequences, direction overrides).
 - **One-line messages** of at most 1,000 characters for now.
 
+## Editions (owner's decision, 2026-11-16)
+
+Local messaging is **on by default in the standard edition**
+(`nix/profiles/standard.nix`, with `mkDefault`, so one line turns it
+off) and absent from the minimal edition. A standard system therefore
+contains Reticulum and LXMF under their licence, and announces itself on
+its local network.
+
 ## Alternatives considered
 
 - **NomadNet as the interface**: maintained and complete, but it is also
