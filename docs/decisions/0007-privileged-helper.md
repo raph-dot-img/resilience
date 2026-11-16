@@ -6,7 +6,7 @@ Status: accepted (2026-11-14). Supersedes the "Phase 2 plan" section of ADR 0003
 
 Phase 2 needs administrative actions from the TUI, starting with changing
 an account's security mode, without a general privileged command runner
-(MASTER-PROMPT §10, §17). Constraints found on the pinned NixOS 26.05:
+(ORIGINAL-SPEC §10, §17). Constraints found on the pinned NixOS 26.05:
 
 - `users.mutableUsers = true` and `update-users-groups.pl` **reset the group
   membership of every declared user** to the declaration on each activation

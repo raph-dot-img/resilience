@@ -3,7 +3,7 @@
 //!
 //! Nothing here needs privileges or changes the system. System rollback
 //! (choosing an earlier generation in the boot menu) and user-data restore
-//! are deliberately separate features (MASTER-PROMPT §20). Making an earlier
+//! are deliberately separate features (ORIGINAL-SPEC §20). Making an earlier
 //! generation the permanent default is done by the privileged helper
 //! (`resilience-admin set-default-generation`, ADR 0011); the rules it
 //! applies are the pure [`plan_set_default`] below.

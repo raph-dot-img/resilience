@@ -4,9 +4,8 @@ Read this whole file at the start of every session. Keep it accurate: update it
 whenever architecture, build process, conventions or status change. The full
 original specification is `docs/ORIGINAL-SPEC.md` (authoritative for the
 feature scope; this file is authoritative for *current state and
-decisions*). `MASTER-PROMPT.md` is the owner's short session prompt
-(priorities and rules for agent sessions); ADRs that cite
-"MASTER-PROMPT.md §N" mean `docs/ORIGINAL-SPEC.md`.
+decisions*). Older commits cite it as "MASTER-PROMPT §N"; the sections
+are numbered the same.
 
 ## 1. Identity and purpose
 

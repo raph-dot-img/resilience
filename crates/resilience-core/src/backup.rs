@@ -15,7 +15,7 @@
 //! - a copy whose checksum does not match is refused for restore.
 //!
 //! User-data restore is deliberately separate from system rollback
-//! (MASTER-PROMPT §20): nothing here touches the system.
+//! (ORIGINAL-SPEC §20): nothing here touches the system.
 
 use std::fs;
 use std::io::{self, Read, Write};

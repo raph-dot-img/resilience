@@ -4,7 +4,7 @@ Status: accepted (2026-11-15).
 
 ## Context
 
-Phase 5 brings maps to the text console (MASTER-PROMPT §13). The user
+Phase 5 brings maps to the text console (ORIGINAL-SPEC §13). The user
 must be able to:
 
 - see a map;

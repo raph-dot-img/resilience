@@ -4,7 +4,7 @@ Status: accepted (2026-11-14).
 
 ## Context
 
-MASTER-PROMPT asks for user-data backups and restore, kept separate from
+The original specification (docs/ORIGINAL-SPEC.md) asks for user-data backups and restore, kept separate from
 system rollback (§20), usable by beginners, offline, with no cryptography of
 our own (§17). Until now only an administrator could mount a USB stick. Phase
 3 resource packs and Phase 8 offline updates will also need removable media.
