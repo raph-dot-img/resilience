@@ -17,6 +17,13 @@ MOVING AROUND
   F1              help for the current screen
   F5              detailed system status
 
+KEYBOARD LAYOUT
+  The keyboard starts in the system's layout (US unless the system was
+  built otherwise). To use another one, search for "keyboard" or open
+  SYSTEM MANAGEMENT > Settings and choose a "Keyboard" line. Your choice
+  is loaded again each time you log in. Login prompts always use the
+  system's layout, so type passwords there with that layout.
+
 READING THE STATUS PANEL
   Each line starts with a marker so you never depend on colour alone:
     [OK]  working normally

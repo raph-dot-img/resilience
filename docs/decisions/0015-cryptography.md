@@ -8,7 +8,7 @@ Phase 4 brings everyday cryptography to every account, Ultra-Stable
 included: encrypt and decrypt files and messages, create and exchange
 keys, sign files and check signatures, compute and compare checksums,
 generate random passwords, and recognise encryption formats
-(MASTER-PROMPT §17).
+(ORIGINAL-SPEC §17).
 
 The rules are strict:
 

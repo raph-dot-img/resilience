@@ -10,6 +10,8 @@
 #   It never runs as root and never parses the content.
 # * Reading: kiwix-serve on 127.0.0.1 for one file at a time, and lynx with
 #   every restriction on (no shell escape, no saving, no other address).
+#   Map packs (.mbtiles, category maps, ADR 0016) are never given to
+#   kiwix-serve; they are opened from Maps & navigation.
 {
   config,
   lib,
@@ -39,6 +41,7 @@ let
           "health"
           "practical"
           "travel"
+          "maps"
           "computing"
           "documentation"
         ];
@@ -48,8 +51,12 @@ let
         description = "ISO 639 code of the content's language.";
       };
       file = mkOption {
-        type = types.strMatching "[A-Za-z0-9][A-Za-z0-9._-]*\\.zim";
-        description = "File name, as published (e.g. on download.kiwix.org).";
+        type = types.strMatching "[A-Za-z0-9][A-Za-z0-9._-]*\\.(zim|mbtiles)";
+        description = ''
+          File name, as published (e.g. on download.kiwix.org). A `.zim` file is
+          read in the text browser; an `.mbtiles` file is a map pack (ADR 0016,
+          `map-osm-REGION_YYYY-MM.mbtiles`) and belongs in the `maps` category.
+        '';
       };
       size = mkOption {
         type = types.ints.positive;
@@ -70,6 +77,28 @@ let
         type = types.nullOr types.str;
         default = null;
         description = "Shown before the content opens (e.g. medical packs).";
+      };
+      data_date = mkOption {
+        type = types.nullOr (types.strMatching "[0-9]{4}-[0-9]{2}(-[0-9]{2})?");
+        default = null;
+        description = "Date of the data (YYYY-MM-DD or YYYY-MM). Required for map packs.";
+      };
+      coverage = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          What the pack covers and what it leaves out, in plain words; shown in
+          full in the pack details. Required for map packs, which must never
+          look complete when the data is partial. At most 1000 characters.
+        '';
+      };
+      attribution = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          The credit the license requires, e.g. "© OpenStreetMap contributors".
+          Required for map packs. At most 300 characters.
+        '';
       };
     };
   };

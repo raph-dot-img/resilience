@@ -52,6 +52,8 @@ pub struct SystemConfig {
     pub shell: Vec<String>,
     pub probe: ProbeSettings,
     pub tools: ToolPaths,
+    /// Console keyboard layouts (default and choices).
+    pub keyboard: crate::keyboard::KeyboardConfig,
 }
 
 /// Programs used for removable media and backups. Absolute store paths on
@@ -149,6 +151,7 @@ impl Default for SystemConfig {
             shell: vec!["bash".into(), "-i".into()],
             probe: ProbeSettings::default(),
             tools: ToolPaths::default(),
+            keyboard: crate::keyboard::KeyboardConfig::default(),
         }
     }
 }
@@ -254,6 +257,10 @@ impl ThemeName {
 #[serde(default)]
 pub struct UserSettings {
     pub theme: ThemeName,
+    /// Keyboard layout chosen in Settings (a `[keyboard]` layout name);
+    /// `None`: the system's default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keyboard: Option<String>,
 }
 
 impl UserSettings {
@@ -362,9 +369,13 @@ mod tests {
         let path = UserSettings::path(&dir);
         let s = UserSettings {
             theme: ThemeName::Amber,
+            keyboard: Some("fr".into()),
         };
         s.save(&path).expect("save");
         assert_eq!(UserSettings::load(&path), (s, None));
+        // Older files without a keyboard choice still load.
+        fs::write(&path, "theme = \"amber\"").expect("w");
+        assert_eq!(UserSettings::load(&path).0.keyboard, None);
         let mode = fs::metadata(&path).expect("meta").permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
         fs::write(&path, "theme = \"neon\"").expect("w");

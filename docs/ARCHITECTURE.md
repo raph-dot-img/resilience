@@ -70,6 +70,11 @@ TUI ──confirm──► pkttyagent + pkexec resilience-admin set-time YYYY-MM
                      ▼
                resilience-admin (root): strict UTC, 2025 ≤ t < 2100 → audit
                                          → timedatectl set-time @t (clock + RTC)
+TUI Settings ──► pkexec resilience-admin set-keymap LAYOUT (also at session start)
+                     │ polkit org.resilience.admin.set-keymap: yes for the active session (ADR 0017)
+                     ▼
+               resilience-admin (root): LAYOUT in admin.toml keymaps → loadkeys -q -- LAYOUT → audit
+               (getty@ ExecStartPre loads the system layout before every login prompt)
 TUI ──confirm──► pkttyagent + pkexec resilience-admin set-default-generation N
                      │ polkit org.resilience.admin.set-default-generation: auth_admin (ADR 0011)
                      ▼

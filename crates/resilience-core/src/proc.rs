@@ -41,14 +41,19 @@ impl Output {
 /// Like [`run_capture`] but also returns the exit code and stderr.
 /// Returns `None` if the program could not be started or timed out.
 pub fn run_full(argv: &[&str], timeout: Duration) -> Option<Output> {
-    run_inner(argv, None, timeout)
+    run_inner(argv, None, &[], timeout)
+}
+
+/// Like [`run_full`], with `env` added to (not replacing) the environment.
+pub fn run_full_env(argv: &[&str], env: &[(&str, &str)], timeout: Duration) -> Option<Output> {
+    run_inner(argv, None, env, timeout)
 }
 
 /// Like [`run_full`], with `input` written to the child's stdin (then
 /// closed). Used to hand a secret to a program without putting it in argv
 /// or the environment; the caller should wipe its copy afterwards.
 pub fn run_with_input(argv: &[&str], input: &[u8], timeout: Duration) -> Option<Output> {
-    run_inner(argv, Some(input), timeout)
+    run_inner(argv, Some(input), &[], timeout)
 }
 
 /// Run `argv` with a cleared environment (only `env` is set), stdin closed
@@ -90,10 +95,16 @@ pub fn run_visible(argv: &[&str], env: &[(&str, &str)], timeout: Duration) -> Op
     }
 }
 
-fn run_inner(argv: &[&str], input: Option<&[u8]>, timeout: Duration) -> Option<Output> {
+fn run_inner(
+    argv: &[&str],
+    input: Option<&[u8]>,
+    env: &[(&str, &str)],
+    timeout: Duration,
+) -> Option<Output> {
     let (program, args) = argv.split_first()?;
     let mut child = Command::new(program)
         .args(args)
+        .envs(env.iter().copied())
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {

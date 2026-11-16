@@ -7,13 +7,14 @@ members = [
   "crates/resilience-backup",
   "crates/resilience-library",
   "crates/resilience-crypto",
+  "crates/resilience-maps",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "0BSD"
-rust-version = "1.85"
+rust-version = "1.89"
 
 [workspace.dependencies]
 resilience-core = { path = "crates/resilience-core" }

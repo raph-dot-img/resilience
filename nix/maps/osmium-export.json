@@ -1,0 +1,62 @@
+{
+  "attributes": {
+    "type": false,
+    "id": false,
+    "version": false,
+    "changeset": false,
+    "timestamp": false,
+    "uid": false,
+    "user": false,
+    "way_nodes": false
+  },
+  "format_options": {
+    "print_record_separator": false
+  },
+  "linear_tags": [
+    "highway",
+    "railway",
+    "waterway=river,stream,canal",
+    "natural=coastline"
+  ],
+  "area_tags": [
+    "natural=water,wood,wetland,glacier,sand,beach",
+    "landuse=forest,reservoir",
+    "leisure=park",
+    "waterway=riverbank",
+    "boundary=administrative",
+    "place",
+    "amenity",
+    "shop",
+    "tourism",
+    "historic",
+    "healthcare"
+  ],
+  "exclude_tags": [],
+  "include_tags": [
+    "highway",
+    "railway",
+    "service",
+    "waterway",
+    "natural",
+    "water",
+    "landuse",
+    "leisure",
+    "boundary",
+    "admin_level",
+    "place",
+    "population",
+    "name",
+    "name:latin",
+    "name:en",
+    "ref",
+    "amenity",
+    "shop",
+    "tourism",
+    "historic",
+    "healthcare",
+    "emergency",
+    "man_made",
+    "drinking_water",
+    "ele"
+  ]
+}

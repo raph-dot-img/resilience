@@ -16,8 +16,9 @@
 //! installs each pack only if its SHA-256 matches the catalog. An interrupted
 //! download continues where it stopped next time.
 //!
-//! `open` starts `kiwix-serve` on 127.0.0.1 for this one file, runs the text
-//! browser on it, and stops the server when the browser exits.
+//! `open` starts `kiwix-serve` on 127.0.0.1 for a ZIM file, runs the text
+//! browser on it, and stops the server when the browser exits. A map pack
+//! (`.mbtiles`, ADR 0016) is never given to kiwix-serve: see [`open_map`].
 
 use std::fs;
 use std::io::{self, BufRead, BufReader, IsTerminal, Read, Seek, SeekFrom, Write};
@@ -28,7 +29,7 @@ use std::time::{Duration, Instant};
 
 use resilience_core::human_bytes;
 use resilience_core::launch::{self, PolkitAgent};
-use resilience_core::packs::{self, Outcome, Pack, PackConfig, PackState, PlanLine};
+use resilience_core::packs::{self, Outcome, Pack, PackConfig, PackKind, PackState, PlanLine};
 
 const EXIT_ERROR: u8 = 1;
 const EXIT_REFUSED: u8 = 2;
@@ -123,7 +124,7 @@ struct ChangeArgs {
 }
 
 fn parse_change(args: &[String]) -> Result<ChangeArgs, Failure> {
-    if args.len() % 2 != 0 {
+    if !args.len().is_multiple_of(2) {
         return Err(Failure::Usage);
     }
     let mut c = ChangeArgs {
@@ -703,6 +704,9 @@ fn open(cfg: &PackConfig, args: &[String]) -> Result<(), Failure> {
             file.display()
         )));
     }
+    if PackKind::of(name) == Some(PackKind::Map) {
+        return open_map(&file, search);
+    }
     let book = name.strip_suffix(".zim").unwrap_or(name);
     let size = fs::metadata(&file).map_or(0, |m| m.len());
     let pack = cfg.packs.iter().find(|p| p.file == name && p.size == size);
@@ -743,6 +747,18 @@ fn open(cfg: &PackConfig, args: &[String]) -> Result<(), Failure> {
             "Cannot start the text browser: {e}"
         ))),
     }
+}
+
+/// The message for a map pack, which the text browser cannot show.
+const MAP_REFUSAL: &str = "This file is a map. Maps are not read in the text browser: open it \
+     from \"Maps & navigation\" in the main menu.";
+
+/// A map pack (`.mbtiles`). The map viewer comes with a later part of ADR
+/// 0016; until then this refuses. This is the one place that will start it.
+/// `file` is absolute, has a valid pack name and is a regular file.
+fn open_map(file: &Path, search: Option<&str>) -> Result<(), Failure> {
+    let _ = (file, search);
+    Err(Failure::Refused(MAP_REFUSAL.into()))
 }
 
 #[cfg(test)]
@@ -788,6 +804,52 @@ mod tests {
         let port = l.local_addr().expect("addr").port();
         let real = fs::read_to_string("/proc/net/tcp").expect("proc");
         assert_eq!(listener_uid(&real, port), Some(me));
+    }
+
+    #[test]
+    fn map_packs_are_never_given_to_the_kiwix_server() {
+        let dir = std::env::temp_dir().join(format!("res-lib-map-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("mkdir");
+        let map = dir.join("map-osm-luxembourg_2026-01.mbtiles");
+        fs::write(&map, b"SQLite format 3\0").expect("w");
+        // kiwix-serve and the browser do not exist: reaching them would fail
+        // with an error, not this refusal.
+        let cfg = PackConfig {
+            dir: dir.join("packs"),
+            store_user: "resilience-packs".into(),
+            store: "/nonexistent/store".into(),
+            pkexec: "/nonexistent/pkexec".into(),
+            pkttyagent: "/nonexistent/pkttyagent".into(),
+            curl: "/nonexistent/curl".into(),
+            sha256sum: "/nonexistent/sha256sum".into(),
+            kiwix_serve: "/nonexistent/kiwix-serve".into(),
+            browser: vec!["/nonexistent/lynx".into()],
+            session_shell: "/bin/sh".into(),
+            packs: Vec::new(),
+            sets: Vec::new(),
+            builtin: Vec::new(),
+        };
+        let path = map.to_string_lossy().into_owned();
+        for args in [
+            vec![path.clone()],
+            vec![path, "--search".into(), "x".into()],
+        ] {
+            match open(&cfg, &args) {
+                Err(Failure::Refused(m)) => {
+                    assert_eq!(m, MAP_REFUSAL);
+                    assert!(m.contains("Maps & navigation"), "{m}");
+                }
+                _ => panic!("a map must be refused"),
+            }
+        }
+        // Not a pack at all: still refused by name, before anything runs.
+        let other = dir.join("x.mbtiles-wal");
+        fs::write(&other, b"x").expect("w");
+        assert!(matches!(
+            open(&cfg, &[other.to_string_lossy().into_owned()]),
+            Err(Failure::Refused(m)) if m.contains("not a pack file")
+        ));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

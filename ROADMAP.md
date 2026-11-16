@@ -41,6 +41,9 @@ test in docs/TESTING.md actually ran and passed (VM only so far).
   boot only, undo on failure, audit (ADR 0011)
 - ✅ Removable media for every account (udisks2, removable drives only) and
   encrypted backup/check/restore of the home folder (age, ADR 0008)
+- ✅ Keyboard layout: US default, each account chooses its layout in
+  Settings (helper `set-keymap`, no password at the console, reset before
+  every login prompt; ADR 0017)
 - ✅ User namespaces reviewed: refused to everyone on Ultra-Stable-only
   machines (live system), kept for the Nix sandbox elsewhere (ADR 0012)
 
@@ -67,8 +70,16 @@ secrets never in argv or logs (ADR 0015).
 - [ ] Unlock encrypted (LUKS) USB sticks in the media screens (later)
 - [ ] OpenPGP signing in the interface (minisign signs; gpg on the command line)
 
-## Phase 5 — Offline maps ⬜
-MBTiles/GeoPackage storage, block-character renderer, place search, routing study.
+## Phase 5 — Offline maps 🟡
+Design: ADR 0016 (MBTiles with vector tiles, block-character viewer, search
+inside the pack, reproducible pack builder, routing deferred to its own ADR).
+Branch `feat/maps`.
+- ✅ Resource packs accept map packs (`.mbtiles`, `maps` category, data date, coverage, attribution)
+- ✅ Geographic maths, bounded vector-tile decoder, canvas, style table, labels
+- ✅ Hardened pack reader (`resilience-maps`, SQLite opened as untrusted input)
+- ✅ Viewer (`resilience-maps view`): reviewed (risky parts), run on the real Luxembourg pack in QEMU at 170×48 (1366×768); label fixes from that run
+- 🟡 Pack builder (`resilience-mapmaker`, `nix/maps/`): merged into `feat/maps`; the Luxembourg pack builds and the hardened reader accepts it; code not reviewed line by line, reproducibility check not re-run
+- ⬜ Built-in world overview, TUI "Maps & navigation", search, nearby and go-to, spot heights, `vm-maps`, catalog entries
 
 ## Phase 6 — Networking and communications 🟡
 - ✅ Passive diagnostics + on-demand probe; LOCAL LINK detection tested
@@ -117,6 +128,16 @@ questions, for people who do not write Nix. Sketch:
 ## Phase 9 — Audit and release ⬜
 Independent architecture and security reviews, `cargo deny`, license audit,
 SBOM, physical hardware tests, release notes.
+
+## Disk space (estimate, 2026-11-16)
+Measured: the system closure (live-standard) is **2.3 GiB**, of which
+`linux-firmware` 825 MiB, a nixpkgs source copy 197 MiB, Python 128 MiB.
+An installed system needs room for a second generation during updates
+(up to +2.3 GiB when everything changes), plus /var, logs, home and a
+free-space margin: plan **about 8 GiB before content**. Content sizes: a
+France map pack z0-z14 with search ~4.3 GB (ADR 0016 *estimate*);
+Wikipedia FR "top" / Wiktionary FR / Wikipedia FR complete 1.4 / 4.6 /
+12.0 GiB. Packs can also be read from a USB stick.
 
 ## Known limitations carried forward
 See CLAUDE.md §15.

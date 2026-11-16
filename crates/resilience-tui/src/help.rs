@@ -61,8 +61,11 @@ pub fn lines(topic: HelpTopic, mode: Mode) -> Vec<String> {
         ],
         HelpTopic::Settings => &[
             "== SETTINGS ==",
-            "  Enter                  Apply and save the selected theme",
+            "  Enter                  Apply and save the selected theme or keyboard layout",
             "  The Monochrome theme uses no colour at all; all information stays visible.",
+            "  A keyboard layout applies to every console of this computer until someone",
+            "  logs out. Login prompts always use the system's layout, and your choice is",
+            "  loaded again each time you log in.",
         ],
         HelpTopic::Users => &[
             "== USERS & SECURITY MODES ==",

@@ -19,6 +19,9 @@ safety-critical use.
   The only privileged entry point is `resilience-admin`, with fixed typed
   operations, polkit `auth_admin` (administrator password every time),
   server-side validation and an audit log (docs/decisions/0007-privileged-helper.md).
+  One exception: loading one of the system's listed keyboard layouts
+  (`set-keymap`) needs no password for the person at the console
+  (docs/decisions/0017-keyboard-layout.md).
 - No background network traffic; no listening services by default.
 - No custom cryptography: only established tools (age, minisign, GnuPG,
   cryptsetup, OpenSSL).

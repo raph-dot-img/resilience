@@ -11,6 +11,7 @@ use resilience_core::catalog::{Catalog, Category};
 use resilience_core::clock;
 use resilience_core::config::{SystemConfig, ThemeName, ToolPaths, UserSettings};
 use resilience_core::mode::{Detected, Mode};
+use resilience_core::packs::PackKind;
 
 use crate::app::{
     App, BACKUP_LABEL, Builtin, CHECK_LABEL, CRYPTO_LABEL, Effect, EncryptTarget, Entry, ItemPlace,
@@ -626,7 +627,10 @@ fn theme_change_is_saved() {
     let mut a = app(Mode::UltraStable, "theme");
     let (v, _) = a.activate(Entry::Builtin(Builtin::Settings));
     a.stack.push(v.expect("settings"));
-    press(&mut a, KeyCode::End); // Mono
+    press(&mut a, KeyCode::Home);
+    for _ in 0..3 {
+        press(&mut a, KeyCode::Down); // Mono, the last theme
+    }
     press(&mut a, KeyCode::Enter);
     assert_eq!(a.settings.theme, ThemeName::Mono);
     let (loaded, _) = UserSettings::load(&a.settings_path);
@@ -2275,7 +2279,7 @@ fn packs_on_a_stick_are_read_without_installing_and_can_be_checked() {
     std::fs::write(stick.join("Resilience-packs/own_docs.zim"), b"x").expect("w");
     std::fs::write(stick.join("Resilience-packs/notes.txt"), b"x").expect("w");
     let cfg = resilience_core::packs::PackConfig::load(&a.paths.packs_config).expect("cfg");
-    let items = stick_items(&cfg, "STICK", &stick);
+    let items = stick_items(&cfg, "STICK", &stick, PackKind::Zim);
     let got: Vec<(&str, &ItemPlace)> = items.iter().map(|i| (i.title.as_str(), &i.place)).collect();
     let on = |known| ItemPlace::Stick {
         volume: "STICK".into(),
@@ -2326,6 +2330,204 @@ fn packs_on_a_stick_are_read_without_installing_and_can_be_checked() {
     assert!(
         matches!(a.view(), View::Library { .. }),
         "back in the library"
+    );
+}
+
+// ----- map packs in the resource-pack machinery (ADR 0016, slice 1) --------
+
+/// The coverage text of the test map pack: long enough to wrap, and with a
+/// last word that shows whether it was shown in full.
+const MAP_COVERAGE: &str = "Testland only: streets, places and points of interest from \
+    OpenStreetMap. Buildings and house numbers are left out. Outside Testland only the world \
+    overview is shown. OpenStreetMap is made by volunteers: something absent from the map may \
+    still exist. END-OF-COVERAGE";
+
+/// Add a map pack (installed, no download address) and an older version of
+/// it to the test catalog of `write_packs`. It is catalog pack 3.
+fn add_map_pack(a: &App) {
+    let sys = a.home.join("sys");
+    let mut text = std::fs::read_to_string(sys.join("packs.toml")).expect("read");
+    text.push_str(&format!(
+        "[[pack]]\nid = \"map-osm-testland\"\ntitle = \"Testland (OpenStreetMap)\"\n\
+         description = \"A detailed map of Testland\"\ncategory = \"maps\"\nlanguage = \"en\"\n\
+         file = \"map-osm-testland_2026-01.mbtiles\"\nsize = 16\nsha256 = \"{}\"\n\
+         license = \"ODbL-1.0\"\nsource = \"Geofabrik extract, built by resilience-mapmaker\"\n\
+         data_date = \"2026-01-01\"\ncoverage = \"{MAP_COVERAGE}\"\n\
+         attribution = \"(c) OpenStreetMap contributors\"\n",
+        "b".repeat(64)
+    ));
+    std::fs::write(sys.join("packs.toml"), text).expect("write");
+    std::fs::write(
+        sys.join("packs/map-osm-testland_2026-01.mbtiles"),
+        b"SQLite format 3\0",
+    )
+    .expect("w");
+    std::fs::write(sys.join("packs/map-osm-testland_2025-07.mbtiles"), b"old").expect("w");
+}
+
+#[test]
+fn map_pack_details_show_date_coverage_and_attribution() {
+    let mut a = app(Mode::UltraStable, "map-details");
+    add_map_pack(&a);
+    open(&mut a, Builtin::Packs);
+    use resilience_core::packs::PackCategory::*;
+    assert_eq!(
+        pack_rows(&a),
+        vec![
+            PackRow::Header(Encyclopedia),
+            PackRow::Pack(0),
+            PackRow::Pack(2),
+            PackRow::Header(Health),
+            PackRow::Pack(1),
+            PackRow::Header(Maps),
+            PackRow::Pack(3),
+            PackRow::OthersHeader,
+            PackRow::Other(0),
+            PackRow::Other(1),
+        ]
+    );
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("-- MAPS --"), "{screen}");
+    assert!(screen.contains("[*] Testland (OpenStreetMap)"), "{screen}");
+
+    select_row(&mut a, PackRow::Pack(3));
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    let View::Pager { title, text, .. } = a.view() else {
+        panic!("details are a scrolling view")
+    };
+    assert_eq!(title, "PACK DETAILS");
+    // The coverage text is kept whole, never shortened.
+    assert!(
+        text.contains(&format!("Coverage: {MAP_COVERAGE}\n")),
+        "{text}"
+    );
+    assert!(text.contains("Data date: 2026-01-01"), "{text}");
+    assert!(
+        text.contains("Attribution: (c) OpenStreetMap contributors"),
+        "{text}"
+    );
+    assert!(text.contains("License: ODbL-1.0"), "{text}");
+    assert!(text.contains("opened from Maps & navigation"), "{text}");
+    assert!(text.contains("copy it from a USB stick"), "{text}");
+    // On the smallest screen, the coverage, date and attribution are all on
+    // the first page, before the size and the fingerprint.
+    let screen = render(&mut a, 80, 24);
+    for want in [
+        "PACK DETAILS",
+        "Coverage: Testland only",
+        "END-OF-COVERAGE",
+        "Data date: 2026-01-01",
+        "Attribution: (c) OpenStreetMap",
+    ] {
+        assert!(screen.contains(want), "{want}: {screen}");
+    }
+    assert_console_glyphs(&screen);
+    press(&mut a, KeyCode::Esc);
+    assert!(matches!(a.view(), View::Packs { .. }));
+
+    // A ZIM entry without the new fields shows none of them.
+    select_row(&mut a, PackRow::Pack(0));
+    press(&mut a, KeyCode::Enter);
+    let View::Pager { text, .. } = a.view() else {
+        panic!("details")
+    };
+    assert!(
+        text.starts_with("Wikipedia (English)\n\nAbout wiki-en\n"),
+        "{text}"
+    );
+    for absent in ["Coverage", "Data date", "Attribution", "Maps & navigation"] {
+        assert!(!text.contains(absent), "{absent}: {text}");
+    }
+    assert!(text.contains("State: installed"), "{text}");
+    press(&mut a, KeyCode::Esc);
+
+    // The older map file is recognised as an older version of the map pack.
+    select_row(&mut a, PackRow::Other(0));
+    let View::Packs { s, .. } = a.view() else {
+        panic!("packs")
+    };
+    let older: Vec<_> = s
+        .inv
+        .others
+        .iter()
+        .map(|o| (o.file.as_str(), o.older_of))
+        .collect();
+    assert_eq!(
+        older,
+        [
+            ("map-osm-testland_2025-07.mbtiles", Some(3)),
+            ("wiki_en_2026-03.zim", Some(0))
+        ]
+    );
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(a.view(), View::Pager { text, .. } if text.contains("older version of 'Testland")
+            && text.contains("opened in Maps & navigation"))
+    );
+}
+
+#[test]
+fn the_library_does_not_offer_map_files_to_the_reader() {
+    let mut a = app(Mode::UltraStable, "map-library");
+    add_map_pack(&a);
+    let stick = a.home.join("stick");
+    std::fs::create_dir_all(stick.join("Resilience-packs")).expect("mkdir");
+    std::fs::write(
+        stick.join("map-osm-testland_2026-01.mbtiles"),
+        b"SQLite format 3\0",
+    )
+    .expect("w");
+    std::fs::write(stick.join("Resilience-packs/own-town.mbtiles"), b"x").expect("w");
+    std::fs::write(stick.join("Resilience-packs/own_docs.zim"), b"x").expect("w");
+
+    open(&mut a, Builtin::Library);
+    let View::Library { items, .. } = a.view() else {
+        panic!("not on the library view")
+    };
+    let titles: Vec<&str> = items.iter().map(|i| i.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        [
+            "System documentation (built in)",
+            "Wikipedia (English)",
+            "Wikipedia (English) (older version)"
+        ]
+    );
+    assert!(
+        items
+            .iter()
+            .all(|i| !i.path.to_string_lossy().ends_with(".mbtiles"))
+    );
+    // Going through the whole list never runs the reader on a map.
+    for _ in 0..items.len() {
+        if let Effect::Run(req) = press(&mut a, KeyCode::Enter) {
+            assert!(!req.argv.iter().any(|x| x.ends_with(".mbtiles")), "{req:?}");
+        }
+        press(&mut a, KeyCode::Down);
+    }
+
+    // On a stick: the library sees only ZIM files; maps are kept apart for
+    // Maps & navigation.
+    let cfg = resilience_core::packs::PackConfig::load(&a.paths.packs_config).expect("cfg");
+    let zim: Vec<String> = stick_items(&cfg, "STICK", &stick, PackKind::Zim)
+        .into_iter()
+        .map(|i| i.title)
+        .collect();
+    assert_eq!(zim, ["own_docs.zim"]);
+    let maps: Vec<(String, ItemPlace)> = stick_items(&cfg, "STICK", &stick, PackKind::Map)
+        .into_iter()
+        .map(|i| (i.title, i.place))
+        .collect();
+    let on = |known| ItemPlace::Stick {
+        volume: "STICK".into(),
+        known,
+    };
+    assert_eq!(
+        maps,
+        [
+            ("Testland (OpenStreetMap)".to_string(), on(true)),
+            ("own-town.mbtiles".to_string(), on(false))
+        ]
     );
 }
 
@@ -2916,5 +3118,100 @@ fn openpgp_keys_are_listed_offered_and_removable() {
             "--to-pgp",
             "0123456789ABCDEF0123456789ABCDEFB0B0B0B0"
         ]
+    );
+}
+
+/// A fake `pkexec` (in the test admin.toml) that logs its arguments and
+/// fails for the layout "de", as the helper would for a layout it refuses.
+fn fake_keymap_helper(a: &mut App) -> std::path::PathBuf {
+    use resilience_core::keyboard::{KeyboardConfig, Layout};
+    use std::os::unix::fs::PermissionsExt;
+    let dir = a.home.join("sys");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let log = dir.join("pkexec.log");
+    let script = dir.join("pkexec");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> {}\necho \"SHELL=$SHELL\" >> {}\nif [ \"$3\" = de ]; then echo 'this keyboard layout is not offered' >&2; exit 1; fi\n",
+            log.display(),
+            log.display()
+        ),
+    )
+    .expect("write");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let admin = std::fs::read_to_string(&a.paths.admin_config).expect("admin.toml");
+    std::fs::write(
+        &a.paths.admin_config,
+        admin.replace("/run/wrappers/bin/pkexec", &script.display().to_string()),
+    )
+    .expect("admin.toml");
+    let l = |id: &str, label: &str| Layout {
+        id: id.into(),
+        label: label.into(),
+    };
+    a.sys.keyboard = KeyboardConfig {
+        default: "us".into(),
+        layouts: vec![
+            l("us", "English (US, QWERTY)"),
+            l("fr", "French (AZERTY)"),
+            l("de", "German (QWERTZ)"),
+        ],
+    };
+    log
+}
+
+#[test]
+fn keyboard_layout_is_loaded_saved_and_restored_at_login() {
+    let mut a = app(Mode::UltraStable, "keyboard");
+    let log = fake_keymap_helper(&mut a);
+    let (v, _) = a.activate(Entry::Builtin(Builtin::Settings));
+    a.stack.push(v.expect("settings"));
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("Keyboard  French (AZERTY)"), "{screen}");
+    assert!(
+        screen.contains("Keyboard  English (US, QWERTY)  (current)"),
+        "{screen}"
+    );
+    // Themes first, then layouts: French is the 6th row.
+    press(&mut a, KeyCode::Home);
+    for _ in 0..5 {
+        press(&mut a, KeyCode::Down);
+    }
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.settings.keyboard.as_deref(), Some("fr"));
+    assert_eq!(
+        UserSettings::load(&a.settings_path).0.keyboard.as_deref(),
+        Some("fr")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&log).expect("log"),
+        "/store/bin/resilience-admin set-keymap fr\nSHELL=/run/current-system/sw/bin/resilience-session\n"
+    );
+    assert!(render(&mut a, 80, 24).contains("French (AZERTY)  (current)"));
+    // A layout loadkeys refuses is reported and not saved.
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.settings.keyboard.as_deref(), Some("fr"));
+    assert!(a.notices.iter().any(|n| n.text.contains("not offered")));
+
+    // Next login: the saved choice is loaded again; the default is not
+    // (the login prompt already loaded it); a choice no longer offered
+    // falls back to the default with a warning.
+    let mut b = app(Mode::UltraStable, "keyboard-login");
+    let log = fake_keymap_helper(&mut b);
+    b.settings.keyboard = Some("fr".into());
+    b.apply_saved_layout();
+    b.settings.keyboard = Some("us".into());
+    b.apply_saved_layout();
+    b.settings.keyboard = Some("xx; rm".into());
+    b.apply_saved_layout();
+    let calls = std::fs::read_to_string(&log).expect("log");
+    assert_eq!(calls.matches("set-keymap").count(), 1, "{calls}");
+    assert!(calls.contains("set-keymap fr"), "{calls}");
+    assert!(
+        b.notices
+            .iter()
+            .any(|n| n.text.contains("no longer offered"))
     );
 }

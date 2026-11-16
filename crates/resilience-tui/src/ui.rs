@@ -173,7 +173,7 @@ fn footer_hints(view: &View) -> &'static str {
         }
         View::Notes { .. } => "Enter Open  n New note  r Refresh  Esc Back",
         View::Network { .. } => "p Probe Internet  r Refresh  Esc Back",
-        View::Settings { .. } => "Enter Apply theme  Esc Back",
+        View::Settings { .. } => "Enter Apply  Esc Back",
         View::Search { .. } => "Type to search  Up/Down Select  Enter Open  Esc Back",
         View::Users { .. } => "Enter Change mode  r Refresh  Esc Back  F1 Help",
         View::ChooseMode { .. } => "Up/Down Choose  Enter Continue  Esc Cancel",
@@ -983,23 +983,30 @@ fn network_lines(app: &App) -> Vec<Line<'static>> {
 
 fn draw_settings(f: &mut Frame, app: &App, area: Rect, list: &mut ListState) {
     let t = app.theme;
-    let [themes, info] = Layout::vertical([
-        Constraint::Length(ThemeName::ALL.len() as u16 + 2),
-        Constraint::Min(0),
-    ])
-    .areas(area);
+    let kb = &app.sys.keyboard;
+    let rows = (ThemeName::ALL.len() + kb.layouts.len()) as u16;
+    let [themes, info] =
+        Layout::vertical([Constraint::Length(rows + 2), Constraint::Min(0)]).areas(area);
+    let current = |yes: bool| if yes { "  (current)" } else { "" };
+    let layout_now = kb.effective(app.settings.keyboard.as_deref());
     let items: Vec<ListItem> = ThemeName::ALL
         .iter()
         .map(|th| {
-            let cur = if *th == app.settings.theme {
-                "  (current)"
-            } else {
-                ""
-            };
-            ListItem::new(format!("{}{cur}", th.label()))
+            ListItem::new(format!(
+                "Theme     {}{}",
+                th.label(),
+                current(*th == app.settings.theme)
+            ))
         })
+        .chain(kb.layouts.iter().map(|l| {
+            ListItem::new(format!(
+                "Keyboard  {}{}",
+                l.label,
+                current(l.id == layout_now)
+            ))
+        }))
         .collect();
-    draw_list(f, &t, themes, "COLOUR THEME", items, list, "");
+    draw_list(f, &t, themes, "THEME & KEYBOARD", items, list, "");
     let lines = vec![
         Line::from(vec![
             Span::styled("Security mode: ", t.dim),
@@ -1836,7 +1843,11 @@ fn draw_files(
         .unwrap_or("FIND FILES (home folder and open USB sticks)");
     let [input, results] =
         Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(area);
-    let cursor = if (app.tick / 2) % 2 == 0 { "█" } else { " " };
+    let cursor = if (app.tick / 2).is_multiple_of(2) {
+        "█"
+    } else {
+        " "
+    };
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(query.to_string(), t.accent),
@@ -1937,7 +1948,11 @@ fn draw_search(
     let t = app.theme;
     let [input, results] =
         Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(area);
-    let cursor = if (app.tick / 2) % 2 == 0 { "█" } else { " " };
+    let cursor = if (app.tick / 2).is_multiple_of(2) {
+        "█"
+    } else {
+        " "
+    };
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(query.to_string(), t.accent),

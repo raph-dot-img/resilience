@@ -35,3 +35,4 @@ secrets/
 .idea/
 .vscode/
 resilience-dev.qcow2
+.claude/worktrees/

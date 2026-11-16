@@ -10,8 +10,105 @@
 
 let
   cfg = config.resilience.interface;
+  kb = config.resilience.keyboard;
+  layout = kb.layout;
+  # Every name offered or used, checked against kbd at build time.
+  keymapNames = lib.unique ([ layout ] ++ map (l: l.id) kb.layouts);
+  keymapId = lib.types.strMatching "[A-Za-z0-9][A-Za-z0-9_-]{0,39}";
 in
 {
+  options.resilience.keyboard = {
+    layout = lib.mkOption {
+      type = keymapId;
+      default = "us";
+      example = "fr";
+      description = ''
+        The system's console keyboard layout (a kbd keymap name: "us",
+        "fr" for French AZERTY, "de-latin1", ...). Used at boot, on every
+        login prompt (it is loaded again before each one) and by accounts
+        that have not chosen another layout. The build fails if the keymap
+        does not exist.
+      '';
+    };
+    layouts = lib.mkOption {
+      type = lib.types.listOf (
+        lib.types.submodule {
+          options = {
+            id = lib.mkOption {
+              type = keymapId;
+              description = "kbd keymap name.";
+            };
+            label = lib.mkOption {
+              type = lib.types.strMatching "[ -~]{1,60}";
+              description = "Name shown in Settings (printable ASCII).";
+            };
+          };
+        }
+      );
+      default = [
+        {
+          id = "us";
+          label = "English (US, QWERTY)";
+        }
+        {
+          id = "uk";
+          label = "English (UK, QWERTY)";
+        }
+        {
+          id = "fr";
+          label = "French (AZERTY)";
+        }
+        {
+          id = "fr-bepo";
+          label = "French (BEPO)";
+        }
+        {
+          id = "be-latin1";
+          label = "Belgian (AZERTY)";
+        }
+        {
+          id = "fr_CH";
+          label = "Swiss French (QWERTZ)";
+        }
+        {
+          id = "de-latin1";
+          label = "German (QWERTZ)";
+        }
+        {
+          id = "de_CH-latin1";
+          label = "Swiss German (QWERTZ)";
+        }
+        {
+          id = "es";
+          label = "Spanish (QWERTY)";
+        }
+        {
+          id = "it";
+          label = "Italian (QWERTY)";
+        }
+        {
+          id = "pt-latin1";
+          label = "Portuguese (QWERTY)";
+        }
+        {
+          id = "nl";
+          label = "Dutch (QWERTY)";
+        }
+        {
+          id = "dvorak";
+          label = "English (Dvorak)";
+        }
+      ];
+      description = ''
+        Layouts each account may choose in Settings. The choice is loaded
+        with loadkeys (as the user, on their own console) at every login
+        and when changed; the console has one keymap, so it applies to
+        every console until someone logs out. The system's layout should
+        be in the list.
+      '';
+    };
+  };
+
   options.resilience.interface = {
     autologinUser = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
@@ -73,8 +170,29 @@ in
       # (ter-v16n lacks ▀ ▄ and double-line boxes; verified from its PSF table.)
       font = "ter-i16n";
       packages = [ pkgs.terminus_font ];
-      keyMap = lib.mkDefault "us";
+      keyMap = layout;
     };
+
+    # A misspelt keymap would only fail at boot (systemd-vconsole-setup)
+    # or in Settings: refuse it at build time instead.
+    system.checks = [
+      (pkgs.runCommand "resilience-keymaps" { } ''
+        for m in ${lib.escapeShellArgs keymapNames}; do
+          if [ -z "$(find ${pkgs.kbd}/share/keymaps -name "$m.map.gz" -print -quit)" ]; then
+            echo "resilience.keyboard: no console keymap named '$m' in kbd" >&2
+            exit 1
+          fi
+        done
+        touch $out
+      '')
+    ];
+
+    # The console keymap is shared by all consoles and survives a logout.
+    # Load the system's layout again before every login prompt, so nobody
+    # types a password (and trips faillock) with another account's layout.
+    systemd.services."getty@".serviceConfig.ExecStartPre = [
+      "-${pkgs.kbd}/bin/loadkeys -q -- ${layout}"
+    ];
 
     # No graphical stack, ever.
     services.xserver.enable = false;
