@@ -32,8 +32,14 @@
         file:
         pkgs.testers.runNixOSTest {
           imports = [ (import file { inherit self; }) ];
-          # The test driver types with US key codes (QEMU sendkey).
-          defaults.resilience.keyboard.layout = "us";
+          # The test driver types with US key codes (QEMU sendkey). Only
+          # nodes that import the Resilience modules have the option.
+          defaults =
+            { options, lib, ... }:
+            {
+              config = lib.optionalAttrs (options ? resilience) {
+                resilience.keyboard.layout = "us";
+              };
             };
         };
 
