@@ -61,11 +61,14 @@
     def home():
         for _ in range(5):
             machine.send_key("esc")
-        wait_tty("1", "MAIN MENU")
+        return wait_tty("1", "MAIN MENU")
 
     def security(entry, title):
-        home()
-        machine.send_chars("3")
+        # The main menu numbers only the categories that have entries, so
+        # read Security's number from the screen instead of assuming it.
+        m = re.search(r"\[(\d)\] SECURITY & CRYPTOGRAPHY", home())
+        assert m is not None, "Security is not in the main menu"
+        machine.send_chars(m.group(1))
         wait_tty("1", "SECURITY & CRYPTOGRAPHY")
         machine.send_chars(entry)
         wait_tty("1", title)
