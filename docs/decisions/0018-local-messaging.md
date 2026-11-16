@@ -1,7 +1,7 @@
 # ADR 0018: Local messaging with Reticulum and LXMF
 
-Status: accepted (2026-11-16). The network service and the per-user
-messaging program are implemented; the interface (TUI) is not.
+Status: accepted (2026-11-16). The network service, the per-user
+messaging program and the interface (TUI) are implemented.
 
 ## Context
 
@@ -140,6 +140,26 @@ lxmf 0.9.8 from the pinned nixpkgs):
 - **Names are claims**: `peers.json` records the name each address
   announces, cleaned to one printable line of 64 bytes.
 
+## Decided while writing the interface (2026-11-16)
+
+- **Shown only where messaging exists**: the Communications section has
+  "Local messages" when `/run/resilience-reticulum/client/config` exists.
+- **Words on the screen**: `waiting` (queued), `sent`, `delivered`,
+  `FAILED`, and for incoming messages `from them` or `from them, NOT
+  VERIFIED`. Saving a message says "Message saved", never "sent".
+- **People**: an address the user named shows that name; otherwise the
+  name the address announces, in quotes with a question mark
+  (`"marie"?`); otherwise the first 8 characters of the address. The
+  user's names are in `contacts.json`, written by the interface.
+- **Addresses are typed as read aloud**: groups, spaces, dashes and upper
+  case are accepted.
+- **The interface never talks to the network or to the program**: it
+  reads the store every 2 seconds while a messages screen is shown and
+  writes `outbox/`, `cancel/` and `contacts.json`. Texts and names from
+  the network are cleaned before drawing (control characters, escape
+  sequences, direction overrides).
+- **One-line messages** of at most 1,000 characters for now.
+
 ## Alternatives considered
 
 - **NomadNet as the interface**: maintained and complete, but it is also
@@ -176,5 +196,6 @@ lxmf 0.9.8 from the pinned nixpkgs):
 Tested by: `vm-comms` (two machines on an isolated network: the service
 starts, each sees the other, a signed LXMF message is delivered with its
 proof through the shared instances, then through each account's
-program, including a recipient that is away and comes back) and
-`comms-messages` (the program with the real libraries, no VM).
+program, including a recipient that is away and comes back, then through
+the interface on both consoles) and `comms-messages` (the program with
+the real libraries, no VM).

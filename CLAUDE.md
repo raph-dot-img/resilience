@@ -81,7 +81,9 @@ crates/resilience-core  library: status, network (passive + on-demand probe),
                         pipeline, checksum, restore into ~/Restored), wifi (nmcli parsing,
                         private profiles, password via stdin), packs (catalog, inventory,
                         stdin chunk framing, receive+hash, remove, reader URLs), keyboard
-                        (layout list, names, loadkeys argv), maps/ (geo, mvt decoder, canvas,
+                        (layout list, names, loadkeys argv), messages (local messages store:
+                        bounded JSON records, peers, contacts, outbox/cancel files, text
+                        cleaning; ADR 0018), maps/ (geo, mvt decoder, canvas,
                         style, labels: pure, ADR 0016)
 crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR 0007):
                         list | set-mode USER MODE | set-time UTC |
@@ -183,6 +185,16 @@ catalog map packs, at most 8. "Maps on this computer & USB sticks" =
 `.mbtiles`): Enter opens the map on the chosen file over the overview, `c`
 → `resilience-library check`. The viewer opens SQLite hardened, lowers its
 memory limit, writes only ~/.local/state/resilience/maps.toml.
+
+Local messages flow (ADR 0018, only with resilience.comms.enable): TUI
+Communications → Local messages (shown when /run/resilience-reticulum/
+client/config exists) reads ~/.local/share/resilience/messages every 2 s
+(`resilience_core::messages::Store`: records, peers, contacts, status) and
+writes `outbox/ID.json` (tmp + rename), `cancel/ID`, `contacts.json`. The
+user service `resilience-messages` takes the request, sends through the
+machine's Reticulum instance and rewrites `messages/ID.json` (queued →
+sent → delivered only on LXMF's proof; failed). The TUI never touches the
+network; names from the network are shown as claims (`"name"?`).
 
 Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
 with `connection.permissions user:U`, no secret → thread: `nmcli connection
@@ -388,11 +400,13 @@ not continue slices 10 to 13 unless asked. Phase 6 so far: ADR 0018
 decision); slice 1 = `nix/modules/comms.nix`, `nix/packages/
 resilience-reticulum`, `vm-comms`; slice 2 = the per-user program
 `resilience-messages` (file formats in ADR 0018), check `comms-messages`.
-Next, slice 3: `resilience-core/src/messages.rs` (read `messages/*.json`,
-`peers.json`, `status.json`; write outbox and cancel files; contacts) and
-the TUI Communications section (conversations, nearby people, write,
-states, "sender not verified", my address), `[tools]`/system.toml flag
-for comms, handbook page, TUI tests, vm-comms through the TUI.
+Slice 3 = `resilience-core/src/messages.rs` and the TUI screens
+(`crates/resilience-tui/src/chat_ui.rs`: `Builtin::Chat` "Local
+messages" under Communications, views Chats / Nearby / Chat, dialog
+`Modal::ChatInput`), handbook `60-local-messages.md`, vm-comms through
+the TUI. Open: whether the standard edition turns the module on (owner);
+a propagation node (store-and-forward); file exchange; multi-line
+messages; Internet messengers (toxic, signal-cli); Yggdrasil/BATMAN.
 `resilience.comms.enable` is on in no edition yet.
 
 Phase 5 state when parked:
@@ -429,7 +443,7 @@ Git state (2026-11-16): `main` = end of Phase 4; `develop` = `feat/maps`
 and `feat/maps-overview` merged (local, not pushed); `feat/comms` = Phase 6
 work, local, from `develop`. Last full `nix flake check -L --max-jobs 1 --keep-going` on
 `feat/maps` (before the keyboard work) passed: 9 VM tests, security
-invariants, ISO evaluation, both map pack checks. Rust: 191 core, 66 TUI,
+invariants, ISO evaluation, both map pack checks. Rust: 198 core, 71 TUI,
 134 maps (+1 on demand), 5 library/store tests; clippy clean. The live ISO was rebuilt
 and boot-tested in QEMU (BIOS and UEFI, 512 MiB to 2 GiB) on 2026-11-16 and
 booted once on a ThinkPad L15 Gen 1.
@@ -457,10 +471,10 @@ booted once on a ThinkPad L15 Gen 1.
 - Cryptography: no LUKS sticks, no OpenPGP signing in the TUI (minisign
   signs), no secure deletion of originals (the user is told); contacts'
   keys are only as trustworthy as the user's own check.
-- Local messaging: the network service and the per-user program exist, but
-  no TUI screen yet (messages are files); off in every edition; two machines
-  tested, in VMs only; no store-and-forward node (both programs must be on
-  at the same time at some point within 7 days).
+- Local messaging: off in every edition; two machines tested, in VMs only;
+  no store-and-forward node (both computers must be on at the same time at
+  some point within 7 days); one-line messages; no "read" state; received
+  messages are not announced outside the messages screens.
 - Power profiles not implemented (schedutil governor only). Not measured yet.
 - Keyboard: all consoles share one keymap (kernel); a login prompt starting
   on any console resets it to the system layout, and the TUI reloads its

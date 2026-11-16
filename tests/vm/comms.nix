@@ -8,7 +8,8 @@
 # Then each account's messaging program (resilience-messages, a systemd
 # user service): a request file in the outbox is delivered to the other
 # machine with its proof; with the other program stopped it waits and
-# arrives later. The TUI comes with the next slice.
+# arrives later. Last, through the interface on both consoles: people
+# nearby, writing, "delivered" on one screen and the text on the other.
 { self }:
 { ... }:
 let
@@ -43,7 +44,35 @@ in
   nodes.beta = node;
 
   testScript = ''
-    import json, re
+    import base64, json, re, time as _time
+
+    def tty_text(m):
+        """Screen text of tty1 from /dev/vcsu1 (UTF-32); see modes.nix."""
+        cols = int(m.succeed("stty -F /dev/tty1 size").split()[1])
+        raw = base64.b64decode(m.succeed("base64 -w0 /dev/vcsu1"))
+        text = raw.decode("utf-32-le", errors="replace")
+        return "\n".join(text[i:i + cols] for i in range(0, len(text), cols))
+
+    def wait_tty(m, regexp, timeout=60):
+        deadline = _time.monotonic() + timeout
+        while True:
+            text = tty_text(m)
+            if re.search(regexp, text):
+                return text
+            if _time.monotonic() > deadline:
+                print("--- tty1 contents ---")
+                print(text)
+                raise Exception(f"timed out waiting for {regexp!r} on tty1")
+            _time.sleep(0.5)
+
+    def open_messages(m):
+        for _ in range(4):
+            m.send_key("esc")
+        wait_tty(m, "MAIN MENU")
+        m.send_chars("/local mess")
+        wait_tty(m, "Local messages")
+        m.send_key("ret")
+        wait_tty(m, "LOCAL MESSAGES")
 
     CLIENT = "/run/resilience-reticulum/client/config"
     AS_ALICE = "runuser -u alice -- "
@@ -148,6 +177,56 @@ in
         # The private key and the messages are the account's only.
         for m in (alpha, beta):
             m.fail(f"find {BOX} -perm /077 | grep .")
+
+    with subtest("through the interface: written on one screen, read on the other"):
+        for m in (alpha, beta):
+            m.succeed("dmesg -n 1")
+            text = wait_tty(m, "MAIN MENU")
+            assert "COMMUNICATIONS" in text, text
+        open_messages(alpha)
+        text = wait_tty(alpha, "Messaging is running")
+        # The two messages sent above are one conversation, under the name
+        # the other machine claims (quoted and questioned).
+        assert '"alice"?' in text and "You: second message" in text, text
+        alpha.send_chars("m")
+        text = wait_tty(alpha, "MY ADDRESS")
+        assert " ".join(a_addr[i:i + 4] for i in range(0, 32, 4)) in text, text
+        alpha.send_key("ret")
+        # People nearby: the other machine, with the name it claims.
+        alpha.send_chars("p")
+        text = wait_tty(alpha, "PEOPLE NEARBY")
+        text = wait_tty(alpha, re.escape('"alice"?'))
+        spoken = " ".join(b_addr[i:i + 4] for i in range(0, 32, 4))
+        assert spoken in text, text
+        # (The test program of the subtest above is listed too, as "bob".)
+        alpha.send_key("esc")
+        wait_tty(alpha, "LOCAL MESSAGES")
+        # Write to the address as it would be read aloud.
+        alpha.send_chars("n")
+        wait_tty(alpha, "WRITE TO AN ADDRESS")
+        alpha.send_chars(spoken.upper() + "\n")
+        wait_tty(alpha, "WRITE A MESSAGE")
+        alpha.send_chars("Bring the blue tarp\n")
+        text = wait_tty(alpha, r"You \[delivered\][^\n]*\n[^\n]*Bring the blue tarp", timeout=120)
+        assert "[FAILED]" not in text and "[waiting]" not in text, text
+
+        open_messages(beta)
+        wait_tty(beta, re.escape('"alice"?'))
+        beta.send_key("ret")
+        wait_tty(beta, "MESSAGES WITH")
+        text = wait_tty(beta, "Bring the blue tarp", timeout=60)
+        assert re.search(r"Them \[from them\][^\n]*\n[^\n]*Bring the blue tarp", text), text
+        assert "from them, NOT VERIFIED]" not in text, text
+        # A reply from that screen.
+        beta.send_chars("w")
+        wait_tty(beta, "WRITE A MESSAGE")
+        beta.send_chars("On my way\n")
+        wait_tty(beta, r"You \[delivered\][^\n]*\n[^\n]*On my way", timeout=120)
+        wait_tty(alpha, r"Them \[from them\][^\n]*\n[^\n]*On my way", timeout=60)
+        for m in (alpha, beta):
+            for _ in range(4):
+                m.send_key("esc")
+            wait_tty(m, "MAIN MENU")
 
     with subtest("a message to a machine that is gone is never delivered"):
         beta.succeed("pkill -f 'node.p[y]'")

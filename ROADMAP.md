@@ -88,7 +88,7 @@ Slices 1 to 9 are in `develop`.
 - ✅ Reticulum and LXMF evaluated and chosen for local messaging, as an opt-in module because of their licence (ADR 0018)
 - ✅ Local messaging network: `resilience.comms.enable` (Reticulum instance per machine, unprivileged, local network only), tested between two VMs (`vm-comms`)
 - ✅ Per-user messaging program `resilience-messages` (identity, queue with retries, delivery states, signature check), tested with the real libraries (`comms-messages`) and between two VMs
-- ⬜ TUI "Communications" section (conversations, nearby people, contacts, writing), handbook page
+- ✅ TUI "Communications" > Local messages (conversations, people nearby with claimed names, writing, per-message state, "not verified", own names for addresses, my address), handbook page; shown only where the module is on
 - ⬜ Store-and-forward for recipients that are off (LXMF propagation node), file exchange
 - ⬜ Yggdrasil / BATMAN-adv profiles; Tox, signal-cli (documented as unofficial)
 
