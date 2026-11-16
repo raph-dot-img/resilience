@@ -394,11 +394,30 @@ impl Grid {
 ///   the next position is tried, so a label near the right edge goes to
 ///   the left of its marker;
 /// - when no position fits, the marker alone is placed if the candidate
-///   says so, otherwise the candidate is dropped.
+///   says so, otherwise the candidate is dropped;
+/// - a letter or digit marker (a point of interest) is kept one blank cell
+///   away from its text, so that it does not read as part of the name
+///   (`o Bakery`, not `oBakery`); symbols (`*`, `^`) touch their text;
+/// - a marker that falls on a reserved cell (the crosshair) is not drawn,
+///   but its text is still placed around it, so the place at the centre
+///   of the view keeps its name;
+/// - a text already placed for an anchor less than [`SAME_NAME_COLS`]
+///   columns and [`SAME_NAME_ROWS`] rows away is not placed again (one
+///   place mapped twice, as a node and an area, gives one name).
 ///
 /// Cost: O(n) to select, O(k log k) to sort the k considered, and O(text
 /// length) per position tried.
 pub fn place(candidates: &[Candidate], cols: u16, rows: u16, reserved: &[CellRect]) -> Vec<Placed> {
+    // Anchors and texts placed so far, for the same-name rule.
+    let mut names: Vec<(i32, i32, &str)> = Vec::new();
+    let near_same = |names: &[(i32, i32, &str)], c: &Candidate| {
+        !c.text.is_empty()
+            && names.iter().any(|&(col, row, t)| {
+                t == c.text
+                    && (col - c.col).abs() < SAME_NAME_COLS
+                    && (row - c.row).abs() < SAME_NAME_ROWS
+            })
+    };
     // Same limits as the canvas.
     let cols = cols.min(MAX_COLS);
     let rows = rows.min(MAX_ROWS);
@@ -442,14 +461,19 @@ pub fn place(candidates: &[Candidate], cols: u16, rows: u16, reserved: &[CellRec
         let c = &candidates[i];
         let len = i32::try_from(c.text.chars().count()).unwrap_or(i32::MAX);
         let (ac, ar) = (c.col, c.row);
+        if near_same(&names, c) {
+            continue;
+        }
         if let Some(m) = c.marker {
-            if !grid.free(ac, ar, 1) {
+            let hidden = grid.idx(ac, ar).is_some_and(|i| grid.reserved[i]);
+            if !hidden && !grid.free(ac, ar, 1) {
                 continue;
             }
+            let gap = i32::from(m.is_ascii_alphanumeric());
             let mut text_at = None;
             if len > 0 {
                 for (dr, start) in WITH_MARKER {
-                    let col = start_col(ac, len, start);
+                    let col = start_col(ac, len, start, gap);
                     let row = ar + dr;
                     // The marker and the text are one label: the text may
                     // touch its own marker, which is not placed yet.
@@ -458,27 +482,34 @@ pub fn place(candidates: &[Candidate], cols: u16, rows: u16, reserved: &[CellRec
                         break;
                     }
                 }
-                if text_at.is_none() && !c.keep_marker {
+                if text_at.is_none() && (hidden || !c.keep_marker) {
                     continue;
                 }
             }
-            grid.take(ac, ar, 1);
+            if hidden && len == 0 {
+                continue;
+            }
+            if !hidden {
+                grid.take(ac, ar, 1);
+            }
             let text = text_at.map(|(col, row)| {
                 grid.take(col, row, len);
+                names.push((ac, ar, c.text.as_str()));
                 (col as u16, row as u16, c.text.clone())
             });
             placed.push(Placed {
                 index: i,
-                marker: Some((ac as u16, ar as u16, m)),
+                marker: (!hidden).then_some((ac as u16, ar as u16, m)),
                 text,
                 colour: c.colour,
             });
         } else if len > 0 {
             for (dr, start) in WITHOUT_MARKER {
-                let col = start_col(ac, len, start);
+                let col = start_col(ac, len, start, 0);
                 let row = ar + dr;
                 if grid.free(col, row, len) {
                     grid.take(col, row, len);
+                    names.push((ac, ar, c.text.as_str()));
                     placed.push(Placed {
                         index: i,
                         marker: None,
@@ -493,10 +524,17 @@ pub fn place(candidates: &[Candidate], cols: u16, rows: u16, reserved: &[CellRec
     placed
 }
 
-fn start_col(anchor: i32, len: i32, start: Start) -> i32 {
+/// Same text within this many columns (exclusive) of a placed one: skipped.
+pub const SAME_NAME_COLS: i32 = 16;
+/// ... and within this many rows (exclusive).
+pub const SAME_NAME_ROWS: i32 = 4;
+
+/// First column of a text of `len` cells at `start` of the anchor, `gap`
+/// blank cells away from it on the sides.
+fn start_col(anchor: i32, len: i32, start: Start, gap: i32) -> i32 {
     match start {
-        Start::Right => anchor.saturating_add(1),
-        Start::Left => anchor.saturating_sub(len),
+        Start::Right => anchor.saturating_add(1 + gap),
+        Start::Left => anchor.saturating_sub(len + gap),
         Start::Centre => anchor.saturating_sub((len - 1) / 2),
     }
 }
@@ -917,14 +955,41 @@ mod tests {
             )
             .is_empty()
         );
-        // A marker on a reserved cell (the crosshair) is not placed.
+        // A marker on a reserved cell (the crosshair) is not drawn, but its
+        // name is, beside it; with no room for the name, nothing is placed.
         let r = [CellRect {
             col: 4,
             row: 0,
             width: 1,
             height: 1,
         }];
-        assert!(place(&[cand(1, 4, 0, Some('*'), "X")], 10, 1, &r).is_empty());
+        let p = place(&[cand(1, 4, 0, Some('*'), "Lux")], 10, 1, &r);
+        assert_eq!(render(10, 1, &p), "     Lux  \n");
+        assert_eq!(p[0].marker, None);
+        assert!(place(&[cand(1, 4, 0, Some('*'), "Luxembourg")], 10, 1, &r).is_empty());
+        let mut alone = cand(1, 4, 0, Some('H'), "");
+        alone.keep_marker = true;
+        assert!(place(&[alone], 10, 1, &r).is_empty());
+        // A letter marker keeps a blank cell from its text, on either side;
+        // a symbol touches it.
+        let p = place(&[cand(1, 1, 0, Some('o'), "Cafe")], 12, 1, &[]);
+        assert_eq!(render(12, 1, &p), " o Cafe     \n");
+        let p = place(&[cand(1, 10, 0, Some('H'), "Cafe")], 12, 1, &[]);
+        assert_eq!(render(12, 1, &p), "     Cafe H \n");
+        let p = place(&[cand(1, 1, 0, Some('*'), "Cafe")], 12, 1, &[]);
+        assert_eq!(render(12, 1, &p), " *Cafe      \n");
+        // The same name near a placed one is skipped (a place mapped as a
+        // node and as an area); far enough away, or another name, it is not.
+        let twins = [
+            cand(9, 2, 1, Some('*'), "Mamer"),
+            cand(8, 3, 4, Some('*'), "Mamer"),
+            cand(7, 3, 7, Some('*'), "Mamer"),
+            cand(6, 20, 1, Some('*'), "Mamer"),
+            cand(5, 3, 3, None, "Rue"),
+        ];
+        let p = place(&twins, 40, 9, &[]);
+        let shown: Vec<_> = p.iter().map(|q| (q.index, q.text.is_some())).collect();
+        assert_eq!(shown, [(0, true), (2, true), (3, true), (4, true)]);
         // A label without a marker is centred on its anchor.
         let s = place(&[cand(1, 5, 0, None, "Rue")], 10, 1, &[]);
         assert_eq!(render(10, 1, &s), "    Rue   \n");

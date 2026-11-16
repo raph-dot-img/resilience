@@ -390,7 +390,7 @@ fn first_screen_on_a_detailed_pack_starts_at_its_centre() {
     h.key(KeyCode::Char('+'));
     let s = h.screen(80, 24);
     assert!(
-        s.contains("HPharmacie") && s.contains("Rue de l'Essai"),
+        s.contains("H Pharmacie") && s.contains("Rue de l'Essai"),
         "{s}"
     );
     // Zoomed out, the town's name.
