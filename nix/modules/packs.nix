@@ -172,15 +172,29 @@ let
     session_shell = "/run/current-system/sw${config.resilience.sessionPackage.shellPath}";
     pack = map (p: lib.filterAttrs (_: v: v != null) p) cfg.catalog;
     set = cfg.sets;
-    builtin = lib.optional cfg.builtinDocs {
-      title = "System documentation (built in)";
-      description = "The Resilience handbook, the NixOS manual and the NixOS options of this NixOS release.";
-      category = "documentation";
-      language = "en";
-      path = "${docsPack}/share/resilience/packs/resilience-system-docs.zim";
-      license = "MIT";
-      source = "Resilience handbook; NixOS manual and options of the pinned nixpkgs (nixos.org)";
-    };
+    builtin =
+      lib.optional cfg.builtinWorldMap {
+        title = "World overview map (built in)";
+        description = "The whole world at overview detail: coasts, borders, large lakes and rivers, about 7,300 towns. No streets. Natural Earth ${worldMap.version}.";
+        category = "maps";
+        language = "en";
+        path = "${worldMap}/${worldMap.path}";
+        license = "Public domain";
+        source = "Natural Earth ${worldMap.version} (naturalearthdata.com)";
+      }
+      ++ lib.optional cfg.builtinDocs {
+        title = "System documentation (built in)";
+        description = "The Resilience handbook, the NixOS manual and the NixOS options of this NixOS release.";
+        category = "documentation";
+        language = "en";
+        path = "${docsPack}/share/resilience/packs/resilience-system-docs.zim";
+        license = "MIT";
+        source = "Resilience handbook; NixOS manual and options of the pinned nixpkgs (nixos.org)";
+      };
+  };
+
+  worldMap = pkgs.callPackage ../packages/resilience-world-map {
+    resilience = config.resilience.package;
   };
 
   docsPack = pkgs.callPackage ../packages/resilience-docs {
@@ -257,6 +271,15 @@ in
       description = ''
         Ship a small documentation pack (Resilience handbook, NixOS manual and
         options, about 4 MiB) in the system, readable in the Offline library.
+      '';
+    };
+    builtinWorldMap = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Ship the world overview map (Natural Earth, zooms 0 to 7, about
+        12 MiB) in the system: maps then work without any map pack
+        (ADR 0016).
       '';
     };
     configFile = mkOption {

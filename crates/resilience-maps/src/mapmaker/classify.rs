@@ -87,18 +87,19 @@ struct InFeature<'a> {
 }
 
 #[derive(Serialize)]
-struct Tippecanoe {
-    layer: &'static str,
-    minzoom: u8,
+pub(super) struct Tippecanoe {
+    pub(super) layer: &'static str,
+    pub(super) minzoom: u8,
 }
 
+/// One feature for tippecanoe (also written by [`super::overview`]).
 #[derive(Serialize)]
-struct OutFeature<'a> {
+pub(super) struct OutFeature<'a> {
     #[serde(rename = "type")]
-    kind: &'static str,
-    tippecanoe: Tippecanoe,
-    properties: &'a Map<String, Value>,
-    geometry: &'a RawValue,
+    pub(super) kind: &'static str,
+    pub(super) tippecanoe: Tippecanoe,
+    pub(super) properties: &'a Map<String, Value>,
+    pub(super) geometry: &'a RawValue,
 }
 
 /// Read one line of at most `max` bytes into `buf` (without the line
@@ -155,7 +156,7 @@ fn trim(mut b: &[u8]) -> &[u8] {
     b
 }
 
-fn bbox_array(b: MicroBox) -> [i32; 4] {
+pub(super) fn bbox_array(b: MicroBox) -> [i32; 4] {
     [
         b.south_west.lon,
         b.south_west.lat,

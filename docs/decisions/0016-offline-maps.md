@@ -771,6 +771,30 @@ Decided during implementation:
   geometry type are skipped and counted; any other malformed content
   rejects the whole tile.
 
+Decided while building the world overview (slice 8, 2026-11-16):
+
+- **Its own converter**: `resilience-mapmaker natural-earth` writes the
+  same two files as `classify` straight from the Natural Earth GeoJSON
+  (`mapmaker/overview.rs`), so no made-up OSM tags pass through the OSM
+  tag tables. tippecanoe and `finish` are the same as for any pack.
+- **Minimum zooms**: the later of Natural Earth's `min_zoom` attribute
+  and the zoom from which the style draws the class. Region borders that
+  Natural Earth places after zoom 7 are left out (4,616 of 10,179 kept);
+  every place is kept (at zoom 7 at the latest) and searchable.
+- **Places**: a national capital or a place of 100,000 inhabitants is a
+  `city`, any other a `town`.
+- **Borders**: every line of `admin_0_boundary_lines_land` is drawn the
+  same way, disputed or not.
+- **Elevation points** are not in the overview yet: the style draws
+  peaks only up to 200 m per pixel, finer than the overview's data. They
+  come with slice 12, which needs a rule for them.
+- **Start position**: `finish --center LON,LAT,ZOOM`; the overview opens
+  on the whole world (0, 20 N, zoom 0) instead of its largest city.
+- **Measured**: 11,735,040 bytes for zooms 0 to 7 with the search index
+  (the estimate was 13 MB plus under 1 MB).
+- **Licence text**: `Public domain` (Natural Earth's own terms; there is
+  no SPDX identifier for it), attribution `Natural Earth`.
+
 Decided by the project owner on 2026-11-15:
 
 - **Hosting**: built packs are published as GitHub Release assets of the

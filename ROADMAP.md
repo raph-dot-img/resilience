@@ -73,13 +73,14 @@ secrets never in argv or logs (ADR 0015).
 ## Phase 5 — Offline maps 🟡
 Design: ADR 0016 (MBTiles with vector tiles, block-character viewer, search
 inside the pack, reproducible pack builder, routing deferred to its own ADR).
-Branch `feat/maps`.
+Slices 1 to 7 are in `develop`; slice 8 on `feat/maps-overview`.
 - ✅ Resource packs accept map packs (`.mbtiles`, `maps` category, data date, coverage, attribution)
 - ✅ Geographic maths, bounded vector-tile decoder, canvas, style table, labels
 - ✅ Hardened pack reader (`resilience-maps`, SQLite opened as untrusted input)
 - ✅ Viewer (`resilience-maps view`): reviewed (risky parts), run on the real Luxembourg pack in QEMU at 170×48 (1366×768); label fixes from that run
 - 🟡 Pack builder (`resilience-mapmaker`, `nix/maps/`): merged into `feat/maps`; the Luxembourg pack builds and the hardened reader accepts it; code not reviewed line by line, reproducibility check not re-run
-- ⬜ Built-in world overview, TUI "Maps & navigation", search, nearby and go-to, spot heights, `vm-maps`, catalog entries
+- ✅ Built-in world overview (`resilience-world-map`: Natural Earth 5.1.2, zooms 0-7, 11.7 MB, in every image as a `[[builtin]]` map; check `map-world`); without elevation points (they come with spot heights)
+- ⬜ TUI "Maps & navigation", search, nearby and go-to, spot heights, `vm-maps`, catalog entries
 
 ## Phase 6 — Networking and communications 🟡
 - ✅ Passive diagnostics + on-demand probe; LOCAL LINK detection tested

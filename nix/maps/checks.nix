@@ -5,7 +5,9 @@
 #   same SHA-256;
 # - map-pack-testland: the test pack opened with the real reader
 #   (`resilience-maps info --check`), its search rows read back with fixed
-#   SQL, and the minimum zooms of a few classes checked in the tiles.
+#   SQL, and the minimum zooms of a few classes checked in the tiles;
+# - map-world: the built-in world overview (Natural Earth) opened with the
+#   real reader, its size bounded, a few search rows and tiles read back.
 {
   lib,
   runCommand,
@@ -13,6 +15,7 @@
   tippecanoe,
   resilience,
   maps,
+  worldMap,
 }:
 
 let
@@ -115,5 +118,58 @@ in
         has 14 '"category": ?"water"'
 
         echo ok > "$out"
+      '';
+
+  map-world =
+    runCommand "map-world"
+      {
+        nativeBuildInputs = [ resilience ];
+      }
+      ''
+        set -euo pipefail
+        cp ${worldMap}/${worldMap.path} pack.mbtiles
+        chmod u+w pack.mbtiles
+
+        resilience-maps info --check pack.mbtiles | tee info.txt
+        expect() {
+          grep -qxF "$1" info.txt || { echo "info: missing '$1'" >&2; exit 1; }
+        }
+        expect "name: World overview"
+        expect "profile: resilience-1"
+        expect "data-date: ${worldMap.dataDate}"
+        expect "license: Public domain"
+        expect "attribution: Natural Earth"
+        expect "coverage: ${worldMap.coverage}"
+        expect "format: pbf"
+        # At most zoom 8 makes it an overview for the viewer.
+        expect "zoom: 0-7"
+        expect "center: 20.00000,0.00000,0"
+        expect "search: available"
+        expect "integrity: ok"
+
+        # About 12 MB (ADR 0016 estimated 13): it is in every system image.
+        size=$(stat -c %s pack.mbtiles)
+        echo "size: $size bytes"
+        [ "$size" -gt 8000000 ] && [ "$size" -lt 16000000 ]
+
+        q() { ${lib.getExe' sqlite "sqlite3"} -readonly -batch -noheader "file:pack.mbtiles?immutable=1" "$1"; }
+        check() {
+          got=$(q "$1")
+          if [ "$got" != "$2" ]; then
+            printf 'query: %s\ngot:   %s\nwant:  %s\n' "$1" "$got" "$2" >&2
+            exit 1
+          fi
+        }
+        check "SELECT count(*) FROM rs_place WHERE kind = 'settlement'" 7342
+        check "SELECT class || ':' || lon || ':' || lat FROM rs_place WHERE kind = 'settlement' AND name = 'Luxembourg'" \
+          "city:6130003:49611660"
+        check "SELECT count(*) > 0 FROM rs_place WHERE kind = 'natural' AND class = 'river' AND name = 'Rhine'" 1
+        check "SELECT count(*) > 0 FROM rs_place WHERE kind = 'natural' AND class = 'lake' AND name = 'Lake Victoria'" 1
+        check "SELECT count(*) FROM rs_place_fts WHERE rs_place_fts MATCH '\"reykjav\"*'" 1
+        # The whole world at zoom 0, and every zoom up to 7.
+        check "SELECT count(*) FROM tiles WHERE zoom_level = 0" 1
+        check "SELECT count(DISTINCT zoom_level) FROM tiles" 8
+
+        cp info.txt "$out"
       '';
 }

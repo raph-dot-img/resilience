@@ -97,6 +97,9 @@ pub struct Describe {
     pub license: String,
     pub attribution: String,
     pub builder: String,
+    /// Where the viewer starts (longitude, latitude, zoom). `None`: the
+    /// most important settlement inside the coverage, at [`CENTER_ZOOM`].
+    pub center: Option<(i32, i32, u8)>,
 }
 
 pub struct Inputs<'a> {
@@ -752,7 +755,18 @@ pub fn run(inputs: &Inputs<'_>, d: &Describe, out: &Path) -> Result<Stats, Error
             [w, s, e, n]
         }
     };
-    let (clon, clat) = center(&conn, &rings, bounds)?;
+    let (clon, clat, czoom) = match d.center {
+        Some((lon, lat, z)) => {
+            if !(-180..=180).contains(&lon) || !(-85..=85).contains(&lat) || z > 14 {
+                return fail("the centre is not a place and a zoom of the map");
+            }
+            (f64::from(lon), f64::from(lat), z)
+        }
+        None => {
+            let (lon, lat) = center(&conn, &rings, bounds)?;
+            (lon, lat, CENTER_ZOOM)
+        }
+    };
     let mut meta: BTreeMap<&str, String> = BTreeMap::new();
     meta.insert("name", d.name.clone());
     meta.insert("format", "pbf".into());
@@ -766,7 +780,7 @@ pub fn run(inputs: &Inputs<'_>, d: &Describe, out: &Path) -> Result<Stats, Error
             bounds[0], bounds[1], bounds[2], bounds[3]
         ),
     );
-    meta.insert("center", format!("{clon:.6},{clat:.6},{CENTER_ZOOM}"));
+    meta.insert("center", format!("{clon:.6},{clat:.6},{czoom}"));
     meta.insert("attribution", d.attribution.clone());
     if let Some(desc) = &d.description {
         meta.insert("description", desc.clone());
