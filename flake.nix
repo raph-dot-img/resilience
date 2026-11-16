@@ -32,6 +32,9 @@
 
       # Map packs (ADR 0016 §2), for build machines: not in any system.
       maps = pkgs.callPackage ./nix/maps { };
+      # Local messaging (ADR 0018): unfree Reticulum and LXMF, opt-in.
+      reticulum = pkgs.callPackage ./nix/packages/resilience-reticulum { };
+      messages = pkgs.callPackage ./nix/packages/resilience-messages { inherit reticulum; };
       mapChecks = pkgs.callPackage ./nix/maps/checks.nix {
         inherit maps;
         worldMap = pkgs.resilience-world-map;
@@ -95,6 +98,10 @@
         vm-crypto = vmTest ./tests/vm/crypto.nix;
         vm-maps = vmTest ./tests/vm/maps.nix;
         vm-comms = vmTest ./tests/vm/comms.nix;
+        # The messaging program with the real Reticulum and LXMF, no VM.
+        comms-messages = pkgs.callPackage ./nix/packages/resilience-messages/check.nix {
+          inherit reticulum messages;
+        };
         # The synthetic test pack: reproducible, and read back by the reader.
         # The built-in world overview (Natural Earth), read back the same way.
         inherit (mapChecks) map-pack-reproducible map-pack-testland map-world;

@@ -4,6 +4,8 @@
 #   resilience-reticulum.service  rnsd as a dynamic unprivileged user;
 #       AutoInterface only (IPv6 link-local multicast on the local
 #       network), no transport, no remote management.
+#   resilience-messages (systemd user service)  each account's messaging
+#       program, with its identity and messages in its own home.
 #   /run/resilience-reticulum/client/config  what programs of users need
 #       to attach to the instance (instance name and RPC key). Readable by
 #       every local account on purpose (ADR 0018 §4); never in the store.
@@ -103,6 +105,12 @@ in
       defaultText = lib.literalExpression "pkgs.callPackage ./nix/packages/resilience-reticulum { }";
       description = "Python environment with Reticulum (rns) and LXMF.";
     };
+    messagesPackage = mkOption {
+      type = types.package;
+      default = pkgs.callPackage ../packages/resilience-messages { reticulum = cfg.package; };
+      defaultText = lib.literalExpression "pkgs.callPackage ./nix/packages/resilience-messages { reticulum = config.resilience.comms.package; }";
+      description = "The per-user messaging program `resilience-messages`.";
+    };
     group = mkOption {
       type = types.strMatching "[a-z0-9]{1,32}";
       default = "reticulum";
@@ -131,6 +139,21 @@ in
       discoveryPort
       dataPort
     ];
+
+    # Each account's own messaging program, while it is logged in: its
+    # identity and messages stay in its home (ADR 0018 §5).
+    systemd.user.services.resilience-messages = {
+      description = "Local messaging of this account (Resilience)";
+      wantedBy = [ "default.target" ];
+      unitConfig.ConditionUser = "!root";
+      serviceConfig = {
+        ExecStart = "${cfg.messagesPackage}/bin/resilience-messages run --client-config ${cfg.clientConfig}";
+        Restart = "on-failure";
+        RestartSec = 10;
+        NoNewPrivileges = true;
+        MemoryMax = "256M";
+      };
+    };
 
     systemd.services.resilience-reticulum = {
       description = "Reticulum network instance of Resilience (local messaging)";

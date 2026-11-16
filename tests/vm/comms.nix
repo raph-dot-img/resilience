@@ -5,7 +5,10 @@
 # client configuration and sends a signed LXMF message, with its delivery
 # proof, to the other machine. A message to a machine that has gone is never "delivered".
 #
-# The per-user messaging program and the TUI come with the next slices.
+# Then each account's messaging program (resilience-messages, a systemd
+# user service): a request file in the outbox is delivered to the other
+# machine with its proof; with the other program stopped it waits and
+# arrives later. The TUI comes with the next slice.
 { self }:
 { ... }:
 let
@@ -24,6 +27,8 @@ let
       virtualisation.qemu.networkingOptions = lib.mkForce [ ];
       users.users.root.hashedPassword = lib.mkForce null;
       resilience.users.alice.mode = "ultra-stable";
+      # Logged in on tty1: the account's messaging program runs.
+      resilience.interface.autologinUser = "alice";
       resilience.comms.enable = true;
       environment.etc."resilience-test/python".source = "${config.resilience.comms.package}/bin/python";
       environment.etc."resilience-test/rnstatus".source =
@@ -38,7 +43,7 @@ in
   nodes.beta = node;
 
   testScript = ''
-    import re
+    import json, re
 
     CLIENT = "/run/resilience-reticulum/client/config"
     AS_ALICE = "runuser -u alice -- "
@@ -97,6 +102,52 @@ in
         assert f"from={ann} verified=True content='hello from ann'" in got, got
         # Nothing was reported delivered before the proof came back.
         assert out.index("state outbound") < out.index("state delivered"), out
+
+    with subtest("each account's messaging program: queued, delivered with proof, received"):
+        BOX = "/home/alice/.local/share/resilience/messages"
+        for m in (alpha, beta):
+            m.wait_until_succeeds(f"test -s {BOX}/address", timeout=120)
+            assert m.succeed(f"stat -c '%U %a' {BOX}").strip() == "alice 700"
+            assert m.succeed(f"stat -c '%U %a' {BOX}/identity").strip() == "alice 600"
+            m.succeed("pgrep -u alice -f 'resilience_messages.p[y] run'")
+            m.fail("pgrep -u root -f 'resilience_messages.p[y]'")
+        a_addr = alpha.succeed(f"cat {BOX}/address").strip()
+        b_addr = beta.succeed(f"cat {BOX}/address").strip()
+        assert a_addr != b_addr
+
+        def send(m, mid, to, text):
+            req = json.dumps({"to": to, "text": text})
+            m.succeed(AS_ALICE + f"sh -c 'cat > {BOX}/outbox/{mid}.json.tmp && mv {BOX}/outbox/{mid}.json.tmp {BOX}/outbox/{mid}.json' <<'END'\n{req}\nEND")
+
+        def record(m, mid):
+            return json.loads(m.succeed(f"cat {BOX}/messages/{mid}.json"))
+
+        send(alpha, "m1", b_addr, "Water at the school, 9h")
+        alpha.wait_until_succeeds(f"grep -q '\"state\": \"delivered\"' {BOX}/messages/m1.json", timeout=120)
+        # The signature is checked on arrival, or a moment later when the
+        # sender's key was not known yet.
+        beta.wait_until_succeeds(f"grep -q '\"verified\": true' {BOX}/messages/in-*.json", timeout=60)
+        got = [json.loads(line) for line in beta.succeed(f"cat {BOX}/messages/in-*.json").splitlines()]
+        assert len(got) == 1, got
+        assert got[0]["state"] == "received" and got[0]["peer"] == a_addr, got
+        assert got[0]["text"] == "Water at the school, 9h" and got[0]["verified"] is True, got
+        # Each has heard the other, with the name it claims.
+        peers = json.loads(alpha.succeed(f"cat {BOX}/peers.json"))
+        assert peers[b_addr]["name"] == "alice", peers
+
+        # The other machine's program stops: the message waits, it is not
+        # delivered and not lost; when the program is back it arrives.
+        beta.succeed("systemctl --user -M alice@ stop resilience-messages.service")
+        send(alpha, "m2", b_addr, "second message")
+        alpha.wait_until_succeeds(f"test -e {BOX}/messages/m2.json", timeout=30)
+        alpha.sleep(20)
+        assert record(alpha, "m2")["state"] in ("queued", "sent"), record(alpha, "m2")
+        beta.succeed("systemctl --user -M alice@ start resilience-messages.service")
+        alpha.wait_until_succeeds(f"grep -q '\"state\": \"delivered\"' {BOX}/messages/m2.json", timeout=180)
+        beta.wait_until_succeeds(f"grep -l 'second message' {BOX}/messages/in-*.json", timeout=30)
+        # The private key and the messages are the account's only.
+        for m in (alpha, beta):
+            m.fail(f"find {BOX} -perm /077 | grep .")
 
     with subtest("a message to a machine that is gone is never delivered"):
         beta.succeed("pkill -f 'node.p[y]'")

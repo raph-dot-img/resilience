@@ -64,6 +64,7 @@ which corrupts text next to box-drawing characters with our console font.
 | Build-time tool check (`[tools]` in system.toml executable) | PASS (part of every system build) |
 | ISO derivation builds (standard) | PASS — 1.48 GB |
 | ISO derivation builds (minimal) | NOT TESTED (evaluates only) |
+| `comms-messages`: `resilience-messages` with the real Reticulum 1.2.9 and LXMF 0.9.8 in the build sandbox (one instance, two accounts' programs): refuses to start without the client configuration or with a wrong command, creating nothing; store 0700 and identity 0600; a bad address and an empty text → `failed` with the reason and no text kept; a message to an address never heard stays `queued`; cancel → `failed` "cancelled"; the queue and the address survive a restart of the program; when the recipient appears the message becomes `delivered`, arrives once, `verified`, with the sender's address; the recipient's claimed name is recorded; outbox and cancel directories emptied; a reply is delivered and verified; the cancelled message never arrives | PASS (2026-11-16) |
 | `map-world`: the built-in world overview (`nix build .#resilience-world-map`, Natural Earth 5.1.2: 10 land features, 515 country and 4,616 region border lines, 1,355 lakes, 1,454 rivers, 7,342 places; 11,362 tiles, zooms 0-7, largest tile 50 KB compressed) read by `resilience-maps info --check` (profile, data date, licence, attribution, coverage, zoom 0-7, centre, search available, integrity ok), size between 8 and 16 MB (**11,735,040 bytes**), 7,342 settlements, Luxembourg a city at its position, Rhine and Lake Victoria searchable, prefix search without accents finds Reykjavík, one zoom-0 tile and 8 zooms | PASS (2026-11-16) |
 | World overview in a system image: opened from the TUI in `vm-maps` (minimal system) | PASS (2026-11-16) |
 | ISO rebuilt with the world overview, closure growth measured | NOT TESTED (live-standard and live-minimal evaluate) |
@@ -242,9 +243,9 @@ First part of the test planned in ADR 0016 §8 (its step 1).
 
 ### VM: `vm-comms` — local messaging network (ADR 0018, slice 1), two machines on an isolated network
 
-Only the network service is tested here: there is no messaging program
-or TUI screen yet. The messages are sent by a test program
-(`tests/vm/comms-node.py`) run by an Ultra-Stable account.
+The network service and each account's messaging program are tested;
+there is no TUI screen yet. The first message is sent by a test program
+(`tests/vm/comms-node.py`), the others through `resilience-messages`.
 
 | Scenario | Result |
 |---|---|
@@ -253,7 +254,9 @@ or TUI screen yet. The messages are sent by a test program
 | A message from one machine to the other through the two shared instances: state `outbound`, then `delivered` once the proof is back (0.1 s after sending); received with the sender's address and `verified=True` | PASS |
 | The other machine's service stopped: the message is `failed` after 72 s and never `delivered` | PASS |
 | The key is the same after a service restart; system `running` | PASS |
-| A reply in the other direction; three or more machines; a link that drops mid-message; Wi-Fi; hostile peers; a physical network | NOT TESTED |
+| Each account's program (`resilience-messages`, systemd user service of the logged-in Ultra-Stable account, not root): store 0700, identity 0600, nothing in it readable by others; a request file in the outbox on one machine → `delivered` there, `received` with `verified` true and the right sender on the other; each lists the other in `peers.json` with its claimed name | PASS (2026-11-16) |
+| The other machine's program stopped: the message stays `queued` or `sent` for 20 s (not delivered, not lost); program started again → `delivered`, and the text is on the other machine | PASS |
+| Three or more machines; a link that drops mid-message; a machine switched off for hours; Wi-Fi; hostile peers or messages; a physical network | NOT TESTED |
 | A system without `resilience.comms.enable` contains no Reticulum code (live-standard, live-minimal, dev-vm) | NOT TESTED as a check (the option is off by default and nothing else refers to the package) |
 
 ### ISO boot (`tests/iso/smoke.py`, screenshots reviewed by a human/agent)

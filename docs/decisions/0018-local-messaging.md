@@ -1,7 +1,7 @@
 # ADR 0018: Local messaging with Reticulum and LXMF
 
-Status: accepted (2026-11-16). Slice 1 (the network service) is
-implemented; the messaging program and the interface are not.
+Status: accepted (2026-11-16). The network service and the per-user
+messaging program are implemented; the interface (TUI) is not.
 
 ## Context
 
@@ -113,6 +113,31 @@ lxmf 0.9.8 from the pinned nixpkgs):
    Yggdrasil and BATMAN-adv profiles, Tox and signal-cli as Internet
    messengers.
 
+## Decided while writing the messaging program (2026-11-16)
+
+- **Files** (all under `~/.local/share/resilience/messages`, 0700):
+  `outbox/ID.json` (`{"to", "text"}`, written with a temporary name and
+  renamed) and `cancel/ID` are written by the interface; `messages/ID.json`
+  (one record per message, with `state`, `detail`, `verified`),
+  `peers.json`, `address` and `status.json` are written by the program
+  only. Text is at most 8 KiB; a request file at most 64 KiB.
+- **Queued means kept and retried**: after 30 s, 1, 5 and 15 minutes,
+  then every hour, and at once when the recipient is heard on the
+  network. A message is given up (`failed`) after 7 days, when cancelled,
+  or when the request is invalid. LXMF's own "failed" after its attempts
+  only puts the message back in the queue.
+- **Signatures**: a recipient that has never heard the sender cannot
+  check the signature on arrival (seen between two machines in
+  `vm-comms`). The sender announces itself before sending (when its last
+  announce is older than a minute, or when a waiting recipient appears),
+  and the recipient asks the network for an unknown sender and checks the
+  kept message again when the key arrives (for 10 minutes). `verified`
+  only ever goes from false to true.
+- **It runs as a systemd user service** while the account is logged in,
+  never as root, with the same memory limit as the instance.
+- **Names are claims**: `peers.json` records the name each address
+  announces, cleaned to one printable line of 64 bytes.
+
 ## Alternatives considered
 
 - **NomadNet as the interface**: maintained and complete, but it is also
@@ -147,5 +172,6 @@ lxmf 0.9.8 from the pinned nixpkgs):
 
 Tested by: `vm-comms` (two machines on an isolated network: the service
 starts, each sees the other, a signed LXMF message is delivered with its
-proof through the shared instances; unfree packages only in that
-package).
+proof through the shared instances, then through each account's
+program, including a recipient that is away and comes back) and
+`comms-messages` (the program with the real libraries, no VM).

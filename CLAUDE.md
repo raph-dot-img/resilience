@@ -54,7 +54,11 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │            comms.nix       OPT-IN local messaging network (ADR 0018): resilience.comms.enable
    │                            -> resilience-reticulum.service (rnsd, DynamicUser, AutoInterface
    │                            only, UDP 29716+42671), /run/resilience-reticulum/client/config
-   │                            (instance name + RPC key, world-readable by design). rns and lxmf
+   │                            (instance name + RPC key, world-readable by design), and the
+   │                            systemd USER service resilience-messages (nix/packages/
+   │                            resilience-messages: Python around LXMF.LXMRouter; per-account
+   │                            identity + messages in ~/.local/share/resilience/messages;
+   │                            outbox/ID.json + cancel/ID in, messages/ID.json out). rns and lxmf
    │                            are UNFREE (Reticulum License): allowed by name only in
    │                            nix/packages/resilience-reticulum (its own nixpkgs import)
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
@@ -63,7 +67,8 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
               vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-maps, vm-comms,
-              security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world
+              security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world,
+              comms-messages (the messaging program with real Reticulum + LXMF, no VM)
 
 crates/resilience-core  library: status, network (passive + on-demand probe),
                         mode detection, catalog, config, handbook, notes, launch, proc,
@@ -377,11 +382,15 @@ needlessly. Watch `free -h` during VM tests.
 Maps (Phase 5) were parked by the owner on 2026-11-16 after slice 9: do
 not continue slices 10 to 13 unless asked. Phase 6 so far: ADR 0018
 (Reticulum + LXMF, opt-in because their licence is not free: owner's
-decision), slice 1 = `nix/modules/comms.nix`, `nix/packages/
-resilience-reticulum`, `vm-comms`. Next: the per-user messaging program
-`resilience-messages` (Python around `LXMF.LXMRouter`, files as the
-interface with the TUI, ADR 0018 §5), then the TUI Communications
-section. `resilience.comms.enable` is on in no edition yet.
+decision); slice 1 = `nix/modules/comms.nix`, `nix/packages/
+resilience-reticulum`, `vm-comms`; slice 2 = the per-user program
+`resilience-messages` (file formats in ADR 0018), check `comms-messages`.
+Next, slice 3: `resilience-core/src/messages.rs` (read `messages/*.json`,
+`peers.json`, `status.json`; write outbox and cancel files; contacts) and
+the TUI Communications section (conversations, nearby people, write,
+states, "sender not verified", my address), `[tools]`/system.toml flag
+for comms, handbook page, TUI tests, vm-comms through the TUI.
+`resilience.comms.enable` is on in no edition yet.
 
 Phase 5 state when parked:
 
@@ -445,8 +454,10 @@ booted once on a ThinkPad L15 Gen 1.
 - Cryptography: no LUKS sticks, no OpenPGP signing in the TUI (minisign
   signs), no secure deletion of originals (the user is told); contacts'
   keys are only as trustworthy as the user's own check.
-- Local messaging: only the network service exists (no program to write or
-  read messages yet); off in every edition; two machines tested, in VMs only.
+- Local messaging: the network service and the per-user program exist, but
+  no TUI screen yet (messages are files); off in every edition; two machines
+  tested, in VMs only; no store-and-forward node (both programs must be on
+  at the same time at some point within 7 days).
 - Power profiles not implemented (schedutil governor only). Not measured yet.
 - Keyboard: all consoles share one keymap (kernel); a login prompt starting
   on any console resets it to the system layout, and the TUI reloads its
