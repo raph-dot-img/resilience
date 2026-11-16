@@ -54,7 +54,7 @@ The `CLAUDE.md` on `develop` still describes the old direction until
 |---|---|---|
 | `main` | `f77e6ba` | End of Phase 4. Receives `develop` only at tested milestones, with the owner's agreement. |
 | `develop` | `f77e6ba` + this file | End of Phase 4. Live ISO rebuilt from it on 2026-11-15 (R1). |
-| `feat/maps` | `960de32` | Phase 5, offline maps (ADR 0016). Slices 1-5 reviewed. Slice 6 unreviewed. Also carries the direction documents. |
+| `feat/maps` | `f00eaf1` | Phase 5, offline maps (ADR 0016). Slices 1-5 reviewed. Slice 6 unreviewed. Also carries the direction documents, the V1 hardware decision, `docs/ORIGINAL-SPEC.md`, `scripts/hw-report.sh` and `docs/HARDWARE-BOOT-CHECKLIST.md`. |
 | `feat/maps-builder` | `14a567a` | Phase 5 slice 7, unreviewed, not merged. Based on `feat/maps` at `1bda3a4`. |
 
 Local branches named `worktree-agent-*` on the owner's workstation are
@@ -63,10 +63,10 @@ above.
 
 ## Work in progress
 
-- 2026-11-15, repository session "Phase 5 coordinator" (Claude Fable 5.2,
-  with Claude Opus 5.5 engineers), branches `feat/maps` and
-  `feat/maps-builder`: **paused**, the workstation was powered off. Nobody
-  is working on these branches until a session says so here.
+- 2026-11-16, workstation session (Claude Opus 5.5), branch `feat/maps`:
+  owner's priorities 1 and 2 done (ISO boot tests, hardware report and
+  checklist). Next, with the owner's OK: review and finish slice 6 on a
+  real map pack, then slice 7. `feat/maps-builder` untouched so far.
 
 ## Phase 5 state (offline maps, ADR 0016 §9)
 
@@ -107,7 +107,11 @@ Publishing a release needs the owner's agreement each time.**
 
 For the Project Coordinator (the owner says they hold the answers):
 
-1. **Cyberdeck hardware.** The repository says "not recorded yet" in
+1. **Cyberdeck hardware.** Partly answered by the owner (2026-11-16
+   session prompt, recorded on `feat/maps` in `CLAUDE.md` §1): V1 is a
+   recycled old **x86_64** laptop in a 3D-printed case, no ARM port, LoRa
+   868 MHz and SDR in V2. The laptop is not chosen yet, so the items below
+   stay open. The repository said "not recorded yet" in
    `ROADMAP.md` ("Cyberdeck hardware"), `CLAUDE.md` §1 and §15, and
    `README.md` (all on `feat/maps`). The system work depends on:
    - CPU architecture: everything is `x86_64-linux` and has run only in QEMU;
@@ -131,9 +135,8 @@ For the Project Coordinator (the owner says they hold the answers):
 
 Housekeeping:
 
-5. GitHub reports that the repository moved to
-   `raph-dot-img/resilience-os`; the workstation's `origin` URL still uses
-   the old name (pushes are redirected).
+5. Done 2026-11-16: the workstation's `origin` now points at
+   `raph-dot-img/resilience-os`.
 6. `CLAUDE.md` and `ROADMAP.md` were changed on `feat/maps`. Anyone editing
    them on another branch before the merge should expect conflicts; say here
    which branch you used.
@@ -199,6 +202,10 @@ session, Claude Fable 5.2; done at the owner's request):
 ## Log
 
 Newest first. One line per event: date, who, what.
+
+- 2026-11-16, workstation session: on `feat/maps`, `scripts/hw-report.sh` (read-only, no serials/MACs; tested on the dev laptop only, not as root) and `docs/HARDWARE-BOOT-CHECKLIST.md`.
+- 2026-11-16, workstation session: ISO from `develop` (`44f33b4`, same store path and SHA-256 `f3f17b95…` as R1) booted in QEMU: BIOS at 2048/1024/768/512 MiB and UEFI at 2048/1024 MiB all reach the TUI, no failed service, no OOM. Results in `docs/TESTING.md` on `feat/maps`.
+- 2026-11-16, owner: `MASTER-PROMPT.md` replaced by a session prompt (V1 = recycled x86_64 laptop); original text kept as `docs/ORIGINAL-SPEC.md` on `feat/maps`.
 
 - 2026-11-15, workstation session: R1 done, ISO built from `develop` and booted in QEMU (BIOS); answer under R1.
 - 2026-11-15, workstation session: took R1, ISO build started.
