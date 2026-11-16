@@ -56,7 +56,7 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    ├─ packages: resilience, resilience-session, resilience-handbook, resilience-world-map, iso, iso-minimal, vm
    ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
-              vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto,
+              vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-maps,
               security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world
 
 crates/resilience-core  library: status, network (passive + on-demand probe),
@@ -90,7 +90,7 @@ crates/resilience-maps  binaries (ADR 0016, UNPRIVILEGED): `resilience-maps` (vi
                         [--at LAT,LON] [--scale M] | info [--check] F: hardened MBTiles reader,
                         reader thread, tile cache, 1 GiB address-space limit) and
                         `resilience-mapmaker` (classify | natural-earth | finish; build
-                        machines only, not installed in the system); viewer not yet in the TUI.
+                        machines only, not installed in the system).
                         nix/packages/resilience-world-map: the built-in world overview
                         (Natural Earth, z0-7), a `[[builtin]]` maps entry of packs.toml
 crates/resilience-tui   binary `resilience`: app.rs (state machine, returns Effects),
@@ -163,6 +163,15 @@ admin.toml `keymaps` → `loadkeys -q -- ID` → audit → TUI saves `keyboard =
 "ID"` in the user's settings. Session start: the TUI loads the saved
 layout again the same way (unless it is the system layout). The console
 has ONE keymap for all ttys: unprivileged loadkeys fails (CAP_SYS_TTY_CONFIG).
+
+Maps flow (ADR 0016): TUI Maps & navigation → "Map" → `resilience-maps view
+--pack F...` in the foreground as the user (`[tools] maps`): built-in maps
+(`[[builtin]]` with category maps: the world overview), then installed
+catalog map packs, at most 8. "Maps on this computer & USB sticks" =
+`View::Library { kind: PackKind::Map }` (the Offline library's list for
+`.mbtiles`): Enter opens the map on the chosen file over the overview, `c`
+→ `resilience-library check`. The viewer opens SQLite hardened, lowers its
+memory limit, writes only ~/.local/state/resilience/maps.toml.
 
 Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
 with `connection.permissions user:U`, no secret → thread: `nmcli connection
@@ -362,15 +371,17 @@ Phases 0 to 4 are done (see ROADMAP.md). Phase 5 (offline maps, ADR 0016)
 is in progress. Slices 1 to 7 are in `develop` (PR #1 merged); slice 8
 (built-in world overview: `resilience-mapmaker natural-earth`,
 `nix/packages/resilience-world-map`, `[[builtin]]` entry, check
-`map-world`) is on `feat/maps-overview`, not reviewed, never seen on a
-real console, ISO not rebuilt with it. Slices 1 to 5 done and reviewed (packs accept `.mbtiles`, geographic
+`map-world`) and slice 9 (TUI Maps & navigation: `Builtin::Map`,
+`Builtin::MapFiles`, `[tools] maps`, handbook `45-maps.md`, first part of
+`vm-maps`) are on `feat/maps-overview`, not reviewed, ISO not rebuilt
+with them. Slices 1 to 5 done and reviewed (packs accept `.mbtiles`, geographic
 maths, MVT decoder, canvas/style/labels, hardened pack reader); slice 6
 (viewer `resilience-maps view`) reviewed in its risky parts and run on the
 real Luxembourg pack in QEMU at 170x48 (label fixes followed); slice 7
 (pack builder `resilience-mapmaker`, `nix/maps/`) merged, builds the
-Luxembourg pack, code not reviewed line by line. Slices 9 to 13 (TUI
-"Maps & navigation", search, nearby/go-to, spot heights, `vm-maps`,
-catalog) are not started: the viewer is not in the TUI. Next: slice 9.
+Luxembourg pack, code not reviewed line by line. Slices 10 to 13 (search,
+nearby/go-to, spot heights, the rest of `vm-maps`, catalog) are not
+started. Next: slice 10 (search: `maps/search.rs`, the viewer's dialog).
 
 Also done with `feat/maps` (2026-11-16): keyboard layouts (ADR 0017: US default,
 choice in Settings through `set-keymap`); `scripts/hw-report.sh` and
@@ -384,9 +395,9 @@ files and manual pages (0014); Phase 4 guided cryptography (0015).
 See docs/TESTING.md for what has actually been executed and passed.
 
 Git state (2026-11-16): `main` = end of Phase 4; `develop` = `feat/maps`
-merged (PR #1); `feat/maps-overview` = slice 8, local, from `develop`. Last full `nix flake check -L --max-jobs 1 --keep-going` on
+merged (PR #1); `feat/maps-overview` = slices 8 and 9, local, from `develop`. Last full `nix flake check -L --max-jobs 1 --keep-going` on
 `feat/maps` (before the keyboard work) passed: 9 VM tests, security
-invariants, ISO evaluation, both map pack checks. Rust: 191 core, 63 TUI,
+invariants, ISO evaluation, both map pack checks. Rust: 191 core, 66 TUI,
 134 maps (+1 on demand), 5 library/store tests; clippy clean. The live ISO was rebuilt
 and boot-tested in QEMU (BIOS and UEFI, 512 MiB to 2 GiB) on 2026-11-16 and
 booted once on a ThinkPad L15 Gen 1.
@@ -418,9 +429,10 @@ booted once on a ThinkPad L15 Gen 1.
 - Keyboard: all consoles share one keymap (kernel); a login prompt starting
   on any console resets it to the system layout, and the TUI reloads its
   user's layout only at session start (ADR 0017).
-- Maps: viewer and builder exist but are not in the TUI; the world
-  overview is in the image but nothing opens it yet, it has no elevation
-  points and draws disputed borders like any other; too many point-of-interest names at city scales
+- Maps: no search, nearby or go-to yet; no regional pack in the catalog
+  (packs are built with `nix build .#mapPacks.ID` and opened from a
+  stick); the world overview has no elevation points and draws disputed
+  borders like any other; too many point-of-interest names at city scales
   (style question open); osmium tags-filter needs ~2 GB RAM to build a pack.
 - Physical hardware: the live ISO has booted once on a ThinkPad L15 Gen 1
   (owner, 2026-11-16); nothing else has been tested outside QEMU.

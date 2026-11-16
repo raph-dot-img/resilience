@@ -73,6 +73,8 @@ pub struct ToolPaths {
     pub nmcli: String,
     /// The offline library `resilience-library` (resource packs, ADR 0013).
     pub library: String,
+    /// The map viewer `resilience-maps` (ADR 0016).
+    pub maps: String,
     /// Manual pages: `man` (man-db) and the pager it runs, `less`.
     pub man: String,
     pub apropos: String,
@@ -108,6 +110,7 @@ impl Default for ToolPaths {
             backup: "resilience-backup".into(),
             nmcli: "nmcli".into(),
             library: "resilience-library".into(),
+            maps: "resilience-maps".into(),
             man: "man".into(),
             apropos: "apropos".into(),
             less: "less".into(),

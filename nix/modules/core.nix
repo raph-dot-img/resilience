@@ -141,6 +141,7 @@ let
     backup = "${cfg.package}/bin/resilience-backup";
     nmcli = "${lib.getBin config.networking.networkmanager.package}/bin/nmcli";
     library = "${cfg.package}/bin/resilience-library";
+    maps = "${cfg.package}/bin/resilience-maps";
     man = "${config.documentation.man.man-db.package}/bin/man";
     apropos = "${config.documentation.man.man-db.package}/bin/apropos";
     less = "${pkgs.less}/bin/less";

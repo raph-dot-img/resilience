@@ -795,6 +795,23 @@ Decided while building the world overview (slice 8, 2026-11-16):
 - **Licence text**: `Public domain` (Natural Earth's own terms; there is
   no SPDX identifier for it), attribution `Natural Earth`.
 
+Decided while adding maps to the TUI (slice 9, 2026-11-16):
+
+- **Two entries** under Maps & navigation: "Map" runs `resilience-maps
+  view --pack F...` on the built-in maps, then the installed catalog
+  packs; "Maps on this computer & USB sticks" is the library list for
+  `.mbtiles` files (built in, installed, older versions, open sticks),
+  where Enter opens the map on the chosen file over the overview and `c`
+  checks a stick file. "Map packs" is not a third entry: the Resource
+  packs screen already has the `maps` category.
+- **Which files**: an older version or a file that is not in the catalog
+  is opened only when chosen in the list. At most 8 files are passed,
+  the viewer's limit; the built-in overview is always first.
+- **No `maps_ui.rs`**: the list is `View::Library` with a pack kind, in
+  `library.rs`.
+- The entries exist only on a system with resource packs
+  (`/etc/resilience/packs.toml`), like the Offline library.
+
 Decided by the project owner on 2026-11-15:
 
 - **Hosting**: built packs are published as GitHub Release assets of the
