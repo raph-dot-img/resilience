@@ -10,12 +10,21 @@ rust-version.workspace = true
 name = "resilience-maps"
 path = "src/main.rs"
 
+# Pack builder for build machines only (ADR 0016 §2); not installed in the
+# system image (nix/packages/resilience removes it, nix/maps builds it).
+[[bin]]
+name = "resilience-mapmaker"
+path = "src/bin/mapmaker.rs"
+
 [dependencies]
 resilience-core.workspace = true
 libc.workspace = true
 ratatui.workspace = true
 rusqlite = { version = "0.43", default-features = false, features = ["bundled", "hooks", "limits"] }
 miniz_oxide = { version = "0.9", default-features = false, features = ["with-alloc"] }
+# Pack builder only: osmium's GeoJSON in, tippecanoe's GeoJSON out.
+serde.workspace = true
+serde_json = { version = "1", features = ["raw_value", "float_roundtrip"] }
 
 [dev-dependencies]
 resilience-core = { workspace = true, features = ["test-support"] }

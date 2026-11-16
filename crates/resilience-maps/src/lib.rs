@@ -13,7 +13,9 @@
 //! - [`inflate`]: tile decompression with hard limits;
 //! - [`rlimit`]: the process's address-space limit;
 //! - [`info`]: the `info` command's output;
-//! - [`text`]: cleaning untrusted strings before they reach a terminal.
+//! - [`text`]: cleaning untrusted strings before they reach a terminal;
+//! - [`mapmaker`]: the pack builder `resilience-mapmaker` (build machines
+//!   only).
 //!
 //! The viewer (`view`, ADR §9 item 6):
 //!
@@ -34,6 +36,7 @@ pub mod cache;
 pub mod inflate;
 pub mod info;
 pub mod loader;
+pub mod mapmaker;
 pub mod metadata;
 pub mod pack;
 pub mod position;

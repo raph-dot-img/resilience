@@ -1,0 +1,35 @@
+# osmium tags-filter expressions for resilience-1 packs (ADR 0016 §1).
+# Keep in step with crates/resilience-maps/src/mapmaker/tags.rs: an object
+# missing here never reaches the classifier. Referenced objects (way nodes,
+# relation members) are added by osmium, with their tags removed (-t).
+
+# roads, railways, waterways, coastline
+w/highway
+w/railway=rail,narrow_gauge,preserved,light_rail,tram
+w/waterway=river,stream,canal
+wr/waterway=riverbank
+w/natural=coastline
+
+# water and land cover areas
+wr/natural=water,wood,wetland,glacier,sand,beach
+wr/landuse=forest,reservoir
+wr/leisure=park
+
+# administrative boundaries (relations; their rings become lines)
+r/boundary=administrative
+
+# settlements
+nwr/place=city,town,village,hamlet,suburb,quarter,neighbourhood
+
+# points of interest
+nwr/amenity
+nwr/shop
+nwr/tourism
+nwr/historic
+nwr/healthcare
+nwr/man_made=water_tap
+n/emergency=defibrillator
+n/railway=station,halt
+
+# springs, peaks, volcanoes, passes
+n/natural=spring,peak,volcano,saddle

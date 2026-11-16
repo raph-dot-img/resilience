@@ -41,6 +41,13 @@ rustPlatform.buildRustPackage {
     zstd
   ];
 
+  # The map pack builder is for build machines only (ADR 0016 §2): it is
+  # built and tested here with the rest of the workspace, but not
+  # installed. nix/maps builds it on its own for the pack derivations.
+  postInstall = ''
+    rm "$out/bin/resilience-mapmaker"
+  '';
+
   meta = {
     description = "Terminal interface of Resilience OS";
     license = lib.licenses.bsd0;
