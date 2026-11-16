@@ -4,7 +4,7 @@ Every result below is **PASS**, **FAIL**, **BLOCKED** or **NOT TESTED**.
 A test is only PASS if it was actually executed. "VM" means QEMU/KVM on the
 development host — **no test has been run on physical hardware**.
 
-Last full run (`nix flake check -L --max-jobs 1`, all VM tests): 2026-11-14 on the Phase 2 commits (privileged helper, Users & modes, Recovery, backups, Date & time, Wi-Fi, default generation, user namespaces), nixpkgs `f1e5c356`. ISO not rebuilt since the helper build (SHA-256 `3d28aeb2…a9f591`) (bit-for-bit reproducibility not verified).
+Last full run (`nix flake check -L --max-jobs 1`, all VM tests): 2026-11-14 on the Phase 2 commits (privileged helper, Users & modes, Recovery, backups, Date & time, Wi-Fi, default generation, user namespaces), nixpkgs `f1e5c356`. ISO last built and boot-tested 2026-11-16 from the end of Phase 4 (see "ISO boot"; bit-for-bit reproducibility not verified).
 
 ## How to run
 
@@ -219,9 +219,24 @@ ZIM file is built with `zimwriterfs` during the build.
 
 | Firmware | Result |
 |---|---|
-| Legacy BIOS (SeaBIOS, syslinux) — boots to TUI, offline, menus render, system OPERATIONAL | PASS (re-run with Phase 2 build) |
-| UEFI (OVMF from pinned nixpkgs, GRUB text mode) — boots to TUI | PASS (Phase 0/1 build; not re-run for Phase 2) |
+| Legacy BIOS (SeaBIOS, syslinux) — boots to TUI, offline, menus render, system OPERATIONAL | PASS (end-of-Phase-4 build, 2026-11-16) |
+| UEFI (OVMF 202602 from pinned nixpkgs, GRUB 2.12 text mode) — boots to TUI, same screens | PASS (end-of-Phase-4 build, 2026-11-16) |
+| Low memory: BIOS at 2048, 1024, 768 and 512 MiB; UEFI at 2048 and 1024 MiB — TUI, network diagnostics and system status shown, no failed service, no OOM message on the serial console | PASS (2026-11-16) |
+| Heavy use at low memory (Kiwix reader, backups, map viewer at ≤1 GiB) | NOT TESTED |
 | Physical hardware | NOT TESTED |
+
+Last ISO run (2026-11-16): `develop` at `44f33b4` (code identical to
+`f77e6ba`, end of Phase 4), `resilience-standard-0.1.0-x86_64-linux.iso`,
+1,528,430,592 bytes, SHA-256 `f3f17b95e4c4e226e82fed58a45ab9cef31a3c78a1dc70584b37295a87a530a4`
+(same store path as the R1 build of 2026-11-15). QEMU/KVM, 2 vCPU, no
+network device, `-vga std` (160×50 console). Only the four smoke-test
+screens were exercised. The smoke script waits a fixed 75 s, so time to
+TUI is not measured (R1 saw the menu at 84 s, BIOS, 2 GiB).
+
+The live root is a tmpfs of half the RAM: writable space for the user and
+the system is ~980 MiB at 2 GiB, ~480 MiB at 1 GiB, ~230 MiB at 512 MiB.
+Resource packs cannot be installed there anyway (no administrator), but a
+modest machine running the live ISO has little room for files.
 
 ### Measurements (VM, 2 vCPU, 1.5–2 GiB RAM; reported, not asserted)
 
@@ -229,11 +244,11 @@ ZIM file is built with `zimwriterfs` during the build.
 |---|---|---|
 | TUI resident memory | 3.5 MiB | vm-boot-offline |
 | Memory used after boot (incl. test backdoor) | 275 MiB | vm-boot-offline |
-| Memory used on live ISO (tmpfs root) | ~300 MiB of 1.9 GiB | ISO screenshot |
+| Memory used on live ISO after boot (tmpfs root) | ~300 MiB of 1.9 GiB; ~280 MiB of 959 MiB; ~240 MiB of 712 MiB; ~120 MiB of 460 MiB ("available" as reported by the TUI) | ISO screenshots 2026-11-16 |
 | Boot to multi-user (kernel + initrd + userspace) | 0.9 + 3.6 + 4.3 = 8.8 s | vm-boot-offline |
 | Running services | journald, udevd, logind, dbus-broker, NetworkManager, nscd, oomd (+ transient) | vm-boot-offline |
 | System closure (live-standard) | 2.2 GiB, of which linux-firmware 825 MiB, nixpkgs source 197 MiB | `nix path-info -S` |
-| ISO size (standard) | 1.48 GB | build (Phase 2 helper build; not rebuilt with udisks2) |
+| ISO size (standard) | 1.53 GB (1,528,430,592 bytes) | build, end of Phase 4 (2026-11-15/16) |
 | Closure growth from removable media + backups | +62 MiB (2231.6 → 2293.9 MiB; age 23 MiB, udisks2 + libblockdev deps ≈ 30 MiB) | `nix path-info -S`, main vs branch |
 | TUI binary | 1.5 MiB (stripped, LTO) | build |
 | Map viewer, dense view (4 tiles of zoom 14, 384 KiB of MVT and ~84,000 vertices each, 170×45 map): decode 2.9 ms per tile; cold frame 25-31 ms (read + inflate + decode 19-23 ms of it); warm frame 4.5-6.8 ms (worst 7.3 ms) at 5, 10 and 20 m per pixel; cache 5.6 MiB for the 4 tiles | release build, Ryzen 5 PRO 4650U | `cargo test --release -p resilience-maps --test perf -- --ignored --nocapture` (dev host, not a VM) |
