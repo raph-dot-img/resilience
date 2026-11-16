@@ -75,8 +75,9 @@ in
           fi
         }
         check "SELECT count(*) FROM rs_place" 13
+        # Testville (6.05, 49.04): Les Granges is 3,537 m away, Petit-Essai 3,667 m.
         check "SELECT group_concat(kind || ':' || name || ':' || ifnull(near, '-'), ',') FROM (SELECT * FROM rs_place ORDER BY id)" \
-          "settlement:Testville:Petit-Essai,settlement:Petit-Essai:Testville,settlement:Les Granges:Testville,street:Grand-Rue:Testville,street:Route de Petit-Essai:Petit-Essai,street:Rue de l'Essai:Testville,street:Chemin des Vignes:Testville,poi:Pharmacie de la Gare:Testville,poi::Testville,poi:Café du Centre:Testville,natural:Lac de l'Essai:Testville,natural:La Testue:Testville,natural:Mont Essai:Testville"
+          "settlement:Testville:Les Granges,settlement:Petit-Essai:Testville,settlement:Les Granges:Testville,street:Grand-Rue:Testville,street:Route de Petit-Essai:Petit-Essai,street:Rue de l'Essai:Testville,street:Chemin des Vignes:Testville,poi:Pharmacie de la Gare:Testville,poi::Testville,poi:Café du Centre:Testville,natural:Lac de l'Essai:Testville,natural:La Testue:Testville,natural:Mont Essai:Testville"
         # Rue de l'Essai: two ways, one row, half-way along the first way,
         # with the box of both (6.048-6.054 E, 49.041 N).
         check "SELECT class || '|' || lon || '|' || lat || '|' || hex(bbox) FROM rs_place WHERE kind = 'street' AND fold = 'rue de l essai'" \
