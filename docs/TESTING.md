@@ -240,6 +240,22 @@ First part of the test planned in ADR 0016 §8 (its step 1).
 | Installing a detailed pack from a stick, search, nearby, outside-coverage message on real console, hostile files, nothing written on the stick (steps 2 to 8 of the ADR) | NOT TESTED (later slices) |
 | The map looked at by a person on a real or emulated console (colours, legibility at 80×25) | NOT TESTED |
 
+### VM: `vm-comms` — local messaging network (ADR 0018, slice 1), two machines on an isolated network
+
+Only the network service is tested here: there is no messaging program
+or TUI screen yet. The messages are sent by a test program
+(`tests/vm/comms-node.py`) run by an Ultra-Stable account.
+
+| Scenario | Result |
+|---|---|
+| `resilience-reticulum.service` runs on both machines as a non-root user; state directory 0700; client configuration 0644 with a 64-hex-digit key; the configurations in the Nix store hold no key; each machine has its own key; no `rnsh`/`rnx` process, and no Reticulum program in an account's `PATH` | PASS (2026-11-16) |
+| Each machine sees the other on the local network (`rnstatus` through the client configuration, as the ordinary account: `AutoInterface[Local network]`, "1 reachable") within seconds; no TCP listener outside loopback | PASS |
+| A message from one machine to the other through the two shared instances: state `outbound`, then `delivered` once the proof is back (0.1 s after sending); received with the sender's address and `verified=True` | PASS |
+| The other machine's service stopped: the message is `failed` after 72 s and never `delivered` | PASS |
+| The key is the same after a service restart; system `running` | PASS |
+| A reply in the other direction; three or more machines; a link that drops mid-message; Wi-Fi; hostile peers; a physical network | NOT TESTED |
+| A system without `resilience.comms.enable` contains no Reticulum code (live-standard, live-minimal, dev-vm) | NOT TESTED as a check (the option is off by default and nothing else refers to the package) |
+
 ### ISO boot (`tests/iso/smoke.py`, screenshots reviewed by a human/agent)
 
 | Firmware | Result |

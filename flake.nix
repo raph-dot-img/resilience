@@ -94,6 +94,7 @@
         vm-documents = vmTest ./tests/vm/documents.nix;
         vm-crypto = vmTest ./tests/vm/crypto.nix;
         vm-maps = vmTest ./tests/vm/maps.nix;
+        vm-comms = vmTest ./tests/vm/comms.nix;
         # The synthetic test pack: reproducible, and read back by the reader.
         # The built-in world overview (Natural Earth), read back the same way.
         inherit (mapChecks) map-pack-reproducible map-pack-testland map-world;

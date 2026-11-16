@@ -80,7 +80,7 @@ is to be run before each release (cargo-deny is in the dev shell).
 | sc-im | 0.8.5 | BSD-4-Clause | spreadsheet | advertising clause: review |
 | glow / mdcat | 2.1.2 / 2.7.1 | MIT / MPL-2.0 | Markdown viewing | |
 | yggdrasil | 0.5.13 | LGPL-3.0 | mesh (Phase 6) | |
-| rns (Reticulum) | 1.2.9 | (license metadata missing in nixpkgs — verify upstream) | local/mesh messaging (Phase 6) | |
+| rns (Reticulum), lxmf (LXMF) | 1.2.9, 0.9.8 | **Reticulum License** (MIT text plus two conditions: no use in systems able to purposefully harm people, no use for AI training datasets). **Not free software**; nixpkgs marks both unfree | local messaging network (ADR 0018), **only with `resilience.comms.enable`** (off by default): `rnsd` as a system service; LXMF for the messaging program to come | allowed by name in `nix/packages/resilience-reticulum` only; upstream markqvist/Reticulum, markqvist/LXMF; licence read on 2026-11-16 |
 | batctl | 2026.4 | GPL-2.0-only | BATMAN-adv (Phase 6) | |
 | toxic (Tox) | 0.16.1 | GPL-3.0-only | Internet messaging TUI (Phase 6) | |
 | signal-cli | 0.14.7 | GPL-3.0 | **unofficial** Signal client (Phase 6) | Java; unofficial; may break with server changes |

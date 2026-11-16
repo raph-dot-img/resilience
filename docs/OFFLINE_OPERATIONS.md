@@ -13,6 +13,16 @@ Resilience is designed for **no Internet, no DNS, no public servers**.
 | ModemManager | Disabled by default. |
 | SSH | Disabled; no listening sockets at all by default (tested). |
 
+## Local messaging network (only when enabled)
+
+With `resilience.comms.enable = true` (off by default, ADR 0018) the
+machine runs a Reticulum instance that **sends on its local network all
+the time**: IPv6 link-local multicast for discovery (UDP 29716) and data
+between machines (UDP 42671), both opened in the firewall. Nothing is sent
+beyond the local network: there is no Internet hub, no TCP and no routing
+for others. This is the one exception to "nothing in the background", and
+it exists only on machines where the option is set.
+
 ## Network states shown by the interface
 
 | State | Meaning | How it is determined |

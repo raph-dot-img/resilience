@@ -70,10 +70,10 @@ secrets never in argv or logs (ADR 0015).
 - [ ] Unlock encrypted (LUKS) USB sticks in the media screens (later)
 - [ ] OpenPGP signing in the interface (minisign signs; gpg on the command line)
 
-## Phase 5 — Offline maps 🟡
+## Phase 5 — Offline maps 🟡 (parked on 2026-11-16: usable as it is; the open items wait until they are needed)
 Design: ADR 0016 (MBTiles with vector tiles, block-character viewer, search
 inside the pack, reproducible pack builder, routing deferred to its own ADR).
-Slices 1 to 7 are in `develop`; slices 8 and 9 on `feat/maps-overview`.
+Slices 1 to 9 are in `develop`.
 - ✅ Resource packs accept map packs (`.mbtiles`, `maps` category, data date, coverage, attribution)
 - ✅ Geographic maths, bounded vector-tile decoder, canvas, style table, labels
 - ✅ Hardened pack reader (`resilience-maps`, SQLite opened as untrusted input)
@@ -85,7 +85,10 @@ Slices 1 to 7 are in `develop`; slices 8 and 9 on `feat/maps-overview`.
 
 ## Phase 6 — Networking and communications 🟡
 - ✅ Passive diagnostics + on-demand probe; LOCAL LINK detection tested
-- ⬜ Reticulum evaluation for local messaging; store-and-forward; delivery states
+- ✅ Reticulum and LXMF evaluated and chosen for local messaging, as an opt-in module because of their licence (ADR 0018)
+- ✅ Local messaging network: `resilience.comms.enable` (Reticulum instance per machine, unprivileged, local network only), tested between two VMs (`vm-comms`)
+- ⬜ Per-user messaging program (identity, contacts, queue, delivery states), then the TUI "Communications" section
+- ⬜ Store-and-forward for recipients that are off (LXMF propagation node), file exchange
 - ⬜ Yggdrasil / BATMAN-adv profiles; Tox, signal-cli (documented as unofficial)
 
 ## Phase 7 — Radio and additional applications 🟡
