@@ -84,8 +84,8 @@ Branch `feat/maps`.
 - ✅ Resource packs accept map packs (`.mbtiles`, `maps` category, data date, coverage, attribution)
 - ✅ Geographic maths, bounded vector-tile decoder, canvas, style table, labels
 - ✅ Hardened pack reader (`resilience-maps`, SQLite opened as untrusted input)
-- 🟡 Viewer (`resilience-maps view`): written, unit-tested, not reviewed, never run on a real pack
-- 🟡 Pack builder (`resilience-mapmaker`, `nix/maps/`): written on branch `feat/maps-builder`, not reviewed, not merged
+- ✅ Viewer (`resilience-maps view`): reviewed (risky parts), run on the real Luxembourg pack in QEMU at 170×48 (1366×768); label fixes from that run
+- 🟡 Pack builder (`resilience-mapmaker`, `nix/maps/`): merged into `feat/maps`; the Luxembourg pack builds and the hardened reader accepts it; code not reviewed line by line, reproducibility check not re-run
 - ⬜ Built-in world overview, TUI "Maps & navigation", search, nearby and go-to, spot heights, `vm-maps`, catalog entries
 
 ## Phase 6 — Networking and communications 🟡

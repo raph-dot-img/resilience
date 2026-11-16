@@ -370,11 +370,12 @@ its system (§1). Only documentation was changed for it; no code.
 Phase 5 (offline maps, ADR 0016) is in progress on branch `feat/maps`
 (pushed): slices 1 to 5 of ADR 0016 §9 are done and reviewed (packs accept
 `.mbtiles`, geographic maths, MVT decoder, canvas/style/labels, hardened
-pack reader in the new crate `resilience-maps`); slice 6 (viewer) is
-committed there as work in progress, not reviewed and never run on a real
-pack; slice 7 (pack builder `resilience-mapmaker`, `nix/maps/`) is on branch
-`feat/maps-builder` as work in progress, not reviewed and not merged.
-Slices 8 to 13 are not started. The rest of this section and §2 describe
+pack reader in the new crate `resilience-maps`); slice 6 (viewer) was
+reviewed in its risky parts and run on the real Luxembourg pack in QEMU
+at 170×48 on 2026-11-16 (label fixes followed); slice 7 (pack builder
+`resilience-mapmaker`, `nix/maps/`, `nix build .#mapPacks.luxembourg`) is
+merged into `feat/maps` and builds the Luxembourg pack, but its code was
+not reviewed line by line. Slices 8 to 13 are not started. The rest of this section and §2 describe
 the state at the end of Phase 4 and do not list the maps code yet.
 
 
