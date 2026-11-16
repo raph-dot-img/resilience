@@ -19,12 +19,13 @@ use resilience_core::clock;
 use resilience_core::config::{SystemConfig, ThemeName, UserSettings};
 use resilience_core::handbook;
 use resilience_core::human_bytes;
+use resilience_core::keyboard;
 use resilience_core::manpage;
 use resilience_core::media::{self, Ejected, Volume};
 use resilience_core::mode::{Detected, Mode};
 use resilience_core::network::{self, NetworkState, ProbeConfig, ProbeReport};
 use resilience_core::notes;
-use resilience_core::proc::run_full;
+use resilience_core::proc::{run_full, run_full_env};
 use resilience_core::recovery;
 use resilience_core::status::{self, Snapshot, SystemState};
 use resilience_core::wifi::{self, Network, Overview};
@@ -322,7 +323,9 @@ impl Builtin {
                 "Detailed health report: services, storage, memory, power, system generation."
             }
             Builtin::Notifications => "Messages the interface has shown during this session.",
-            Builtin::Settings => "Choose the colour theme. Your security mode is shown here too.",
+            Builtin::Settings => {
+                "Choose the colour theme and the keyboard layout. Your security mode is shown here too."
+            }
             Builtin::Clock => {
                 "Shows the date, time and time zone, and sets the clock when it is wrong \
                  (there is no network time). Setting it asks for an administrator password."
@@ -412,7 +415,9 @@ impl Builtin {
             Builtin::Random => "random password passphrase generate diceware key pin",
             Builtin::Keys => "keys key contact contacts public private export import age minisign",
             Builtin::SystemStatus => "health battery disk storage memory",
-            Builtin::Settings => "theme colour color preferences",
+            Builtin::Settings => {
+                "theme colour color preferences keyboard layout azerty qwerty clavier"
+            }
             Builtin::Clock => "clock time date hour timezone zone ntp calendar rtc wrong",
             Builtin::Users => {
                 "account accounts mode modes administrator admin permissions privileges sudo"
@@ -1219,14 +1224,22 @@ impl App {
                 _ => nav(list, list_notes.len(), key),
             },
             View::Settings { list } => {
+                let themes = ThemeName::ALL.len();
                 if is_activate(key) {
-                    if let Some(t) = list.selected().and_then(|i| ThemeName::ALL.get(i)) {
-                        self.set_theme(*t);
+                    match list.selected() {
+                        Some(i) if i < themes => self.set_theme(ThemeName::ALL[i]),
+                        Some(i) => {
+                            if let Some(l) = self.sys.keyboard.layouts.get(i - themes) {
+                                let id = l.id.clone();
+                                self.set_layout(&id);
+                            }
+                        }
+                        None => {}
                     }
                 } else if is_back(key) {
                     return (None, Effect::None);
                 } else {
-                    nav(list, ThemeName::ALL.len(), key);
+                    nav(list, themes + self.sys.keyboard.layouts.len(), key);
                 }
             }
             View::Users { rows, error, list } => {
@@ -1911,6 +1924,90 @@ impl App {
             pause_after: false,
             banner: None,
         })
+    }
+
+    /// Load a keyboard layout for the consoles and save it as this
+    /// account's choice. The kernel lets only privileged programs change
+    /// the console keymap: `pkexec <helper> set-keymap ID` (ADR 0017; no
+    /// password for the active local session, listed layouts only).
+    fn set_layout(&mut self, id: &str) {
+        let label = self.sys.keyboard.label(id).to_string();
+        match self.load_layout(id) {
+            Ok(()) => {
+                self.settings.keyboard = Some(id.to_string());
+                match self.settings.save(&self.settings_path) {
+                    Ok(()) => self.notify(
+                        Level::Info,
+                        format!(
+                            "Keyboard layout set to {label}. It applies to every console until \
+                             someone logs out; login prompts always use the system's layout."
+                        ),
+                    ),
+                    Err(e) => self.notify(
+                        Level::Error,
+                        format!("Keyboard layout applied but not saved: {e}"),
+                    ),
+                }
+            }
+            Err(e) => self.notify(
+                Level::Error,
+                format!("The keyboard layout {label} could not be loaded: {e}"),
+            ),
+        }
+    }
+
+    fn load_layout(&self, id: &str) -> Result<(), String> {
+        if self.sys.keyboard.find(id).is_none() || !keyboard::is_valid_id(id) {
+            return Err("it is not one of the layouts of this system".into());
+        }
+        let cfg = std::fs::read_to_string(&self.paths.admin_config)
+            .map_err(|e| e.to_string())
+            .and_then(|t| AdminConfig::parse(&t))?;
+        let pkexec = cfg.pkexec.to_string_lossy();
+        let helper = cfg.helper.to_string_lossy();
+        let shell = cfg.session_shell.to_string_lossy();
+        match run_full_env(
+            &[pkexec.as_ref(), helper.as_ref(), "set-keymap", id],
+            &[("SHELL", shell.as_ref())],
+            Duration::from_secs(15),
+        ) {
+            Some(o) if o.success() => Ok(()),
+            Some(o) => Err(o
+                .stderr
+                .lines()
+                .next()
+                .unwrap_or("the keyboard layout was refused")
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(200)
+                .collect()),
+            None => Err("the system helper did not run or took too long".into()),
+        }
+    }
+
+    /// At the start of a session: load the layout this account chose, if it
+    /// differs from the system's (which the login prompt already loaded).
+    pub fn apply_saved_layout(&mut self) {
+        let Some(saved) = self.settings.keyboard.clone() else {
+            return;
+        };
+        let id = self.sys.keyboard.effective(Some(&saved)).to_string();
+        if id != saved {
+            self.notify(
+                Level::Warn,
+                format!("Your keyboard layout '{saved}' is no longer offered; using {id}."),
+            );
+        }
+        if id == self.sys.keyboard.default {
+            return;
+        }
+        if let Err(e) = self.load_layout(&id) {
+            let label = self.sys.keyboard.label(&id).to_string();
+            self.notify(
+                Level::Error,
+                format!("Your keyboard layout {label} could not be loaded: {e}"),
+            );
+        }
     }
 
     fn set_theme(&mut self, t: ThemeName) {

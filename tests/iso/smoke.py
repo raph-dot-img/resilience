@@ -9,7 +9,7 @@ human (or a reviewer) can check what was displayed.
                                   [--keymap fr|us]
 
 --keymap is the console layout of the ISO (resilience.keyboard.layout,
-"fr" by default): QEMU sends physical keys, so the text typed has to be
+"us" by default): QEMU sends physical keys, so the text typed has to be
 translated to the keys that produce it in that layout.
 
 Steps: boot (GRUB default entry), wait, screenshot; press '/' and type
@@ -50,7 +50,7 @@ FR_KEYS = {
 KEYMAPS = {"us": US_KEYS, "fr": FR_KEYS}
 
 
-def keys(sock_path, text, keymap="fr"):
+def keys(sock_path, text, keymap="us"):
     names = KEYMAPS[keymap]
     for ch in text:
         monitor(sock_path, "sendkey " + names.get(ch, ch))
@@ -64,7 +64,7 @@ def main():
     ap.add_argument("--uefi", help="path to OVMF.fd")
     ap.add_argument("--mem", default="2048")
     ap.add_argument("--boot-wait", type=int, default=75)
-    ap.add_argument("--keymap", choices=sorted(KEYMAPS), default="fr")
+    ap.add_argument("--keymap", choices=sorted(KEYMAPS), default="us")
     a = ap.parse_args()
     os.makedirs(a.outdir, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix="resilience-iso-")

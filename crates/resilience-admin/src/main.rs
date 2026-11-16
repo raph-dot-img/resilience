@@ -6,7 +6,8 @@
 //! action per operation (`org.resilience.admin.set-mode`,
 //! `org.resilience.admin.set-time`,
 //! `org.resilience.admin.set-default-generation`; `auth_admin`: an
-//! administrator's password every time). Every argument is validated here, server-side, whatever the
+//! administrator's password every time; and `org.resilience.admin.set-keymap`,
+//! allowed without a password to the active local session, ADR 0017). Every argument is validated here, server-side, whatever the
 //! TUI already checked.
 //!
 //! ```text
@@ -14,6 +15,7 @@
 //! resilience-admin set-mode USER MODE    root (pkexec / sudo)
 //! resilience-admin set-time UTC-TIME     root (pkexec / sudo), ADR 0009
 //! resilience-admin set-default-generation N   root (pkexec / sudo), ADR 0011
+//! resilience-admin set-keymap LAYOUT     root (pkexec, no password), ADR 0017
 //! resilience-admin apply-state           root (system activation)
 //! ```
 
@@ -45,6 +47,7 @@ Usage:
   resilience-admin set-time TIME         Set the clock; TIME is YYYY-MM-DDTHH:MM:SSZ (UTC)
   resilience-admin set-default-generation N
                                          Start system generation N at every boot
+  resilience-admin set-keymap LAYOUT     Load a console keyboard layout of this system
   resilience-admin apply-state           Re-apply recorded modes (system use)
 MODE is one of: ultra-stable, stable, advanced";
 
@@ -56,6 +59,7 @@ fn main() -> ExitCode {
         ["set-mode", user, mode] => set_mode(user, mode),
         ["set-time", time] => set_time(time),
         ["set-default-generation", n] => set_default_generation(n),
+        ["set-keymap", id] => set_keymap(id),
         ["apply-state"] => apply_state(),
         ["--version"] => {
             println!("resilience-admin {}", resilience_core::VERSION);
@@ -357,6 +361,56 @@ fn set_mode(user: &str, mode: &str) -> Result<()> {
         println!("{} receives the new rights at the next login.", change.user);
     }
     Ok(())
+}
+
+/// Load one of the system's console keyboard layouts (ADR 0017). The
+/// console has one keymap for all its consoles; it is not saved here (the
+/// TUI loads each account's choice at login, and the system's layout is
+/// loaded again before every login prompt).
+fn set_keymap(requested: &str) -> Result<()> {
+    if !is_root() {
+        return Err(Failure::Permission);
+    }
+    let cfg = AdminConfig::load().map_err(err)?;
+    let (uid, by) = caller();
+    let uid_s = uid.to_string();
+    let _lock = lock(&cfg)?;
+    let base = [
+        ("op", "set-keymap"),
+        ("caller", by.as_str()),
+        ("caller_uid", uid_s.as_str()),
+        ("to", requested),
+    ];
+    let outcome = |extra: &[(&str, &str)]| {
+        let mut f = base.to_vec();
+        f.extend_from_slice(extra);
+        audit(&cfg, &f);
+    };
+    let argv = match admin::plan_set_keymap(&cfg, requested) {
+        Ok(a) => a,
+        Err(r) => {
+            let reason = r.to_string();
+            outcome(&[("result", "refused"), ("reason", &reason)]);
+            return Err(Failure::Refused(reason));
+        }
+    };
+    let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+    match run_full(&args, Duration::from_secs(10)) {
+        Some(o) if o.success() => {
+            outcome(&[("result", "ok")]);
+            println!("Keyboard layout {requested} loaded.");
+            Ok(())
+        }
+        Some(o) => {
+            let reason = o.stderr.trim().to_string();
+            outcome(&[("result", "error"), ("reason", &reason)]);
+            Err(Failure::Error(format!("loadkeys failed: {reason}")))
+        }
+        None => {
+            outcome(&[("result", "error"), ("reason", "loadkeys did not finish")]);
+            Err(Failure::Error("loadkeys did not finish".into()))
+        }
+    }
 }
 
 /// Set the system clock and the hardware clock to an exact UTC time.

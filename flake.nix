@@ -28,20 +28,7 @@
           ++ modules;
         };
 
-      vmTest =
-        file:
-        pkgs.testers.runNixOSTest {
-          imports = [ (import file { inherit self; }) ];
-          # The test driver types with US key codes (QEMU sendkey). Only
-          # nodes that import the Resilience modules have the option.
-          defaults =
-            { options, lib, ... }:
-            {
-              config = lib.optionalAttrs (options ? resilience) {
-                resilience.keyboard.layout = "us";
-              };
-            };
-        };
+      vmTest = file: pkgs.testers.runNixOSTest (import file { inherit self; });
 
       # Map packs (ADR 0016 §2), for build machines: not in any system.
       maps = pkgs.callPackage ./nix/maps { };

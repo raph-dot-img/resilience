@@ -3,7 +3,9 @@
 # * One typed operation per polkit action; no generic command runner.
 #   `set-mode`, `set-time` (ADR 0009) and `set-default-generation` (ADR 0011)
 #   require an administrator's password every time (auth_admin, never
-#   auth_admin_keep), whoever asks.
+#   auth_admin_keep), whoever asks. The one exception is `set-keymap`
+#   (ADR 0017): loading one of the listed console keyboard layouts is
+#   allowed without a password to the active local session only.
 # * Configuration the helper trusts is generated here and root-owned
 #   (/etc/resilience/admin.toml); it never reads the caller's environment.
 # * Mode changes persist in /var/lib/resilience/modes.toml and are
@@ -38,6 +40,9 @@ let
       session_shell = "/run/current-system/sw${cfg.sessionPackage.shellPath}";
       # ADR 0012: no Nix sandbox, so no account may be raised at runtime.
       ultra_stable_only = !cfg.security.userNamespaces;
+      # ADR 0017: the only layouts `set-keymap` loads.
+      loadkeys = "${pkgs.kbd}/bin/loadkeys";
+      keymaps = lib.unique ([ cfg.keyboard.layout ] ++ map (l: l.id) cfg.keyboard.layouts);
       users = lib.mapAttrs (_: u: {
         declared_mode = u.mode;
         inherit (u) description;
@@ -88,6 +93,17 @@ let
         </defaults>
         <annotate key="org.freedesktop.policykit.exec.path">${helper}</annotate>
         <annotate key="org.freedesktop.policykit.exec.argv1">set-default-generation</annotate>
+      </action>
+      <action id="org.resilience.admin.set-keymap">
+        <description>Load a console keyboard layout of this system</description>
+        <message>Loading a keyboard layout is allowed to the person at the console</message>
+        <defaults>
+          <allow_any>no</allow_any>
+          <allow_inactive>no</allow_inactive>
+          <allow_active>yes</allow_active>
+        </defaults>
+        <annotate key="org.freedesktop.policykit.exec.path">${helper}</annotate>
+        <annotate key="org.freedesktop.policykit.exec.argv1">set-keymap</annotate>
       </action>
     </policyconfig>
   '';

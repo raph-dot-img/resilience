@@ -627,7 +627,10 @@ fn theme_change_is_saved() {
     let mut a = app(Mode::UltraStable, "theme");
     let (v, _) = a.activate(Entry::Builtin(Builtin::Settings));
     a.stack.push(v.expect("settings"));
-    press(&mut a, KeyCode::End); // Mono
+    press(&mut a, KeyCode::Home);
+    for _ in 0..3 {
+        press(&mut a, KeyCode::Down); // Mono, the last theme
+    }
     press(&mut a, KeyCode::Enter);
     assert_eq!(a.settings.theme, ThemeName::Mono);
     let (loaded, _) = UserSettings::load(&a.settings_path);
@@ -3115,5 +3118,100 @@ fn openpgp_keys_are_listed_offered_and_removable() {
             "--to-pgp",
             "0123456789ABCDEF0123456789ABCDEFB0B0B0B0"
         ]
+    );
+}
+
+/// A fake `pkexec` (in the test admin.toml) that logs its arguments and
+/// fails for the layout "de", as the helper would for a layout it refuses.
+fn fake_keymap_helper(a: &mut App) -> std::path::PathBuf {
+    use resilience_core::keyboard::{KeyboardConfig, Layout};
+    use std::os::unix::fs::PermissionsExt;
+    let dir = a.home.join("sys");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let log = dir.join("pkexec.log");
+    let script = dir.join("pkexec");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> {}\necho \"SHELL=$SHELL\" >> {}\nif [ \"$3\" = de ]; then echo 'this keyboard layout is not offered' >&2; exit 1; fi\n",
+            log.display(),
+            log.display()
+        ),
+    )
+    .expect("write");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let admin = std::fs::read_to_string(&a.paths.admin_config).expect("admin.toml");
+    std::fs::write(
+        &a.paths.admin_config,
+        admin.replace("/run/wrappers/bin/pkexec", &script.display().to_string()),
+    )
+    .expect("admin.toml");
+    let l = |id: &str, label: &str| Layout {
+        id: id.into(),
+        label: label.into(),
+    };
+    a.sys.keyboard = KeyboardConfig {
+        default: "us".into(),
+        layouts: vec![
+            l("us", "English (US, QWERTY)"),
+            l("fr", "French (AZERTY)"),
+            l("de", "German (QWERTZ)"),
+        ],
+    };
+    log
+}
+
+#[test]
+fn keyboard_layout_is_loaded_saved_and_restored_at_login() {
+    let mut a = app(Mode::UltraStable, "keyboard");
+    let log = fake_keymap_helper(&mut a);
+    let (v, _) = a.activate(Entry::Builtin(Builtin::Settings));
+    a.stack.push(v.expect("settings"));
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("Keyboard  French (AZERTY)"), "{screen}");
+    assert!(
+        screen.contains("Keyboard  English (US, QWERTY)  (current)"),
+        "{screen}"
+    );
+    // Themes first, then layouts: French is the 6th row.
+    press(&mut a, KeyCode::Home);
+    for _ in 0..5 {
+        press(&mut a, KeyCode::Down);
+    }
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.settings.keyboard.as_deref(), Some("fr"));
+    assert_eq!(
+        UserSettings::load(&a.settings_path).0.keyboard.as_deref(),
+        Some("fr")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&log).expect("log"),
+        "/store/bin/resilience-admin set-keymap fr\nSHELL=/run/current-system/sw/bin/resilience-session\n"
+    );
+    assert!(render(&mut a, 80, 24).contains("French (AZERTY)  (current)"));
+    // A layout loadkeys refuses is reported and not saved.
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.settings.keyboard.as_deref(), Some("fr"));
+    assert!(a.notices.iter().any(|n| n.text.contains("not offered")));
+
+    // Next login: the saved choice is loaded again; the default is not
+    // (the login prompt already loaded it); a choice no longer offered
+    // falls back to the default with a warning.
+    let mut b = app(Mode::UltraStable, "keyboard-login");
+    let log = fake_keymap_helper(&mut b);
+    b.settings.keyboard = Some("fr".into());
+    b.apply_saved_layout();
+    b.settings.keyboard = Some("us".into());
+    b.apply_saved_layout();
+    b.settings.keyboard = Some("xx; rm".into());
+    b.apply_saved_layout();
+    let calls = std::fs::read_to_string(&log).expect("log");
+    assert_eq!(calls.matches("set-keymap").count(), 1, "{calls}");
+    assert!(calls.contains("set-keymap fr"), "{calls}");
+    assert!(
+        b.notices
+            .iter()
+            .any(|n| n.text.contains("no longer offered"))
     );
 }
