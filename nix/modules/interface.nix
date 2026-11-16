@@ -10,8 +10,22 @@
 
 let
   cfg = config.resilience.interface;
+  layout = config.resilience.keyboard.layout;
 in
 {
+  options.resilience.keyboard.layout = lib.mkOption {
+    type = lib.types.strMatching "[A-Za-z0-9_-]+";
+    default = "fr";
+    example = "us";
+    description = ''
+      Console keyboard layout (a kbd keymap name: "fr" for French AZERTY,
+      "us", "de", "be-latin1", "fr_CH", "fr-bepo", ...). Applies to every
+      console, the login prompts and the interface. Change it in the
+      system configuration and rebuild; the build fails if the keymap does
+      not exist.
+    '';
+  };
+
   options.resilience.interface = {
     autologinUser = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
@@ -73,8 +87,20 @@ in
       # (ter-v16n lacks ▀ ▄ and double-line boxes; verified from its PSF table.)
       font = "ter-i16n";
       packages = [ pkgs.terminus_font ];
-      keyMap = lib.mkDefault "us";
+      keyMap = layout;
     };
+
+    # A misspelt keymap would only fail at boot (systemd-vconsole-setup),
+    # leaving the console in US layout: refuse it at build time instead.
+    system.checks = [
+      (pkgs.runCommand "resilience-keymap-${layout}" { } ''
+        if [ -z "$(find ${pkgs.kbd}/share/keymaps -name '${layout}.map.gz' -print -quit)" ]; then
+          echo "resilience.keyboard.layout: no console keymap named '${layout}' in kbd" >&2
+          exit 1
+        fi
+        touch $out
+      '')
+    ];
 
     # No graphical stack, ever.
     services.xserver.enable = false;

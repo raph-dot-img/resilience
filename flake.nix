@@ -28,7 +28,13 @@
           ++ modules;
         };
 
-      vmTest = file: pkgs.testers.runNixOSTest (import file { inherit self; });
+      vmTest =
+        file:
+        pkgs.testers.runNixOSTest {
+          imports = [ (import file { inherit self; }) ];
+          # The test driver types with US key codes (QEMU sendkey).
+          defaults.resilience.keyboard.layout = "us";
+        };
     in
     {
       overlays.default = import ./nix/overlays/default.nix;
