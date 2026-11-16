@@ -2,11 +2,14 @@
 
 Read this whole file at the start of every session. Keep it accurate: update it
 whenever architecture, build process, conventions or status change. The full
-original specification is `MASTER-PROMPT.md` (authoritative for the feature
-scope of the system; this file is authoritative for *project direction,
-current state and decisions*). `MASTER-PROMPT.md` was written before the
-change of direction in §1 and still describes a general-purpose
-distribution: where the two disagree, §1 wins.
+original specification is `docs/ORIGINAL-SPEC.md` (authoritative for the
+feature scope of the system; this file is authoritative for *project
+direction, current state and decisions*). It was written before the change
+of direction in §1 and still describes a general-purpose distribution:
+where the two disagree, §1 wins. ADRs that cite "MASTER-PROMPT.md §N" mean
+that file: on 2026-11-16 the owner replaced `MASTER-PROMPT.md` with a short
+session prompt (priorities and rules for agent sessions), and the original
+text was moved to `docs/ORIGINAL-SPEC.md` unchanged.
 
 ## 1. Identity and purpose
 
@@ -21,17 +24,21 @@ things:
 
 Resilience OS is **no longer a general-purpose operating system for any
 x86-64 machine**. That was the original idea, and older documents, ADRs and
-`MASTER-PROMPT.md` are written that way. What this means for a session:
+`docs/ORIGINAL-SPEC.md` are written that way. What this means for a session:
 
 - Design for one known machine, the cyberdeck, and not for unknown
   hardware. When a choice depends on the hardware (screen and console size,
   keyboard, storage, battery and power, radios, boot firmware), ask the
   owner or look for the hardware specification; do not assume generic PC
   hardware and do not invent the cyberdeck's characteristics.
-- **The cyberdeck's hardware is not recorded in this repository yet**
-  (CPU architecture, screen, storage, radios: unknown here). Everything
-  built so far targets x86_64 and has run only in QEMU. Whether the
-  cyberdeck is x86_64 has not been stated: ask before relying on it.
+- **V1 hardware (owner decision, 2026-11-15):** the first cyberdeck is a
+  **recycled old x86_64 laptop**, rebuilt into a 3D-printed case. Resilience
+  OS stays **x86_64 only**: no ARM port. LoRa 868 MHz and SDR come in **V2**,
+  not V1. The laptop has not been chosen yet, so its exact hardware (CPU,
+  boot firmware, screen and console size, RAM, storage, Wi-Fi/Bluetooth,
+  GPS, battery) is **not recorded yet**: do not assume any of it; ask, or
+  read the report of `scripts/hw-report.sh` once it has run on the machine.
+  Everything has run only in QEMU so far.
 - Work whose purpose was "runs on any PC" (broad hardware support, a
   generic installer, images for other people's machines) is not a goal on
   its own any more. Before starting such work, ask whether the cyberdeck

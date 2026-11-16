@@ -8,8 +8,8 @@ system that runs on it: NixOS, Rust, terminal-only.
 
 Resilience OS is not a general-purpose distribution for any PC. It was
 first planned as one, and some documents still read that way; it is now
-developed for the cyberdeck. The cyberdeck's hardware is not described in
-this repository yet.
+developed for the cyberdeck. The first cyberdeck (V1) is a recycled old
+x86_64 laptop in a 3D-printed case; the exact machine is not chosen yet.
 
 Resilience OS is designed to stay useful — information, productivity, local
 communication, security tools — during a long or complete loss of Internet

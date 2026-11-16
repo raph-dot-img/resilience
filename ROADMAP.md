@@ -6,8 +6,9 @@ the system that runs on it, and this roadmap is the roadmap of that system.
 It is no longer a general-purpose operating system for any x86-64 machine.
 The phases below were planned before this change. They still stand, read
 with the cyberdeck as the target; the items the change puts in question are
-marked **[direction]**. The cyberdeck's hardware is not recorded in this
-repository yet: see "Cyberdeck hardware" at the end.
+marked **[direction]**. V1 (owner, 2026-11-15): a recycled old x86_64
+laptop in a 3D-printed case, x86_64 only, LoRa 868 MHz and SDR in V2. The
+laptop itself is not chosen yet: see "Cyberdeck hardware" at the end.
 
 Legend: ✅ done and tested · 🟡 partial · ⬜ not started. "Tested" means a
 test in docs/TESTING.md actually ran and passed (VM only so far).
@@ -146,9 +147,11 @@ Independent architecture and security reviews, `cargo deny`, license audit,
 SBOM, tests on the cyberdeck itself, release notes.
 
 ## Cyberdeck hardware ⬜
-Not recorded in this repository yet. To be written down by the owner, or
-asked for when first needed, because the system depends on it: CPU
-architecture (everything so far is x86_64 and QEMU only), boot firmware,
+V1 decision (owner, 2026-11-15): a recycled old **x86_64** laptop, rebuilt
+into a 3D-printed case; no ARM port; LoRa 868 MHz and SDR in V2. The laptop
+is not chosen yet, so its details are not recorded: when it is, run
+`scripts/hw-report.sh` on it and follow `docs/HARDWARE-BOOT-CHECKLIST.md`,
+then record here: boot firmware,
 screen and console size, keyboard and pointing device, storage, battery and
 charging, radios (Wi-Fi, others), ports. Once known: a hardware
 configuration for the cyberdeck in `nix/systems/`, and tests on the device.
