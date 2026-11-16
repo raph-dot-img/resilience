@@ -3,58 +3,15 @@
 Read this whole file at the start of every session. Keep it accurate: update it
 whenever architecture, build process, conventions or status change. The full
 original specification is `docs/ORIGINAL-SPEC.md` (authoritative for the
-feature scope of the system; this file is authoritative for *project
-direction, current state and decisions*). It was written before the change
-of direction in §1 and still describes a general-purpose distribution:
-where the two disagree, §1 wins. ADRs that cite "MASTER-PROMPT.md §N" mean
-that file: on 2026-11-16 the owner replaced `MASTER-PROMPT.md` with a short
-session prompt (priorities and rules for agent sessions), and the original
-text was moved to `docs/ORIGINAL-SPEC.md` unchanged.
+feature scope; this file is authoritative for *current state and
+decisions*). `MASTER-PROMPT.md` is the owner's short session prompt
+(priorities and rules for agent sessions); ADRs that cite
+"MASTER-PROMPT.md §N" mean `docs/ORIGINAL-SPEC.md`.
 
 ## 1. Identity and purpose
 
-**Project direction (decided by the owner on 2026-11-15).** Two names, two
-things:
-
-- **Resilience** is the **cyberdeck project**: a standalone, offline-first
-  laptop that we are building. It is the product.
-- **Resilience OS** is the **system that runs on that cyberdeck**: NixOS,
-  Rust, terminal-only. It is one part of Resilience, and this repository
-  holds it.
-
-Resilience OS is **no longer a general-purpose operating system for any
-x86-64 machine**. That was the original idea, and older documents, ADRs and
-`docs/ORIGINAL-SPEC.md` are written that way. What this means for a session:
-
-- Design for one known machine, the cyberdeck, and not for unknown
-  hardware. When a choice depends on the hardware (screen and console size,
-  keyboard, storage, battery and power, radios, boot firmware), ask the
-  owner or look for the hardware specification; do not assume generic PC
-  hardware and do not invent the cyberdeck's characteristics.
-- **V1 hardware (owner decisions, 2026-11-15 and 2026-11-16):** the first
-  cyberdeck is a **recycled Lenovo ThinkPad E540**, rebuilt into a
-  3D-printed case: Intel Core **i3-4000M** (Haswell, x86_64), **4 to 8 GB of
-  RAM**, a **16 GB SSD** (upgradeable; see ROADMAP "Cyberdeck hardware" for
-  the size estimate). Resilience OS stays **x86_64 only**: no ARM port. LoRa
-  868 MHz and SDR come in **V2**, not V1. Keyboard: **French AZERTY** by
-  default (`resilience.keyboard.layout`).
-  **To confirm with `scripts/hw-report.sh` on the machine itself** (not
-  verified, do not assume): screen resolution and therefore console size,
-  Wi-Fi/Bluetooth card and its firmware, boot firmware (UEFI/CSM, Secure
-  Boot), exact RAM and SSD, battery. Resilience OS has booted on one real
-  laptop so far (a ThinkPad L15 Gen 1, not the E540).
-- Work whose purpose was "runs on any PC" (broad hardware support, a
-  generic installer, images for other people's machines) is not a goal on
-  its own any more. Before starting such work, ask whether the cyberdeck
-  needs it. Affected roadmap items are marked in ROADMAP.md.
-- The principles below (offline-first, security modes, low resources,
-  terminal-only) are unchanged.
-- Use the names as defined: "Resilience" for the cyberdeck or the project
-  as a whole, "Resilience OS" for the system. Program and crate names
-  (`resilience`, `resilience-admin`, …) do not change.
-
-**Resilience OS** is an offline-first, low-resource, terminal-only system
-built on **NixOS** (x86_64 so far). It must stay useful — information,
+**Resilience OS** is an offline-first, low-resource, terminal-only Linux
+distribution for **x86_64 PCs**, built on **NixOS**. It must stay useful — information,
 productivity, local communication, security tools — with no Internet at all.
 Primary interface: a Rust TUI (`resilience`). No X11, Wayland, desktop or WM.
 
@@ -364,9 +321,6 @@ needlessly. Watch `free -h` during VM tests.
 
 ## 14. Current implementation status (2026-11-15)
 
-Direction changed on 2026-11-15: Resilience is the cyberdeck, Resilience OS
-its system (§1). Only documentation was changed for it; no code.
-
 Phase 5 (offline maps, ADR 0016) is in progress on branch `feat/maps`
 (pushed): slices 1 to 5 of ADR 0016 §9 are done and reviewed (packs accept
 `.mbtiles`, geographic maths, MVT decoder, canvas/style/labels, hardened
@@ -425,13 +379,12 @@ origin; last full `nix flake check -L --max-jobs 1` passed (9 VM tests,
   signs), no secure deletion of originals (the user is told); contacts'
   keys are only as trustworthy as the user's own check.
 - Power profiles not implemented (schedutil governor only). Not measured yet.
-- Not tested on physical hardware, and in particular never on the cyberdeck,
-  whose hardware is not recorded here yet (§1).
+- Physical hardware: the live ISO has booted once on a ThinkPad L15 Gen 1
+  (owner, 2026-11-16); nothing else has been tested outside QEMU.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Current: Phase 5 (offline maps), see §14. The roadmap is
-read in the light of §1: the target is the cyberdeck.
+See ROADMAP.md. Current: Phase 5 (offline maps), see §14.
 
 ## 17. Important decisions (docs/decisions/)
 

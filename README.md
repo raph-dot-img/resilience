@@ -1,17 +1,6 @@
 # Resilience OS
 
-**The operating system of Resilience, a standalone, offline-first cyberdeck.**
-
-**Resilience** is a cyberdeck project: a self-contained, offline-first
-laptop that we are building. **Resilience OS**, in this repository, is the
-system that runs on it: NixOS, Rust, terminal-only.
-
-Resilience OS is not a general-purpose distribution for any PC. It was
-first planned as one, and some documents still read that way; it is now
-developed for the cyberdeck. The first cyberdeck (V1) is a recycled
-Lenovo ThinkPad E540 (Intel i3-4000M, 4-8 GB of RAM, 16 GB SSD) in a
-3D-printed case; its screen, Wi-Fi card and firmware are still to be
-checked on the machine.
+**An offline-first, terminal-only operating system for x86_64 PCs, based on NixOS.**
 
 Resilience OS is designed to stay useful — information, productivity, local
 communication, security tools — during a long or complete loss of Internet
@@ -33,8 +22,8 @@ works at 80×24, without colour, and on modest hardware.
 ```
 
 > **Status: early prototype (v0.1.0).** It boots and is usable in a
-> virtual machine (x86_64). It has **not** been tested on physical hardware,
-> and never on the cyberdeck. It has no installer yet, and several planned
+> virtual machine (x86_64). It has booted once on physical hardware (a ThinkPad
+> L15 Gen 1) and has otherwise run only in virtual machines. It has no installer yet, and several planned
 > features (maps are in progress; local messaging, radio) do not exist yet.
 > See [ROADMAP.md](ROADMAP.md) and [docs/TESTING.md](docs/TESTING.md) for
 > exactly what works.

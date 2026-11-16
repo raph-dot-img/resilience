@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Hardware report for a candidate Resilience cyberdeck (V1: an old x86_64
-# laptop). Prints Markdown on stdout, to paste into the repository's docs.
+# Hardware report for a PC that runs or will run Resilience OS (x86_64).
+# Prints Markdown on stdout, to paste into the repository's docs.
 #
 #   bash hw-report.sh > hw-report.md
 #
-# Run it ON THE LAPTOP, from any live Linux (for example the official NixOS
+# Run it ON THE MACHINE, from any live Linux (for example the official NixOS
 # minimal ISO: the Resilience live ISO has no shell, by design).
 #
 # - Read-only: it only reads /proc, /sys and the output of listing tools. It

@@ -1,6 +1,6 @@
 # First boot on real hardware: checklist
 
-For the V1 cyberdeck candidate: a recycled x86_64 laptop (CLAUDE.md §1).
+For trying Resilience OS on a real x86_64 PC (laptop or desktop).
 Nothing here writes to the laptop's internal disk: the Resilience ISO is a
 live system, and the hardware report runs from a live system too. Note
 every answer; the results go to `docs/TESTING.md` (PASS / FAIL / NOT
@@ -27,7 +27,7 @@ photograph screens and firmware menus, and a stopwatch.
 
 | # | Check | Result |
 |---|---|---|
-| 1.1 | Make and model (label underneath), year if known | |
+| 1.1 | Make and model (label underneath or on the case), year if known | |
 | 1.2 | Keyboard layout printed on the keys (AZERTY FR? QWERTY US?) | |
 | 1.3 | The battery holds a charge; the charger works | |
 | 1.4 | Key to open the firmware setup and the boot menu (F2, F12, Esc, Del, Enter on ThinkPads…) | |
@@ -70,7 +70,7 @@ both. Run the stopwatch from power-on.
 If the screen goes black or garbled after the boot menu: reboot, choose
 **Options**, then **No modesetting** (`nomodeset`); both boot menus have
 it. Note that it was needed: it means the
-graphics driver needs attention in the cyberdeck's configuration.
+graphics driver needs attention in the system configuration.
 
 ## 4. Inside the interface
 
@@ -88,7 +88,7 @@ graphics driver needs attention in the cyberdeck's configuration.
 | 4.10 | Ctrl+Alt+F2: a login prompt appears on tty2; Alt+F1 returns to the interface | |
 | 4.11 | "Power off" from the interface: the laptop switches off completely | |
 | 4.12 | Leave it on the main menu, on battery, 30 minutes: battery percentage before and after | |
-| 4.13 | Fan noise and heat after 10 minutes idle (note it, this is a cyberdeck in a closed case) | |
+| 4.13 | Fan noise and heat after 10 minutes idle (note it) | |
 
 ## 5. Write it down
 

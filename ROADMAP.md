@@ -1,15 +1,5 @@
 # Roadmap
 
-**Direction (2026-11-15).** *Resilience* is the cyberdeck project: a
-standalone, offline-first laptop that we are building. *Resilience OS* is
-the system that runs on it, and this roadmap is the roadmap of that system.
-It is no longer a general-purpose operating system for any x86-64 machine.
-The phases below were planned before this change. They still stand, read
-with the cyberdeck as the target; the items the change puts in question are
-marked **[direction]**. V1 (owner, 2026-11-15/16): a recycled ThinkPad
-E540 (i3-4000M, 4-8 GB RAM, 16 GB SSD) in a 3D-printed case, x86_64 only,
-LoRa 868 MHz and SDR in V2: see "Cyberdeck hardware" at the end.
-
 Legend: ✅ done and tested · 🟡 partial · ⬜ not started. "Tested" means a
 test in docs/TESTING.md actually ran and passed (VM only so far).
 
@@ -96,23 +86,13 @@ Branch `feat/maps`.
 ## Phase 7 — Radio and additional applications 🟡
 - ✅ First offline games (nudoku, solitaire, ninvaders, moon-buggy, NetHack)
 - ⬜ Receive-only SDR tools with hardware detection and legal notices
-- ⬜ Power profiles (Maximum Efficiency / Balanced / Performance) and measurements on the cyberdeck
+- ⬜ Power profiles (Maximum Efficiency / Balanced / Performance) and measurements on hardware
 
 ## Phase 8 — Updates and installation ⬜
-**[direction]** This phase was planned for installing on any PC. For the
-cyberdeck the question becomes how its system image is produced, written
-and updated; decide that with the owner before building a generic
-installer.
-
 Text installer, offline update bundles (`nix copy` + minisign manifest),
 signed pack verification, rollback tests, installation docs.
 
 ### Planned for the final product: `build_resilience.sh` (requested 2026-11-14)
-**[direction]** Requested before the change of direction, as a way for
-anyone to build a custom ISO for their own machine. Confirm with the owner
-whether it is still wanted, and in what form, now that the target is the
-cyberdeck.
-
 A self-contained script that builds a custom ISO from answers to plain
 questions, for people who do not write Nix. Sketch:
 
@@ -144,48 +124,17 @@ questions, for people who do not write Nix. Sketch:
 
 ## Phase 9 — Audit and release ⬜
 Independent architecture and security reviews, `cargo deny`, license audit,
-SBOM, tests on the cyberdeck itself, release notes.
+SBOM, physical hardware tests, release notes.
 
-## Cyberdeck hardware 🟡
-V1 decisions (owner, 2026-11-15 and 2026-11-16): a recycled **Lenovo
-ThinkPad E540** rebuilt into a 3D-printed case; no ARM port; LoRa 868 MHz
-and SDR in V2.
-
-| Item | Value | Status |
-|---|---|---|
-| CPU | Intel Core i3-4000M (Haswell, 2 cores / 4 threads, x86_64) | owner |
-| RAM | 4 to 8 GB | owner; exact amount to confirm |
-| Storage | 16 GB SSD, upgradeable | owner; type and slot to confirm |
-| Keyboard | French AZERTY (`resilience.keyboard.layout = "fr"`, the default) | owner |
-| Screen resolution, console size | ? | **to confirm with `hw-report.sh`** |
-| Wi-Fi / Bluetooth card, firmware | ? | **to confirm with `hw-report.sh`** |
-| Boot firmware (UEFI/CSM, Secure Boot) | ? | **to confirm with `hw-report.sh`** |
-| Battery, ports, pointing device | ? | to confirm |
-
-Next: run `scripts/hw-report.sh` on the E540 and follow
-`docs/HARDWARE-BOOT-CHECKLIST.md`; then a hardware configuration for it in
-`nix/systems/` (only the firmware it needs instead of all of
-`linux-firmware`) and tests on the device.
-
-### Disk space on the 16 GB SSD (estimate, 2026-11-16)
+## Disk space (estimate, 2026-11-16)
 Measured: the system closure (live-standard) is **2.3 GiB**, of which
-`linux-firmware` 825 MiB (the E540 needs a few MiB of it), a nixpkgs
-source copy 197 MiB, Python 128 MiB. 16 GB is **14.9 GiB** usable before
-the file system takes its share.
-
-| Item | Size |
-|---|---|
-| System, one generation (trimmed firmware) | ~1.5 GiB (2.3 untrimmed) |
-| A second generation during and after an update (worst case: everything changes) | +1.5 GiB (+2.3) |
-| /var, logs, home, notes, file system overhead and reserve | ~1.5 GiB |
-| Free space to keep the system healthy (10 %) | ~1.5 GiB |
-| **Left for content** | **~9 GiB (~7.5 untrimmed)** |
-| France map pack, z0-z14 + search (ADR 0016 *estimate*) | ~4.3 GB |
-| Wikipedia FR "top" / Wiktionary FR / Wikipedia FR complete | 1.4 / 4.6 / 12.0 GiB |
-
-So 16 GB holds the system, a France map and a few small packs, not the
-French Wikipedia. A larger SSD (≥ 64 GB; 128 GB SATA SSDs are cheap) is
-recommended; packs can also be read from a USB stick.
+`linux-firmware` 825 MiB, a nixpkgs source copy 197 MiB, Python 128 MiB.
+An installed system needs room for a second generation during updates
+(up to +2.3 GiB when everything changes), plus /var, logs, home and a
+free-space margin: plan **about 8 GiB before content**. Content sizes: a
+France map pack z0-z14 with search ~4.3 GB (ADR 0016 *estimate*);
+Wikipedia FR "top" / Wiktionary FR / Wikipedia FR complete 1.4 / 4.6 /
+12.0 GiB. Packs can also be read from a USB stick.
 
 ## Known limitations carried forward
 See CLAUDE.md §15.
