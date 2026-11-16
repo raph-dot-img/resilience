@@ -41,6 +41,9 @@ test in docs/TESTING.md actually ran and passed (VM only so far).
   boot only, undo on failure, audit (ADR 0011)
 - ✅ Removable media for every account (udisks2, removable drives only) and
   encrypted backup/check/restore of the home folder (age, ADR 0008)
+- ✅ Keyboard layout: US default, each account chooses its layout in
+  Settings (helper `set-keymap`, no password at the console, reset before
+  every login prompt; ADR 0017)
 - ✅ User namespaces reviewed: refused to everyone on Ultra-Stable-only
   machines (live system), kept for the Nix sandbox elsewhere (ADR 0012)
 

@@ -224,8 +224,19 @@ ZIM file is built with `zimwriterfs` during the build.
 | Legacy BIOS (SeaBIOS, syslinux) — boots to TUI, offline, menus render, system OPERATIONAL | PASS (end-of-Phase-4 build, 2026-11-16) |
 | UEFI (OVMF 202602 from pinned nixpkgs, GRUB 2.12 text mode) — boots to TUI, same screens | PASS (end-of-Phase-4 build, 2026-11-16) |
 | Low memory: BIOS at 2048, 1024, 768 and 512 MiB; UEFI at 2048 and 1024 MiB — TUI, network diagnostics and system status shown, no failed service, no OOM message on the serial console | PASS (2026-11-16) |
-| Console keymap French AZERTY (default `resilience.keyboard.layout`): search typed with AZERTY key positions (`--keymap fr`) opens network diagnostics (BIOS, 2 GiB) | PASS (2026-11-16, `feat/maps` build) |
+| Console keymap French AZERTY on an ISO built with `resilience.keyboard.layout = "fr"`: search typed with AZERTY key positions (`--keymap fr`) opens network diagnostics (BIOS, 2 GiB) | PASS (2026-11-16, `feat/maps` build; the default is now `us`) |
 | Build refuses an unknown keymap (`resilience.keyboard.layout = "azerty-nope"`) | PASS (manual, once) |
+
+### Keyboard layout (ADR 0017), in vm-boot-offline
+
+| Check | Result |
+|---|---|
+| polkit: `set-keymap` implicit active yes, any no; `set-mode` still auth_admin | PASS (2026-11-16) |
+| Helper refuses an unlisted layout (`../../tmp/evil`) and audits `result=refused` | PASS (2026-11-16) |
+| Ultra-Stable user chooses French in Settings (no password): kernel keymap becomes AZERTY (keycode 16 = a), audit `caller=alice result=ok`, `keyboard = "fr"` saved | PASS (2026-11-16) |
+| A login prompt starting (getty@tty2 restart) loads US again | PASS (2026-11-16) |
+| Next session of the same account loads French again | PASS (2026-11-16) |
+| Physical keyboard, several people on several consoles at once | NOT TESTED |
 | Heavy use at low memory (Kiwix reader, backups, map viewer at ≤1 GiB) | NOT TESTED |
 | Physical hardware: Lenovo ThinkPad L15 Gen 1, ISO built from `develop` (end of Phase 4) — boots without problem | PASS (owner, 2026-11-16; firmware mode, ISO hash and checklist items not recorded) |
 | Physical hardware: other machines | NOT TESTED |

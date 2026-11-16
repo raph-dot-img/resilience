@@ -13,6 +13,8 @@ are numbered the same.
 distribution for **x86_64 PCs**, built on **NixOS**. It must stay useful — information,
 productivity, local communication, security tools — with no Internet at all.
 Primary interface: a Rust TUI (`resilience`). No X11, Wayland, desktop or WM.
+Editions: **standard** is the main one (the live ISO we build and test);
+**minimal** is kept as a secondary edition.
 
 Guiding rule: *Resilience must not depend on the availability of the
 infrastructure it is designed to survive without.*
@@ -29,7 +31,8 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            generates /etc/resilience/{system,apps}.toml
    │                            (build fails if an app command is not executable)
    │            admin.nix       privileged helper: /etc/resilience/admin.toml, polkit actions
-   │                            org.resilience.admin.{set-mode,set-time,set-default-generation} (auth_admin),
+   │                            org.resilience.admin.{set-mode,set-time,set-default-generation} (auth_admin)
+   │                            and org.resilience.admin.set-keymap (allow_active=yes, ADR 0017),
    │                            tmpfiles for state/audit, activation `apply-state`
    │            media.nix       udisks2 (removable media; its polkit defaults, no overrides)
    │            crypto.nix      gpg-agent (pinentry-curses, cache TTL 0); age/minisign on PATH
@@ -39,8 +42,10 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            org.resilience.packs.change (auth_admin), lynx restrictions
    │            users.nix       resilience.users.<n>.mode -> groups, login shell,
    │                            nix allowed-users
-   │            interface.nix   resilience.keyboard.layout (console keymap, default "fr",
-   │                            checked at build), getty branding, console font ter-i16n, tty1-only
+   │            interface.nix   resilience.keyboard.{layout (system keymap, default "us"), layouts
+   │                            (offered in Settings)}, all checked against kbd at build; getty@
+   │                            ExecStartPre loads the system layout before every login prompt;
+   │                            getty branding, console font ter-i16n, tty1-only
    │                            autologin via getty@tty1 drop-in (NOT services.getty.autologinUser)
    │            security.nix    sudo (wheel+password), pam_faillock, sysctls, no ssh,
    │                            user namespaces off on Ultra-Stable-only machines (ADR 0012)
@@ -49,9 +54,10 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
    ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
    ├─ packages: resilience, resilience-session, resilience-handbook, iso, iso-minimal, vm
+   ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
               vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto,
-              security-invariants, eval-live-iso
+              security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible
 
 crates/resilience-core  library: status, network (passive + on-demand probe),
                         mode detection, catalog, config, handbook, notes, launch, proc,
@@ -63,10 +69,12 @@ crates/resilience-core  library: status, network (passive + on-demand probe),
                         (gpg status/colons parsers), backup (tar|zstd|age
                         pipeline, checksum, restore into ~/Restored), wifi (nmcli parsing,
                         private profiles, password via stdin), packs (catalog, inventory,
-                        stdin chunk framing, receive+hash, remove, reader URLs)
+                        stdin chunk framing, receive+hash, remove, reader URLs), keyboard
+                        (layout list, names, loadkeys argv), maps/ (geo, mvt decoder, canvas,
+                        style, labels: pure, ADR 0016)
 crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR 0007):
                         list | set-mode USER MODE | set-time UTC |
-                        set-default-generation N | apply-state
+                        set-default-generation N | set-keymap LAYOUT | apply-state
 crates/resilience-backup binary `resilience-backup` (UNPRIVILEGED, ADR 0008):
                         create MOUNT | check FILE | restore FILE
 crates/resilience-library binaries (ADR 0013): `resilience-library` (as the user: list |
@@ -78,6 +86,11 @@ crates/resilience-crypto binary `resilience-crypto` (UNPRIVILEGED, ADR 0015, for
                         verify | checksum | compare SUM FILE | check-list | inspect | new-keys |
                         add-contact [FILE] | export-keys DIR | new-openpgp-key;
                         src/pgp.rs = GnuPG paths (status-fd parsers in core openpgp.rs)
+crates/resilience-maps  binaries (ADR 0016, UNPRIVILEGED): `resilience-maps` (view [--pack F]..
+                        [--at LAT,LON] [--scale M] | info [--check] F: hardened MBTiles reader,
+                        reader thread, tile cache, 1 GiB address-space limit) and
+                        `resilience-mapmaker` (classify | finish; build machines only, not
+                        installed in the system); not yet in the TUI or the system image
 crates/resilience-tui   binary `resilience`: app.rs (state machine, returns Effects),
                         ui.rs (rendering), theme.rs, help.rs, tests.rs
 nix/packages/resilience-session  login shell: runs TUI, restarts after crash, refuses -c
@@ -140,6 +153,15 @@ after `--`, names start alphanumeric; gpg output into memory is bounded
 current `.partial` (one at a time, `PARTIAL` atomic) and stale partials of
 dead PIDs are removed at start; checksum tools run with LC_ALL=C.
 
+Keyboard flow (ADR 0017): boot and every login prompt load the system
+layout (console.keyMap; getty@ ExecStartPre). TUI Settings → "Keyboard
+<layout>" → `pkexec <helper> set-keymap ID` (SHELL = session shell; polkit
+allows the active local session without a password) → helper: ID in
+admin.toml `keymaps` → `loadkeys -q -- ID` → audit → TUI saves `keyboard =
+"ID"` in the user's settings. Session start: the TUI loads the saved
+layout again the same way (unless it is the system layout). The console
+has ONE keymap for all ttys: unprivileged loadkeys fails (CAP_SYS_TTY_CONFIG).
+
 Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
 with `connection.permissions user:U`, no secret → thread: `nmcli connection
 up uuid X passwd-file /dev/stdin` (secret on a pipe) → failure deletes a
@@ -157,6 +179,8 @@ new profile. Never `nmcli --ask` (wrong password = inescapable prompt loop).
 | `nix/profiles/` | Editions: `minimal.nix`, `standard.nix` (extended: not yet) |
 | `nix/systems/` | Concrete systems: `common.nix`, `live-iso.nix`, `dev-vm.nix` |
 | `nix/overlays/` | Overlay exposing our packages (used by the flake's `pkgs`) |
+| `nix/maps/` | Map pack derivations (osmium, tippecanoe, mapmaker), checks, test OSM data |
+| `nix/packs/` | Resource pack catalog (Kiwix) |
 | `handbook/` | Offline handbook pages (`NN-name.md`, sorted by prefix) |
 | `tests/vm/` | NixOS VM integration tests |
 | `scripts/` | Developer helper scripts (no root, ever) |
@@ -226,12 +250,19 @@ it concurrently with VM tests.
   `drive_add`/`device_add usb-storage` (new ids per plug), see vm-backup.
 - The age round-trip unit test needs age in PATH (Nix build has it; on the
   host prepend the store path of `nixpkgs#age`, otherwise it prints SKIPPED).
-- ISO: `python3 -I tests/iso/smoke.py ISO OUTDIR [--uefi OVMF.fd] [--keymap fr|us]`
-  takes screenshots; look at them (the Read tool displays PNGs).
-- Keyboard: the system default is AZERTY (`resilience.keyboard.layout =
-  "fr"`), but the NixOS test driver types US key codes, so `flake.nix`
-  sets `defaults.resilience.keyboard.layout = "us"` for every VM test node.
-  smoke.py translates typed text for the ISO's layout (`--keymap`, default fr).
+- ISO: `python3 -I tests/iso/smoke.py ISO OUTDIR [--uefi OVMF.fd] [--keymap us|fr]`
+  takes screenshots; look at them (the Read tool displays PNGs). `--keymap`
+  is the ISO's layout (default us): QEMU sends physical keys.
+- Keyboard: the NixOS test driver types US key codes, which matches the
+  system default (`us`). A test that switches the layout must check the
+  kernel keymap with `dumpkeys -k` (keycode 16 = q on US, a on AZERTY) and
+  type nothing afterwards in that layout. See vm-boot-offline.
+- The NixOS test driver type-checks the test script (`Optional` results
+  must be checked before use; `machine.sleep` takes an int).
+- Map viewer on a real pack: `nix build .#mapPacks.luxembourg`, then a VM
+  with `boot.kernelParams = [ "video=1366x768" ]` and `-vga std` gives a
+  170x48 console. QEMU's screendump of a 1366-wide framebuffer is skewed
+  (1360-pixel PNG): re-stride the pixels to 1366 to look at it.
 - Rust: `cargo test` (unit + TUI behaviour via ratatui TestBackend) and
   `cargo clippy --all-targets` must be clean. `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` prints screens.
 - Nix/VM: `nix flake check` runs everything including VM tests.
@@ -269,7 +300,8 @@ Commit trailers: `Co-Authored-By: Claude …` as instructed by the session.
 - The TUI never builds shell commands; programs run from fixed argv.
 - No privileged command runner. Privileged actions go only through
   `resilience-admin`: one sub-command + one polkit action (auth_admin, never
-  _keep) per operation, every argument validated in the helper, absolute tool
+  _keep; the single exception is `set-keymap`, allow_active=yes for listed
+  layouts only, ADR 0017) per operation, every argument validated in the helper, absolute tool
   paths from root-owned admin.toml, environment ignored, every outcome
   audited (/var/log/resilience/audit.log + journal). Add new operations the
   same way (pure rule in resilience-core/admin.rs + unit tests + vm-admin).
@@ -318,41 +350,38 @@ needlessly. Watch `free -h` during VM tests.
 4. The build-time catalog check ensures the binary exists. Add a VM test
    assertion if the app is important.
 
-## 14. Current implementation status (2026-11-15)
+## 14. Current implementation status (2026-11-16)
 
-Phase 5 (offline maps, ADR 0016) is in progress on branch `feat/maps`
-(pushed): slices 1 to 5 of ADR 0016 §9 are done and reviewed (packs accept
-`.mbtiles`, geographic maths, MVT decoder, canvas/style/labels, hardened
-pack reader in the new crate `resilience-maps`); slice 6 (viewer) was
-reviewed in its risky parts and run on the real Luxembourg pack in QEMU
-at 170×48 on 2026-11-16 (label fixes followed); slice 7 (pack builder
-`resilience-mapmaker`, `nix/maps/`, `nix build .#mapPacks.luxembourg`) is
-merged into `feat/maps` and builds the Luxembourg pack, but its code was
-not reviewed line by line. Slices 8 to 13 are not started. The rest of this section and §2 describe
-the state at the end of Phase 4 and do not list the maps code yet.
+Phases 0 to 4 are done (see ROADMAP.md). Phase 5 (offline maps, ADR 0016)
+is in progress on branch `feat/maps`, proposed to `develop` as PR #1:
+slices 1 to 5 done and reviewed (packs accept `.mbtiles`, geographic
+maths, MVT decoder, canvas/style/labels, hardened pack reader); slice 6
+(viewer `resilience-maps view`) reviewed in its risky parts and run on the
+real Luxembourg pack in QEMU at 170x48 (label fixes followed); slice 7
+(pack builder `resilience-mapmaker`, `nix/maps/`) merged, builds the
+Luxembourg pack, code not reviewed line by line. Slices 8 to 13 (world
+overview, TUI "Maps & navigation", search, nearby/go-to, spot heights,
+`vm-maps`, catalog) are not started: maps are not in the TUI or the image.
 
+Also on `feat/maps` (2026-11-16): keyboard layouts (ADR 0017: US default,
+choice in Settings through `set-keymap`); `scripts/hw-report.sh` and
+`docs/HARDWARE-BOOT-CHECKLIST.md` for trying real PCs; the original
+specification as `docs/ORIGINAL-SPEC.md`.
 
-Phase 0 (foundation), Phase 1 (core), Phase 2, Phase 3 and Phase 4 done
-(Phase 3: resource packs, sets, built-in docs, packs on sticks, ADR 0013;
-Find & view files and manual pages, ADR 0014. Phase 4: guided cryptography
-with age, minisign, checksums, random data and GnuPG interop, ADR 0015).
-A future `build_resilience.sh` (interactive custom ISO) is described in ROADMAP. Phase 2:
-privileged helper with set-mode, TUI Users & security modes, TUI Recovery &
-diagnostics, faillock (ADR 0007); removable media + encrypted backups (ADR
-0008); Date & time via `set-time` (ADR 0009); Wi-Fi for every account and
-the NetworkManager polkit allowlist (ADR 0010); making an earlier generation
-the default via `set-default-generation` (ADR 0011); user namespaces off on
-Ultra-Stable-only machines (ADR 0012). See ROADMAP.md.
-Done: flake, modules, editions (minimal/standard), live ISO config, dev VM,
-TUI (main menu, status panel, categories, search, help, settings/themes,
-notes, handbook, network diagnostics, system status, notifications, power and
-logout with confirmation), session wrapper with crash recovery, group-based
-modes with Nix-daemon and sudo restrictions, VM tests.
+Earlier phases: Phase 2 privileged helper and modes (ADR 0007), removable
+media and backups (0008), clock (0009), Wi-Fi (0010), default generation
+(0011), user namespaces (0012); Phase 3 resource packs and library (0013),
+files and manual pages (0014); Phase 4 guided cryptography (0015).
 See docs/TESTING.md for what has actually been executed and passed.
-Git state (2026-11-15): `main` = `develop` = end of Phase 4, both pushed to
-origin; last full `nix flake check -L --max-jobs 1` passed (9 VM tests,
-26 invariants × 3 configurations). Rust: 121 core, 3 library, 1 store,
-60 TUI tests; clippy clean. The ISO was not rebuilt since Phase 2.
+
+Git state (2026-11-16): `main` = end of Phase 4; `develop` = end of Phase 4
+(the agent handoff file was removed); `feat/maps` = all of the above, PR #1
+to `develop`. Last full `nix flake check -L --max-jobs 1 --keep-going` on
+`feat/maps` (before the keyboard work) passed: 9 VM tests, security
+invariants, ISO evaluation, both map pack checks. Rust: 191 core, 63 TUI,
+128 maps, 5 library/store tests; clippy clean. The live ISO was rebuilt
+and boot-tested in QEMU (BIOS and UEFI, 512 MiB to 2 GiB) on 2026-11-16 and
+booted once on a ThinkPad L15 Gen 1.
 
 ## 15. Known bugs and limitations
 
@@ -373,11 +402,17 @@ origin; last full `nix flake check -L --max-jobs 1` passed (9 VM tests,
   recovery (TUI Recovery, other ttys + Advanced/sudo, generations, live ISO).
 - Resource packs: installing needs an administrator (none on the live ISO;
   packs can be read from a stick there); Kiwix deletes old files,
-  so ageing catalog entries become USB-only. No maps, comms or SDR yet.
+  so ageing catalog entries become USB-only. No comms or SDR yet.
 - Cryptography: no LUKS sticks, no OpenPGP signing in the TUI (minisign
   signs), no secure deletion of originals (the user is told); contacts'
   keys are only as trustworthy as the user's own check.
 - Power profiles not implemented (schedutil governor only). Not measured yet.
+- Keyboard: all consoles share one keymap (kernel); a login prompt starting
+  on any console resets it to the system layout, and the TUI reloads its
+  user's layout only at session start (ADR 0017).
+- Maps: viewer and builder exist but are not in the TUI or the image; no
+  world overview yet; too many point-of-interest names at city scales
+  (style question open); osmium tags-filter needs ~2 GB RAM to build a pack.
 - Physical hardware: the live ISO has booted once on a ThinkPad L15 Gen 1
   (owner, 2026-11-16); nothing else has been tested outside QEMU.
 
@@ -402,6 +437,8 @@ See ROADMAP.md. Current: Phase 5 (offline maps), see §14.
 - 0013 Resource packs: hash-pinned catalog, unprivileged store via pkexec --user, kiwix-serve + restricted lynx
 - 0014 Find & view files inside the TUI (read-only viewers); man in less secure mode
 - 0015 Guided cryptography: resilience-crypto (age, minisign, coreutils, xkcdpass, openssl, GnuPG), secrets only typed into the tools
+- 0016 Offline maps: MBTiles vector packs (profile resilience-1) built reproducibly in Nix, hardened reader, block-character viewer
+- 0017 Keyboard layout: US default, choice in Settings via helper `set-keymap` (allow_active=yes, listed layouts only), reset before every login prompt
 
 ## 18. How to continue safely
 
