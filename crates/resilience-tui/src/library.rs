@@ -251,6 +251,10 @@ impl LibItem {
     }
 }
 
+/// The map viewer opens at most this many files (`resilience-maps view`).
+pub const MAX_MAPS: usize = 8;
+const MAP_LABEL: &str = "Map";
+
 /// Whether a pack file is of this kind (by its name).
 fn is_kind(path: &Path, kind: PackKind) -> bool {
     path.file_name()
@@ -450,6 +454,19 @@ impl App {
         let items = self.all_library_items(&cfg, PackKind::Zim);
         let sel = (!items.is_empty()).then_some(0);
         Some(View::Library {
+            kind: PackKind::Zim,
+            items,
+            list: ListState::default().with_selected(sel),
+        })
+    }
+
+    /// Maps & navigation: the maps of this computer and of open sticks.
+    pub(super) fn open_map_files(&mut self) -> Option<View> {
+        let cfg = self.packs_config_or_explain()?;
+        let items = self.all_library_items(&cfg, PackKind::Map);
+        let sel = (!items.is_empty()).then_some(0);
+        Some(View::Library {
+            kind: PackKind::Map,
             items,
             list: ListState::default().with_selected(sel),
         })
@@ -476,12 +493,18 @@ impl App {
     /// Refresh every library and packs screen after a change.
     pub(super) fn reload_packs(&mut self) {
         let cfg = PackConfig::load(&self.paths.packs_config).ok();
-        let fresh = cfg
-            .as_ref()
-            .map(|c| self.all_library_items(c, PackKind::Zim));
+        let fresh = cfg.as_ref().map(|c| {
+            (
+                self.all_library_items(c, PackKind::Zim),
+                self.all_library_items(c, PackKind::Map),
+            )
+        });
         for v in &mut self.stack {
-            if let (View::Library { items, list }, Some(f)) = (&mut *v, &fresh) {
-                *items = f.clone();
+            if let (View::Library { kind, items, list }, Some((zim, maps))) = (&mut *v, &fresh) {
+                *items = match kind {
+                    PackKind::Zim => zim.clone(),
+                    PackKind::Map => maps.clone(),
+                };
                 super::clamp_selection(list, items.len());
             }
             match v {
@@ -576,6 +599,58 @@ impl App {
                 human_bytes(bytes)
             ),
         );
+    }
+
+    /// Open the map viewer (`resilience-maps view`, in the foreground, as the
+    /// user). Without `item`: on the built-in and installed maps. With one:
+    /// on that map (and the built-in overview beneath it), then the other
+    /// installed maps; the built-in overview alone when it is the item.
+    /// At most [`MAX_MAPS`] files, as the viewer accepts.
+    pub(super) fn open_map_effect(&mut self, item: Option<&LibItem>) -> Effect {
+        let Some(cfg) = self.packs_config_or_explain() else {
+            return Effect::None;
+        };
+        let known = library_items(&cfg, PackKind::Map);
+        let builtin = known.iter().filter(|i| i.place == ItemPlace::Builtin);
+        let installed = known.iter().filter(|i| i.place == ItemPlace::Installed);
+        let mut files: Vec<PathBuf> = builtin.map(|i| i.path.clone()).collect();
+        match item {
+            Some(i) if i.place == ItemPlace::Builtin => {}
+            Some(i) => {
+                files.push(i.path.clone());
+                files.extend(installed.map(|i| i.path.clone()));
+            }
+            None => files.extend(installed.map(|i| i.path.clone())),
+        }
+        let mut seen = BTreeSet::new();
+        files.retain(|f| seen.insert(f.clone()));
+        files.truncate(MAX_MAPS);
+        if files.is_empty() {
+            self.modal = Some(Modal::Message {
+                title: "NO MAP".into(),
+                body: "This computer has no map yet. Map packs are listed in Resource \
+                       packs (Knowledge section): tick one and download it, or copy it \
+                       from a USB stick."
+                    .into(),
+                error: false,
+            });
+            return Effect::None;
+        }
+        let mut argv = vec![self.sys.tools.maps.clone(), "view".to_string()];
+        for f in &files {
+            argv.extend(["--pack".to_string(), f.to_string_lossy().into_owned()]);
+        }
+        tracing::info!(maps = files.len(), "opening the map");
+        Effect::Run(RunRequest {
+            label: MAP_LABEL.into(),
+            argv,
+            extra_args: Vec::new(),
+            env: Vec::new(),
+            polkit_agent: None,
+            clean_env: false,
+            pause_after: false,
+            banner: None,
+        })
     }
 
     /// Open a pack in the text browser (through `resilience-library open`).

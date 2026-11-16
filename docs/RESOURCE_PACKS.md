@@ -1,8 +1,11 @@
 # Resource packs
 
 Status: **implemented for Kiwix ZIM files** (Phase 3, ADR 0013). The pack
-machinery also accepts **map packs** (`.mbtiles`, ADR 0016), but the map
-viewer and the map packs themselves do not exist yet. This page describes
+machinery also accepts **map packs** (`.mbtiles`, ADR 0016). A world
+overview map is built in (`resilience.packs.builtinWorldMap`, a `[[builtin]]`
+entry of the `maps` category, Natural Earth, 11.7 MB) and opens from Maps &
+navigation, with any installed map pack; no regional map pack is in the
+catalog yet. This page describes
 what exists; the decision records have the reasoning and the alternatives.
 
 ## What a pack is
@@ -89,5 +92,5 @@ documented in `crates/resilience-core/src/packs.rs`.
 
 ## Not yet
 
-- Map viewer and map packs (Phase 5, ADR 0016), documentation packs of our own, signed packs that can be
+- Regional map packs in the catalog, map search (Phase 5, ADR 0016), documentation packs of our own, signed packs that can be
   updated without a system update (Phase 8).

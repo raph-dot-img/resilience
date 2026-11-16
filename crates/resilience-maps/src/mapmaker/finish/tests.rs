@@ -163,6 +163,10 @@ impl Inputs3 {
     }
 
     fn run(&self, out: &str) -> Result<Stats, Error> {
+        self.run_as(out, &describe())
+    }
+
+    fn run_as(&self, out: &str, d: &Describe) -> Result<Stats, Error> {
         let (t, r, p) = (
             self.dir.file("tiles.mbtiles"),
             self.dir.file("rows.jsonl"),
@@ -174,7 +178,7 @@ impl Inputs3 {
                 rows: &r,
                 poly: &p,
             },
-            &describe(),
+            d,
             &self.dir.file(out),
         )
     }
@@ -190,6 +194,7 @@ fn describe() -> Describe {
         license: "ODbL-1.0".into(),
         attribution: "(c) OpenStreetMap contributors".into(),
         builder: "resilience-mapmaker test".into(),
+        center: None,
     }
 }
 
@@ -504,6 +509,29 @@ fn two_runs_give_identical_bytes() {
     assert_eq!(one, read(&a, "two.mbtiles"));
     assert_eq!(one, read(&b, "three.mbtiles"));
     assert_eq!(one.len() % PAGE_SIZE as usize, 0);
+}
+
+#[test]
+fn a_given_centre_replaces_the_settlement() {
+    let inputs = Inputs3::new("finish-centre", &sample_rows(), false);
+    let mut d = describe();
+    d.center = Some((0, 20, 0));
+    inputs.run_as("pack.mbtiles", &d).expect("finish");
+    let c = open(&inputs.dir.file("pack.mbtiles"));
+    let v: String = c
+        .query_row(
+            "SELECT value FROM metadata WHERE name = 'center'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("center");
+    assert_eq!(v, "0.000000,20.000000,0");
+    for bad in [(181, 0, 0), (0, 86, 0), (0, 0, 15)] {
+        d.center = Some(bad);
+        let e = inputs.run_as("bad.mbtiles", &d).expect_err("refused");
+        assert!(e.0.contains("centre"), "{e}");
+        let _ = std::fs::remove_file(inputs.dir.file("bad.mbtiles"));
+    }
 }
 
 #[test]

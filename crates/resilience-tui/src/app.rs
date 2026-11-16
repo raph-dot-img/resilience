@@ -25,6 +25,7 @@ use resilience_core::media::{self, Ejected, Volume};
 use resilience_core::mode::{Detected, Mode};
 use resilience_core::network::{self, NetworkState, ProbeConfig, ProbeReport};
 use resilience_core::notes;
+use resilience_core::packs::PackKind;
 use resilience_core::proc::{run_full, run_full_env};
 use resilience_core::recovery;
 use resilience_core::status::{self, Snapshot, SystemState};
@@ -156,6 +157,8 @@ pub enum Builtin {
     Manual,
     Library,
     Packs,
+    Map,
+    MapFiles,
     Notes,
     Network,
     Wifi,
@@ -183,12 +186,14 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 29] = [
+    pub const ALL: [Builtin; 31] = [
         Builtin::Handbook,
         Builtin::Files,
         Builtin::Manual,
         Builtin::Library,
         Builtin::Packs,
+        Builtin::Map,
+        Builtin::MapFiles,
         Builtin::Notes,
         Builtin::Network,
         Builtin::Wifi,
@@ -222,6 +227,8 @@ impl Builtin {
             Builtin::Files => "Find & view files",
             Builtin::Library => "Offline library",
             Builtin::Packs => "Resource packs: choose what to get",
+            Builtin::Map => "Map",
+            Builtin::MapFiles => "Maps on this computer & USB sticks",
             Builtin::Notes => "Notes",
             Builtin::Network => "Network status & diagnostics",
             Builtin::Wifi => "Wi-Fi networks",
@@ -272,6 +279,16 @@ impl Builtin {
                 "See every resource pack available, its size and language, and tick the \
                  ones you want: download them when online, or copy them from a USB stick. \
                  Installing or removing needs an administrator's password."
+            }
+            Builtin::Map => {
+                "The offline map: the whole world at overview detail, and streets, \
+                 places and points of interest wherever a map pack is installed. Arrows \
+                 move, + and - zoom, ? shows every key, q comes back here."
+            }
+            Builtin::MapFiles => {
+                "See which maps this computer has (built in, installed, or on an open USB \
+                 stick), what each one covers and how old its data is, and open the map \
+                 on one of them. Map packs are added in Resource packs."
             }
             Builtin::Notes => {
                 "Write and keep personal text notes. Notes are private files in your Notes folder."
@@ -355,6 +372,7 @@ impl Builtin {
             Builtin::Handbook | Builtin::Manual | Builtin::Library | Builtin::Packs => {
                 Category::Knowledge
             }
+            Builtin::Map | Builtin::MapFiles => Category::Maps,
             Builtin::Notes | Builtin::Files => Category::Productivity,
             Builtin::Network | Builtin::Wifi => Category::Networking,
             Builtin::Encrypt
@@ -368,6 +386,14 @@ impl Builtin {
             | Builtin::Keys => Category::Security,
             _ => Category::System,
         }
+    }
+
+    /// Entries that exist only on a system with resource packs.
+    pub fn needs_packs(self) -> bool {
+        matches!(
+            self,
+            Builtin::Library | Builtin::Packs | Builtin::Map | Builtin::MapFiles
+        )
     }
 
     pub fn min_mode(self) -> Mode {
@@ -393,6 +419,11 @@ impl Builtin {
                 "packs resource download install usb kiwix zim wikipedia encyclopedia \
                  dictionary content get add remove"
             }
+            Builtin::Map => {
+                "map maps world atlas country city town street road place where navigation \
+                 geography openstreetmap osm"
+            }
+            Builtin::MapFiles => "map maps pack packs mbtiles usb stick coverage region",
             Builtin::Notes => "write text memo journal",
             Builtin::Network => "wifi ethernet internet offline online dns",
             Builtin::Wifi => {
@@ -469,6 +500,7 @@ pub enum HelpTopic {
     Recovery,
     Backup,
     Library,
+    Maps,
     Files,
     Crypto,
 }
@@ -566,8 +598,10 @@ pub enum View {
     PackSets {
         list: ListState,
     },
-    /// Installed resource packs; Enter reads one.
+    /// Installed resource packs of one kind; Enter reads one (ZIM) or
+    /// opens the map on it (map packs).
     Library {
+        kind: PackKind,
         items: Vec<LibItem>,
         list: ListState,
     },
@@ -940,7 +974,7 @@ impl App {
         Builtin::ALL
             .iter()
             .filter(|b| b.category() == cat && mode.allows(b.min_mode()))
-            .filter(|b| packs || !matches!(b, Builtin::Library | Builtin::Packs))
+            .filter(|b| packs || !b.needs_packs())
             .map(|b| Entry::Builtin(*b))
             .chain(
                 self.catalog
@@ -993,7 +1027,7 @@ impl App {
             Builtin::ALL
                 .iter()
                 .filter(|b| mode.allows(b.min_mode()))
-                .filter(|b| packs || !matches!(b, Builtin::Library | Builtin::Packs))
+                .filter(|b| packs || !b.needs_packs())
                 .filter(|b| {
                     [b.name(), b.description(), b.keywords()]
                         .iter()
@@ -1057,6 +1091,10 @@ impl App {
             View::Wifi { .. } => HelpTopic::Network,
             View::Files { pick: None, .. } | View::Table(_) => HelpTopic::Files,
             View::Files { .. } | View::Choices { .. } | View::Keys { .. } => HelpTopic::Crypto,
+            View::Library {
+                kind: PackKind::Map,
+                ..
+            } => HelpTopic::Maps,
             View::Library { .. } | View::Packs { .. } | View::PackSets { .. } => HelpTopic::Library,
             View::Search { .. } => HelpTopic::Search,
         }
@@ -1438,10 +1476,11 @@ impl App {
                     _ => nav(list, files.len() + 1, key),
                 }
             }
-            View::Library { items, list } => {
+            View::Library { kind, items, list } => {
+                let kind = *kind;
                 let selected = list.selected().and_then(|i| items.get(i)).cloned();
                 match key.code {
-                    KeyCode::Char('s') => {
+                    KeyCode::Char('s') if kind == PackKind::Zim => {
                         if let Some(item) = selected {
                             self.modal = Some(Modal::PackSearch {
                                 item,
@@ -1456,10 +1495,13 @@ impl App {
                             effect = self.check_pack_effect(&item);
                         }
                     }
-                    KeyCode::Char('r') => self.reload_packs_in(items, list),
+                    KeyCode::Char('r') => self.reload_packs_in(kind, items, list),
                     _ if is_activate(key) => {
                         if let Some(item) = selected {
-                            effect = self.open_pack_effect(&item, None);
+                            effect = match kind {
+                                PackKind::Zim => self.open_pack_effect(&item, None),
+                                PackKind::Map => self.open_map_effect(Some(&item)),
+                            };
                         }
                     }
                     _ if is_back(key) => return (None, Effect::None),
@@ -1836,6 +1878,8 @@ impl App {
             Builtin::Library => (self.open_library(), Effect::None),
             Builtin::Files => (Some(self.open_files()), Effect::None),
             Builtin::Packs => (self.open_packs(), Effect::None),
+            Builtin::Map => (None, self.open_map_effect(None)),
+            Builtin::MapFiles => (self.open_map_files(), Effect::None),
             Builtin::Backup => {
                 let (volumes, error) = self.load_volumes();
                 let sel = (!volumes.is_empty()).then_some(0);
@@ -3119,9 +3163,9 @@ impl App {
         }
     }
 
-    fn reload_packs_in(&mut self, items: &mut Vec<LibItem>, list: &mut ListState) {
+    fn reload_packs_in(&mut self, kind: PackKind, items: &mut Vec<LibItem>, list: &mut ListState) {
         if let Ok(c) = resilience_core::packs::PackConfig::load(&self.paths.packs_config) {
-            *items = self.all_library_items(&c, resilience_core::packs::PackKind::Zim);
+            *items = self.all_library_items(&c, kind);
             clamp_selection(list, items.len());
         }
     }

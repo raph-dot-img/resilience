@@ -32,7 +32,10 @@
 
       # Map packs (ADR 0016 §2), for build machines: not in any system.
       maps = pkgs.callPackage ./nix/maps { };
-      mapChecks = pkgs.callPackage ./nix/maps/checks.nix { inherit maps; };
+      mapChecks = pkgs.callPackage ./nix/maps/checks.nix {
+        inherit maps;
+        worldMap = pkgs.resilience-world-map;
+      };
     in
     {
       overlays.default = import ./nix/overlays/default.nix;
@@ -55,7 +58,12 @@
       };
 
       packages.${system} = {
-        inherit (pkgs) resilience resilience-session resilience-handbook;
+        inherit (pkgs)
+          resilience
+          resilience-session
+          resilience-handbook
+          resilience-world-map
+          ;
         default = pkgs.resilience;
         iso = self.nixosConfigurations.live-standard.config.system.build.isoImage;
         iso-minimal = self.nixosConfigurations.live-minimal.config.system.build.isoImage;
@@ -85,8 +93,10 @@
         vm-packs = vmTest ./tests/vm/packs.nix;
         vm-documents = vmTest ./tests/vm/documents.nix;
         vm-crypto = vmTest ./tests/vm/crypto.nix;
+        vm-maps = vmTest ./tests/vm/maps.nix;
         # The synthetic test pack: reproducible, and read back by the reader.
-        inherit (mapChecks) map-pack-reproducible map-pack-testland;
+        # The built-in world overview (Natural Earth), read back the same way.
+        inherit (mapChecks) map-pack-reproducible map-pack-testland map-world;
         security-invariants = pkgs.callPackage ./tests/eval/security-invariants.nix {
           configurations = {
             inherit (self.nixosConfigurations) live-standard live-minimal dev-vm;

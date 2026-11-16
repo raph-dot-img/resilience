@@ -397,8 +397,9 @@ fn home_renders_at_80x24() {
     assert!(screen.contains("ULTRA-STABLE"));
     assert!(screen.contains("[1] KNOWLEDGE & DOCUMENTATION"));
     assert!(screen.contains("F1 Help"));
-    // Empty categories (maps, radio...) are not offered.
-    assert!(!screen.contains("MAPS & NAVIGATION"));
+    // Maps come with the resource packs of the system.
+    assert!(screen.contains("[2] MAPS & NAVIGATION"), "{screen}");
+    // Empty categories (radio...) are not offered.
     assert!(!screen.contains("RADIO"));
 }
 
@@ -2235,6 +2236,10 @@ fn library_entries_are_hidden_without_a_catalog() {
     assert!(!e.contains(&Entry::Builtin(Builtin::Packs)));
     assert!(!e.contains(&Entry::Builtin(Builtin::Library)));
     assert!(a.search("resource packs").is_empty());
+    // No maps either: the section is empty, so it is not offered.
+    assert!(a.entries(Category::Maps).is_empty());
+    assert!(!a.home_categories().contains(&Category::Maps));
+    assert!(a.search("atlas").is_empty());
     a.paths.packs_config = a.home.join("missing.toml");
     let (v, e) = a.activate(Entry::Builtin(Builtin::Library));
     assert!(v.is_none() && e == Effect::None);
@@ -2337,6 +2342,194 @@ fn packs_on_a_stick_are_read_without_installing_and_can_be_checked() {
 
 /// The coverage text of the test map pack: long enough to wrap, and with a
 /// last word that shows whether it was shown in full.
+/// Add the built-in world overview to the test catalog of `write_packs`.
+fn add_world_map(a: &App) -> PathBuf {
+    let sys = a.home.join("sys");
+    let world = sys.join("map-world-natural-earth_2022-05.mbtiles");
+    std::fs::write(&world, b"SQLite format 3\0").expect("w");
+    let mut text = std::fs::read_to_string(sys.join("packs.toml")).expect("read");
+    text.push_str(&format!(
+        "[[builtin]]\ntitle = \"World overview map (built in)\"\n\
+         description = \"The whole world at overview detail. No streets.\"\n\
+         category = \"maps\"\nlanguage = \"en\"\npath = \"{}\"\n\
+         license = \"Public domain\"\nsource = \"Natural Earth\"\n",
+        world.display()
+    ));
+    std::fs::write(sys.join("packs.toml"), text).expect("write");
+    world
+}
+
+fn map_argv(files: &[&Path]) -> Vec<String> {
+    let mut argv = vec!["resilience-maps".to_string(), "view".into()];
+    for f in files {
+        argv.extend(["--pack".to_string(), f.display().to_string()]);
+    }
+    argv
+}
+
+#[test]
+fn map_opens_the_viewer_on_built_in_and_installed_maps() {
+    let mut a = app(Mode::UltraStable, "map-open");
+    assert_eq!(
+        a.entries(Category::Maps),
+        [
+            Entry::Builtin(Builtin::Map),
+            Entry::Builtin(Builtin::MapFiles)
+        ]
+    );
+    assert!(
+        a.search("atlas")
+            .contains(&SearchHit::Entry(Entry::Builtin(Builtin::Map)))
+    );
+    // No map at all: explained, nothing runs.
+    let (v, e) = a.activate(Entry::Builtin(Builtin::Map));
+    assert!(v.is_none() && e == Effect::None);
+    assert!(matches!(&a.modal, Some(Modal::Message { title, .. }) if title == "NO MAP"));
+    a.modal = None;
+
+    // Only the built-in overview.
+    let world = add_world_map(&a);
+    let (v, e) = a.activate(Entry::Builtin(Builtin::Map));
+    assert!(v.is_none());
+    let Effect::Run(req) = e else {
+        panic!("expected a run")
+    };
+    assert_eq!(req.argv, map_argv(&[&world]));
+    assert!(req.extra_args.is_empty() && req.polkit_agent.is_none() && !req.pause_after);
+
+    // With an installed pack: the overview first, then the pack. The older
+    // version left in the packs directory is not opened by default.
+    add_map_pack(&a);
+    let pack = a.home.join("sys/packs/map-osm-testland_2026-01.mbtiles");
+    let (_, e) = a.activate(Entry::Builtin(Builtin::Map));
+    let Effect::Run(req) = e else {
+        panic!("expected a run")
+    };
+    assert_eq!(req.argv, map_argv(&[&world, &pack]));
+
+    // Every mode may look at maps.
+    for mode in [Mode::Stable, Mode::Advanced] {
+        let b = app(mode, "map-open-modes");
+        assert_eq!(b.entries(Category::Maps).len(), 2, "{mode:?}");
+    }
+}
+
+#[test]
+fn maps_list_shows_only_maps_and_opens_the_chosen_one() {
+    let mut a = app(Mode::UltraStable, "map-list");
+    open(&mut a, Builtin::MapFiles);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("This computer has no map yet"), "{screen}");
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    a.stack.pop();
+
+    let world = add_world_map(&a);
+    add_map_pack(&a);
+    let dir = a.home.join("sys/packs");
+    let pack = dir.join("map-osm-testland_2026-01.mbtiles");
+    let older = dir.join("map-osm-testland_2025-07.mbtiles");
+    // A map on an open stick, as the list would find it.
+    let stick = a.home.join("stick");
+    std::fs::create_dir_all(stick.join("Resilience-packs")).expect("mkdir");
+    let own = stick.join("Resilience-packs/own-town.mbtiles");
+    std::fs::write(&own, b"x").expect("w");
+    let cfg = resilience_core::packs::PackConfig::load(&a.paths.packs_config).expect("cfg");
+    let on_stick = stick_items(&cfg, "STICK", &stick, PackKind::Map);
+    assert_eq!(on_stick.len(), 1);
+
+    open(&mut a, Builtin::MapFiles);
+    if let Some(View::Library { items, .. }) = a.stack.last_mut() {
+        items.extend(on_stick);
+    }
+    let View::Library { kind, items, .. } = a.view() else {
+        panic!("not on the maps list")
+    };
+    assert_eq!(*kind, PackKind::Map);
+    let titles: Vec<&str> = items.iter().map(|i| i.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        [
+            "World overview map (built in)",
+            "Testland (OpenStreetMap)",
+            "Testland (OpenStreetMap) (older version)",
+            "own-town.mbtiles"
+        ]
+    );
+    for (w, h) in [(80, 24), (60, 20), (160, 50)] {
+        let screen = render(&mut a, w, h);
+        assert!(screen.contains("MAPS"), "{screen}");
+        assert!(screen.contains("World overview map"), "{screen}");
+        assert!(!screen.contains("OFFLINE LIBRARY"), "{screen}");
+        assert!(!screen.contains("Wikipedia"), "{screen}");
+        assert_console_glyphs(&screen);
+    }
+    assert!(render(&mut a, 80, 24).contains("Enter Open the map"));
+
+    let run = |a: &mut App| match press(a, KeyCode::Enter) {
+        Effect::Run(req) => req.argv,
+        e => panic!("expected a run, got {e:?}"),
+    };
+    // The overview alone.
+    assert_eq!(run(&mut a), map_argv(&[&world]));
+    // An installed pack: over the overview.
+    press(&mut a, KeyCode::Down);
+    assert_eq!(run(&mut a), map_argv(&[&world, &pack]));
+    // The older version: asked for, so opened, before the current one.
+    press(&mut a, KeyCode::Down);
+    assert_eq!(run(&mut a), map_argv(&[&world, &older, &pack]));
+    // A file on a stick: the same, with the installed pack.
+    press(&mut a, KeyCode::Down);
+    assert_eq!(run(&mut a), map_argv(&[&world, &own, &pack]));
+    // c checks it with the library tool; s (full-text search) is for ZIM files.
+    let Effect::Run(req) = press(&mut a, KeyCode::Char('c')) else {
+        panic!("expected a run")
+    };
+    assert_eq!(
+        req.argv,
+        [
+            "resilience-library".to_string(),
+            "check".into(),
+            own.display().to_string()
+        ]
+    );
+    assert_eq!(press(&mut a, KeyCode::Char('s')), Effect::None);
+    assert!(a.modal.is_none());
+    // Help is about maps.
+    press(&mut a, KeyCode::F(1));
+    assert!(render(&mut a, 80, 24).contains("== MAPS =="));
+    press(&mut a, KeyCode::Esc);
+    // p: the packs screen.
+    press(&mut a, KeyCode::Char('p'));
+    assert!(matches!(a.view(), View::Packs { .. }));
+}
+
+#[test]
+fn at_most_eight_maps_are_given_to_the_viewer() {
+    let mut a = app(Mode::UltraStable, "map-many");
+    add_world_map(&a);
+    let sys = a.home.join("sys");
+    let mut text = std::fs::read_to_string(sys.join("packs.toml")).expect("read");
+    for i in 0..10 {
+        let file = format!("map-osm-region{i}_2026-01.mbtiles");
+        text.push_str(&format!(
+            "[[pack]]\nid = \"map-osm-region{i}\"\ntitle = \"Region {i}\"\n\
+             description = \"D\"\ncategory = \"maps\"\nlanguage = \"en\"\n\
+             file = \"{file}\"\nsize = 1\nsha256 = \"{}\"\nlicense = \"ODbL-1.0\"\n\
+             source = \"S\"\ndata_date = \"2026-01-01\"\ncoverage = \"Region {i} only\"\n\
+             attribution = \"(c) OpenStreetMap contributors\"\n",
+            "c".repeat(64)
+        ));
+        std::fs::write(sys.join("packs").join(file), b"x").expect("w");
+    }
+    std::fs::write(sys.join("packs.toml"), text).expect("write");
+    let (_, e) = a.activate(Entry::Builtin(Builtin::Map));
+    let Effect::Run(req) = e else {
+        panic!("expected a run")
+    };
+    assert_eq!(req.argv.iter().filter(|x| *x == "--pack").count(), 8);
+    assert!(req.argv[3].ends_with("map-world-natural-earth_2022-05.mbtiles"));
+}
+
 const MAP_COVERAGE: &str = "Testland only: streets, places and points of interest from \
     OpenStreetMap. Buildings and house numbers are left out. Outside Testland only the world \
     overview is shown. OpenStreetMap is made by volunteers: something absent from the map may \

@@ -30,7 +30,7 @@ use crate::theme::Theme;
 use resilience_core::admin::{AccountRow, Source};
 use resilience_core::backup::{self, BackupFile};
 use resilience_core::media::Volume;
-use resilience_core::packs::PackState;
+use resilience_core::packs::{PackKind, PackState};
 use resilience_core::recovery;
 use resilience_core::wifi::{self, Network, Overview};
 
@@ -193,6 +193,10 @@ fn footer_hints(view: &View) -> &'static str {
             "Enter Open  a Add file  t Type key  g OpenPGP key  e Export  Del Remove"
         }
         View::Table(_) => "Arrows Rows & columns  PgUp/PgDn  Esc Back",
+        View::Library {
+            kind: PackKind::Map,
+            ..
+        } => "Enter Open the map  c Check  u USB stick  p Get packs  Esc Back",
         View::Library { .. } => "Enter Read  s Search  c Check  u USB stick  p Get packs  Esc Back",
     }
 }
@@ -348,7 +352,7 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         View::Choices { title, items, list } => draw_choices(f, app, area, title, items, list),
         View::Keys { rows, list } => draw_keys(f, app, area, rows, list),
         View::Table(tbl) => draw_table(f, app, area, tbl),
-        View::Library { items, list } => draw_library(f, app, area, items, list),
+        View::Library { kind, items, list } => draw_library(f, app, area, *kind, items, list),
         View::Packs { s, list } => draw_packs(f, app, area, s, list),
         View::Backups {
             volume,
@@ -1438,7 +1442,15 @@ fn draw_media(
     details(f, &t, d, lines);
 }
 
-fn draw_library(f: &mut Frame, app: &App, area: Rect, items: &[LibItem], list: &mut ListState) {
+fn draw_library(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    kind: PackKind,
+    items: &[LibItem],
+    list: &mut ListState,
+) {
+    let map = kind == PackKind::Map;
     let t = app.theme;
     let rows: Vec<ListItem> = items
         .iter()
@@ -1456,22 +1468,36 @@ fn draw_library(f: &mut Frame, app: &App, area: Rect, items: &[LibItem], list: &
         f,
         &t,
         l,
-        "OFFLINE LIBRARY",
+        if map { "MAPS" } else { "OFFLINE LIBRARY" },
         rows,
         list,
-        "No resource packs are installed yet. Press p to choose packs to download, or to \
-         copy from a USB stick (an administrator's password is needed).",
+        if map {
+            "This computer has no map yet. Press p to choose map packs to download, or to \
+             copy from a USB stick (an administrator's password is needed)."
+        } else {
+            "No resource packs are installed yet. Press p to choose packs to download, or to \
+             copy from a USB stick (an administrator's password is needed)."
+        },
     );
     let lines = match list.selected().and_then(|i| items.get(i)) {
         Some(i) => vec![
             Line::from(Span::styled(i.title.clone(), t.accent)),
             Line::from(i.description.clone()),
             Line::from(Span::styled(
-                "Enter reads it in the text browser: arrows move between links, Enter or \
-                 Right follows one, Left goes back, q quits.",
+                if map {
+                    "Enter opens the map on it: arrows move, + and - zoom, i says what the \
+                     map covers and how old it is, ? lists every key, q quits."
+                } else {
+                    "Enter reads it in the text browser: arrows move between links, Enter or \
+                     Right follows one, Left goes back, q quits."
+                },
                 t.dim,
             )),
         ],
+        None if map => vec![Line::from(
+            "Map packs hold the streets, places and points of interest of a region. They \
+             work without a network.",
+        )],
         None => vec![Line::from(
             "Resource packs are large offline collections: encyclopedias, dictionaries, \
              health and practical guides. Everything here works without a network.",
