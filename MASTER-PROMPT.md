@@ -7,12 +7,11 @@ Tu reprends le travail sur Resilience, dans ce repo. Tu écris la majeure partie
 ## Avant tout
 1. Lance `git fetch origin`, puis `git status` et `git branch -a`.
 2. Le remote local pointe peut-être encore sur l'ancien nom du repo : le bon est raph-dot-img/resilience-os.
-3. Lis CLAUDE.md, ROADMAP.md, README.md, et AGENT_HANDOFF.md sur origin/develop.
+3. Lis CLAUDE.md, ROADMAP.md et README.md.
 
 ## État connu
 - Branches : develop (stable), feat/maps (Phase 5 cartes : slices 1-5 faites et relues, slice 6 viewer en WIP, et le commit doc 960de32), feat/maps-builder (slice 7 en WIP). La branche peut changer : vérifie toujours où tu es avant d'écrire.
 - Toute modif de CLAUDE.md ou ROADMAP.md se fait sur feat/maps, sinon on aura des conflits.
-- AGENT_HANDOFF.md sur develop est la boîte aux lettres avec mon coordinateur en ligne. Les demandes sont numérotées R1, R2… Chaque commit de réponse ne touche que ce fichier. R1 = rebuild de l'ISO depuis develop. Traite-la si elle n'a pas encore de réponse.
 
 ## Priorités (dans l'ordre)
 1. Builder l'ISO depuis develop (`nix build .#iso`) et la tester dans QEMU (UEFI + BIOS si possible), en simulant une machine modeste (≤2 GiB de RAM). Note tout ce qui casse.
