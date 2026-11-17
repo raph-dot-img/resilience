@@ -24,6 +24,16 @@ use super::{App, Effect, Level, Modal, View, clamp_selection, is_activate, is_ba
 
 /// Longest message typed in the dialog, in characters.
 pub const MAX_TYPED_CHARS: usize = 1000;
+/// Most lines in a message typed in the dialog.
+pub const MAX_TYPED_LINES: usize = 40;
+
+/// The keys that start a new line while writing a message.
+fn is_new_line(key: KeyEvent) -> bool {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    matches!(key.code, KeyCode::Char('n' | 'j')) && ctrl
+        || key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::ALT)
+}
+
 /// The lists are read again this often while a messages screen is shown.
 const RELOAD_TICKS: u64 = 8;
 
@@ -369,6 +379,15 @@ impl App {
         let mut error = error;
         match key.code {
             KeyCode::Esc => return Effect::None,
+            // A new line in a message: Ctrl-N (Ctrl-J and Alt-Enter too;
+            // the console cannot tell Shift-Enter or Ctrl-Enter from Enter).
+            _ if matches!(kind, ChatInput::Text { .. }) && is_new_line(key) => {
+                let lines = value.matches('\n').count() + 1;
+                if value.chars().count() < max && lines < MAX_TYPED_LINES {
+                    value.push('\n');
+                }
+                error = None;
+            }
             KeyCode::Enter => match self.chat_submit(&kind, &value) {
                 Ok(()) => return Effect::None,
                 Err(e) => error = Some(e),

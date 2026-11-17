@@ -147,7 +147,7 @@ pub fn lines(topic: HelpTopic, mode: Mode) -> Vec<String> {
             "  p                      People heard on the local network",
             "  m                      My address, to give to others",
             "  In a conversation:",
-            "  w                      Write a message",
+            "  w                      Write a message (Enter sends, Ctrl-N starts a new line)",
             "  c                      Give up on a message that is still waiting",
             "  a                      Give this person a name of your own",
             "  i                      Their whole address, to compare with them",
@@ -160,7 +160,8 @@ pub fn lines(topic: HelpTopic, mode: Mode) -> Vec<String> {
             "  their key (yet). A name in quotes with ? is only what an address claims.",
             "  A person is their address: compare it with them before trusting a name.",
             "  Messages are encrypted for the recipient. They travel on the local",
-            "  network only; both computers must be on at the same time at some point.",
+            "  network only. A message store on the network keeps them for people",
+            "  who are away (\"sent, kept on the network\").",
         ],
         HelpTopic::Files => &[
             "== FIND & VIEW FILES ==",

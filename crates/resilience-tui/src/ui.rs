@@ -2196,7 +2196,7 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
                 ChatInput::Text { peer } => (
                     "WRITE A MESSAGE",
                     format!("Message for {}:", messages::short_address(peer)),
-                    "Enter send, Esc cancel | It is kept and retried until delivered",
+                    "Enter send, Ctrl-N new line, Esc cancel | Kept and retried until delivered",
                 ),
                 ChatInput::ContactName { .. } => (
                     "NAME THIS PERSON",
@@ -2204,14 +2204,20 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
                     "Only you see it | Enter save, Esc cancel",
                 ),
             };
-            let mut l = vec![
-                Line::from(ask),
-                Line::from(vec![
-                    Span::styled(format!("> {value}"), t.accent),
-                    Span::styled("█", t.base),
-                ]),
-                Line::from(""),
-            ];
+            let mut l = vec![Line::from(ask)];
+            // One screen line per typed line; the cursor after the last.
+            let typed: Vec<&str> = value.split('\n').collect();
+            for (i, part) in typed.iter().enumerate() {
+                let mut spans = vec![Span::styled(
+                    format!("{}{part}", if i == 0 { "> " } else { "  " }),
+                    t.accent,
+                )];
+                if i + 1 == typed.len() {
+                    spans.push(Span::styled("█", t.base));
+                }
+                l.push(Line::from(spans));
+            }
+            l.push(Line::from(""));
             match error {
                 Some(e) => l.push(Line::from(Span::styled(format!("[!!] {e}"), t.error))),
                 None => l.push(Line::from(Span::styled(hint, t.dim))),

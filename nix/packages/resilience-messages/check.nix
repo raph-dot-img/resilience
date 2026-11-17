@@ -117,12 +117,12 @@ runCommand "resilience-messages-check"
     test "$(ls ann/messages | wc -l)" = 4
     test -z "$(find ann/outbox ann/cancel -type f)"
 
-    # A reply, and the cancelled message never arrived.
-    send bob r1 "$ann" "OK, see you there"
+    # A reply on two lines, and the cancelled message never arrived.
+    send bob r1 "$ann" "$(printf 'OK, see you there\nwith cans')"
     wait_state bob r1 delivered
     for _ in $(seq 20); do [ "$(ls ann/messages | wc -l)" = 5 ] && break; sleep 1; done
     jq -e -s 'map(select(.direction == "in")) | length == 1 and .[0].verified == true
-              and .[0].text == "OK, see you there"' ann/messages/*.json
+              and .[0].text == "OK, see you there\nwith cans"' ann/messages/*.json
     test "$(ls bob/messages | wc -l)" = 2
 
     # Store-and-forward (ADR 0019): the machine's message store runs; Bob

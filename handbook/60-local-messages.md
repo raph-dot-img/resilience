@@ -11,6 +11,8 @@ WRITING TO SOMEONE
     n            write to an address someone gave you
     m            your own address, to give to others
     Enter        open a conversation;  w  write a message
+  While writing, Enter sends and Ctrl-N starts a new line (Alt-Enter
+  works too). Esc closes the dialog without sending.
   A message is kept on this computer and tried again until it arrives,
   for up to 7 days.
 

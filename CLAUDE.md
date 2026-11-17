@@ -405,7 +405,7 @@ needlessly. Watch `free -h` during VM tests.
 
 ## 14. Current implementation status (2026-11-16)
 
-**Now: Phase 6 (networking and communications), branch `feat/comms`.**
+**Now: Phase 6 (networking and communications), branch `feat/comms-files`.**
 Maps (Phase 5) were parked by the owner on 2026-11-16 after slice 9: do
 not continue slices 10 to 13 unless asked. Phase 6 so far: ADR 0018
 (Reticulum + LXMF, opt-in because their licence is not free: owner's
@@ -418,8 +418,9 @@ messages" under Communications, views Chats / Nearby / Chat, dialog
 `Modal::ChatInput`), handbook `60-local-messages.md`, vm-comms through
 the TUI. Slice 4 = ADR 0019 store-and-forward (`resilience-messages node`,
 service `resilience-messages-node`, client fallback to the store, TUI
-markers, vm-comms subtest with alpha switched off). Open: file exchange; multi-line
-messages; Internet messengers (toxic, signal-cli); Yggdrasil/BATMAN.
+markers, vm-comms subtest with alpha switched off). Slice 5 (branch
+`feat/comms-files`) = multi-line messages (Ctrl-N / Ctrl-J / Alt-Enter in
+the dialog, at most 40 lines). Open: file exchange; Internet messengers (toxic, signal-cli); Yggdrasil/BATMAN.
 `resilience.comms.enable` is ON by default in the standard edition
 (owner, 2026-11-16; `nix/profiles/standard.nix`, mkDefault) and off in
 minimal. After that change: full flake check passed (2026-11-17, after
@@ -464,7 +465,7 @@ Git state (2026-11-17): `main` = end of Phase 4; `develop` = `feat/maps`,
 a new `feat/<topic>` branch from `develop`; push only when asked). Last
 full `nix flake check -L --max-jobs 1 --keep-going`: `feat/comms` at
 `ba62020` (with ADR 0019), 2026-11-17, all 18 checks (12 VM tests) passed.
-Rust: 199 core, 72 TUI, 134 maps (+1 on demand), 5 library/store tests;
+Rust: 199 core, 73 TUI, 134 maps (+1 on demand), 5 library/store tests;
 clippy clean. The live ISO was rebuilt from `feat/comms` at `9d3ebd2`
 (message store included) and boot-tested in QEMU (BIOS, UEFI, 1-2 GiB) on 2026-11-17;
 the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.

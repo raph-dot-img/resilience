@@ -3636,6 +3636,75 @@ fn writing_to_an_address_saves_a_request_and_never_claims_more() {
 }
 
 #[test]
+fn a_message_can_have_several_lines() {
+    let mut a = chat_app("chat-lines");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    open(&mut a, Builtin::Chat);
+    press(&mut a, KeyCode::Char('n'));
+    type_text(&mut a, MARIE);
+    press(&mut a, KeyCode::Enter);
+    let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+    type_text(&mut a, "Water:");
+    a.handle_key(ctrl('n'));
+    type_text(&mut a, "school, 9h");
+    a.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+    a.handle_key(ctrl('j'));
+    type_text(&mut a, "Bring cans");
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("> Water:"), "{screen}");
+    assert!(screen.contains("  school, 9h"), "{screen}");
+    assert!(screen.contains("  Bring cans█"), "{screen}");
+    assert!(screen.contains("Ctrl-N new line"), "{screen}");
+    // Backspace takes a line break back like any character.
+    for _ in 0.."Bring cans".len() + 1 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    type_text(&mut a, "Bring cans.");
+    assert!(
+        matches!(a.modal, Some(Modal::ChatInput { ref value, .. }) if value == "Water:\nschool, 9h\nBring cans.")
+    );
+    press(&mut a, KeyCode::Enter);
+    assert!(a.modal.is_none());
+    let files: Vec<PathBuf> = std::fs::read_dir(box_.join("outbox"))
+        .expect("outbox")
+        .map(|e| e.expect("entry").path())
+        .collect();
+    let text = std::fs::read_to_string(&files[0]).expect("read");
+    assert!(
+        text.contains(r#""text":"Water:\nschool, 9h\nBring cans.""#),
+        "{text}"
+    );
+    // Only line breaks: still empty.
+    press(&mut a, KeyCode::Char('w'));
+    for _ in 0..3 {
+        a.handle_key(ctrl('n'));
+    }
+    press(&mut a, KeyCode::Enter);
+    assert!(render(&mut a, 80, 24).contains("the message is empty"));
+    press(&mut a, KeyCode::Esc);
+    // A name has one line.
+    press(&mut a, KeyCode::Char('a'));
+    a.handle_key(ctrl('n'));
+    assert!(matches!(a.modal, Some(Modal::ChatInput { ref value, .. }) if value.is_empty()));
+    press(&mut a, KeyCode::Esc);
+    // At most 40 lines (MAX_TYPED_LINES).
+    press(&mut a, KeyCode::Char('w'));
+    for _ in 0..100 {
+        type_text(&mut a, "x");
+        a.handle_key(ctrl('n'));
+    }
+    let Some(Modal::ChatInput { value, .. }) = &a.modal else {
+        panic!("dialog closed");
+    };
+    assert_eq!(value.split('\n').count(), 40);
+    // The end being typed stays on the screen.
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("WRITE A MESSAGE"), "{screen}");
+    assert!(screen.contains("xxxxxxxxxxxxxxxxxxxxx"), "{screen}");
+    assert!(screen.contains("█"), "{screen}");
+}
+
+#[test]
 fn a_conversation_shows_what_is_known_about_each_message() {
     let mut a = chat_app("chat-states");
     let box_ = resilience_core::messages::store_dir(&a.home);
