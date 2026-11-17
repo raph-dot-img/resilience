@@ -184,7 +184,9 @@ in
         # GRUB waits 5 s, the prompt follows a few seconds later (it is on
         # the serial log too). Keys must be typed after the initrd has
         # loaded the layout: they are translated when pressed.
-        target.sleep(40)
+        # Machine.sleep() would wait for the root shell, which exists only
+        # once the disk is unlocked: wait in the driver instead.
+        _time.sleep(40)
         target.send_chars(PASSPHRASE + "\n")
         target.wait_for_unit("multi-user.target", timeout=600)
         target.succeed("findmnt -no SOURCE / | grep -x /dev/mapper/root")

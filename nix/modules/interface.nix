@@ -228,7 +228,14 @@ in
     };
     boot.initrd.systemd.services.resilience-keymap = lib.mkIf (kb.stateFile != null) {
       description = "Keyboard layout chosen when installing";
-      wantedBy = [ "sysinit.target" ];
+      # udev restarts systemd-vconsole-setup when the console device
+      # appears, which loads the built-in layout again: run again after it
+      # every time (PartOf propagates its restarts here).
+      wantedBy = [
+        "sysinit.target"
+        "systemd-vconsole-setup.service"
+      ];
+      partOf = [ "systemd-vconsole-setup.service" ];
       # The file arrives under /.initrd-secrets; NixOS copies it into place.
       after = [
         "systemd-vconsole-setup.service"
@@ -245,6 +252,8 @@ in
       };
       serviceConfig = {
         Type = "oneshot";
+        # Stays active, so that restarts of systemd-vconsole-setup reach it.
+        RemainAfterExit = true;
         # vconsole.conf syntax; only an offered layout is loaded.
         EnvironmentFile = "/etc/resilience-keyboard";
       };

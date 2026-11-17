@@ -123,6 +123,7 @@ let
         "installed systems have no autologin and keep root locked" =
           !c.resilience.localAccounts
           || (autologin == null && c.resilience.users == { } && root.hashedPassword == "!");
+        "the session shell listed in /etc/shells is installed" = lib.elem c.resilience.sessionPackage c.environment.systemPackages;
         "the installer exists on live systems only" =
           !(c.resilience.installer.enable && c.resilience.localAccounts);
         # ADR 0013: packs are written by an unprivileged system account only.
