@@ -22,15 +22,16 @@ use resilience_core::network::{LinkLevel, ProbeOutcome};
 use resilience_core::status::format_uptime;
 
 use crate::app::{
-    App, Entry, Level, LibItem, MODES, MediaPurpose, Modal, PackRow, PacksScreen, RecoveryItem,
-    SearchHit, View, category_description, level_tag,
+    App, ChatInput, ChatRow, Entry, Level, LibItem, MODES, MediaPurpose, Modal, NearbyRow, PackRow,
+    PacksScreen, RecoveryItem, SearchHit, View, category_description, level_tag,
 };
 use crate::help;
 use crate::theme::Theme;
 use resilience_core::admin::{AccountRow, Source};
 use resilience_core::backup::{self, BackupFile};
 use resilience_core::media::Volume;
-use resilience_core::packs::PackState;
+use resilience_core::messages::{self, Direction, Name, Record, State, Status};
+use resilience_core::packs::{PackKind, PackState};
 use resilience_core::recovery;
 use resilience_core::wifi::{self, Network, Overview};
 
@@ -172,8 +173,15 @@ fn footer_hints(view: &View) -> &'static str {
             "Up/Down PgUp/PgDn Scroll  Esc Back"
         }
         View::Notes { .. } => "Enter Open  n New note  r Refresh  Esc Back",
+        View::Chats { .. } => {
+            "Enter Open  n Write to an address  p People nearby  m My address  Esc"
+        }
+        View::Nearby { .. } => "Enter Write  a Name this person  i Address  r Refresh  Esc Back",
+        View::Chat { .. } => {
+            "w Write  f File  o Open  s Save  c Cancel  a Name  i Address  Esc Back"
+        }
         View::Network { .. } => "p Probe Internet  r Refresh  Esc Back",
-        View::Settings { .. } => "Enter Apply theme  Esc Back",
+        View::Settings { .. } => "Enter Apply  Esc Back",
         View::Search { .. } => "Type to search  Up/Down Select  Enter Open  Esc Back",
         View::Users { .. } => "Enter Change mode  r Refresh  Esc Back  F1 Help",
         View::ChooseMode { .. } => "Up/Down Choose  Enter Continue  Esc Cancel",
@@ -193,6 +201,10 @@ fn footer_hints(view: &View) -> &'static str {
             "Enter Open  a Add file  t Type key  g OpenPGP key  e Export  Del Remove"
         }
         View::Table(_) => "Arrows Rows & columns  PgUp/PgDn  Esc Back",
+        View::Library {
+            kind: PackKind::Map,
+            ..
+        } => "Enter Open the map  c Check  u USB stick  p Get packs  Esc Back",
         View::Library { .. } => "Enter Read  s Search  c Check  u USB stick  p Get packs  Esc Back",
     }
 }
@@ -321,6 +333,14 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
                 "No notes yet. Press 'n' to create one.",
             );
         }
+        View::Chats { rows, status, list } => draw_chats(f, app, area, rows, status, list),
+        View::Nearby { rows, list } => draw_nearby(f, app, area, rows, list),
+        View::Chat {
+            peer,
+            name,
+            records,
+            list,
+        } => draw_chat(f, app, area, peer, name, records, list),
         View::Settings { list } => draw_settings(f, app, area, list),
         View::Search { query, hits, list } => draw_search(f, app, area, query, hits, list),
         View::Users { rows, error, list } => draw_users(f, app, area, rows, error.as_deref(), list),
@@ -348,7 +368,7 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         View::Choices { title, items, list } => draw_choices(f, app, area, title, items, list),
         View::Keys { rows, list } => draw_keys(f, app, area, rows, list),
         View::Table(tbl) => draw_table(f, app, area, tbl),
-        View::Library { items, list } => draw_library(f, app, area, items, list),
+        View::Library { kind, items, list } => draw_library(f, app, area, *kind, items, list),
         View::Packs { s, list } => draw_packs(f, app, area, s, list),
         View::Backups {
             volume,
@@ -983,23 +1003,30 @@ fn network_lines(app: &App) -> Vec<Line<'static>> {
 
 fn draw_settings(f: &mut Frame, app: &App, area: Rect, list: &mut ListState) {
     let t = app.theme;
-    let [themes, info] = Layout::vertical([
-        Constraint::Length(ThemeName::ALL.len() as u16 + 2),
-        Constraint::Min(0),
-    ])
-    .areas(area);
+    let kb = &app.sys.keyboard;
+    let rows = (ThemeName::ALL.len() + kb.layouts.len()) as u16;
+    let [themes, info] =
+        Layout::vertical([Constraint::Length(rows + 2), Constraint::Min(0)]).areas(area);
+    let current = |yes: bool| if yes { "  (current)" } else { "" };
+    let layout_now = kb.effective(app.settings.keyboard.as_deref());
     let items: Vec<ListItem> = ThemeName::ALL
         .iter()
         .map(|th| {
-            let cur = if *th == app.settings.theme {
-                "  (current)"
-            } else {
-                ""
-            };
-            ListItem::new(format!("{}{cur}", th.label()))
+            ListItem::new(format!(
+                "Theme     {}{}",
+                th.label(),
+                current(*th == app.settings.theme)
+            ))
         })
+        .chain(kb.layouts.iter().map(|l| {
+            ListItem::new(format!(
+                "Keyboard  {}{}",
+                l.label,
+                current(l.id == layout_now)
+            ))
+        }))
         .collect();
-    draw_list(f, &t, themes, "COLOUR THEME", items, list, "");
+    draw_list(f, &t, themes, "THEME & KEYBOARD", items, list, "");
     let lines = vec![
         Line::from(vec![
             Span::styled("Security mode: ", t.dim),
@@ -1431,7 +1458,15 @@ fn draw_media(
     details(f, &t, d, lines);
 }
 
-fn draw_library(f: &mut Frame, app: &App, area: Rect, items: &[LibItem], list: &mut ListState) {
+fn draw_library(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    kind: PackKind,
+    items: &[LibItem],
+    list: &mut ListState,
+) {
+    let map = kind == PackKind::Map;
     let t = app.theme;
     let rows: Vec<ListItem> = items
         .iter()
@@ -1449,22 +1484,36 @@ fn draw_library(f: &mut Frame, app: &App, area: Rect, items: &[LibItem], list: &
         f,
         &t,
         l,
-        "OFFLINE LIBRARY",
+        if map { "MAPS" } else { "OFFLINE LIBRARY" },
         rows,
         list,
-        "No resource packs are installed yet. Press p to choose packs to download, or to \
-         copy from a USB stick (an administrator's password is needed).",
+        if map {
+            "This computer has no map yet. Press p to choose map packs to download, or to \
+             copy from a USB stick (an administrator's password is needed)."
+        } else {
+            "No resource packs are installed yet. Press p to choose packs to download, or to \
+             copy from a USB stick (an administrator's password is needed)."
+        },
     );
     let lines = match list.selected().and_then(|i| items.get(i)) {
         Some(i) => vec![
             Line::from(Span::styled(i.title.clone(), t.accent)),
             Line::from(i.description.clone()),
             Line::from(Span::styled(
-                "Enter reads it in the text browser: arrows move between links, Enter or \
-                 Right follows one, Left goes back, q quits.",
+                if map {
+                    "Enter opens the map on it: arrows move, + and - zoom, i says what the \
+                     map covers and how old it is, ? lists every key, q quits."
+                } else {
+                    "Enter reads it in the text browser: arrows move between links, Enter or \
+                     Right follows one, Left goes back, q quits."
+                },
                 t.dim,
             )),
         ],
+        None if map => vec![Line::from(
+            "Map packs hold the streets, places and points of interest of a region. They \
+             work without a network.",
+        )],
         None => vec![Line::from(
             "Resource packs are large offline collections: encyclopedias, dictionaries, \
              health and practical guides. Everything here works without a network.",
@@ -1836,7 +1885,11 @@ fn draw_files(
         .unwrap_or("FIND FILES (home folder and open USB sticks)");
     let [input, results] =
         Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(area);
-    let cursor = if (app.tick / 2) % 2 == 0 { "█" } else { " " };
+    let cursor = if (app.tick / 2).is_multiple_of(2) {
+        "█"
+    } else {
+        " "
+    };
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(query.to_string(), t.accent),
@@ -1937,7 +1990,11 @@ fn draw_search(
     let t = app.theme;
     let [input, results] =
         Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(area);
-    let cursor = if (app.tick / 2) % 2 == 0 { "█" } else { " " };
+    let cursor = if (app.tick / 2).is_multiple_of(2) {
+        "█"
+    } else {
+        " "
+    };
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(query.to_string(), t.accent),
@@ -2131,6 +2188,60 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
             }
             ("ENCRYPT FOR", l, t.base)
         }
+        Modal::ChatInput { kind, value, error } => {
+            let (title, ask, hint) = match kind {
+                ChatInput::Address => (
+                    "WRITE TO AN ADDRESS",
+                    "Address of the person (they find it under 'm' in Local messages):".to_string(),
+                    "32 characters, spaces allowed | Enter continue, Esc cancel",
+                ),
+                ChatInput::Text { peer } => (
+                    "WRITE A MESSAGE",
+                    format!("Message for {}:", messages::short_address(peer)),
+                    "Enter send, Ctrl-N new line, Esc cancel | Kept and retried until delivered",
+                ),
+                ChatInput::FileText { peer, path, size } => (
+                    "SEND A FILE",
+                    format!(
+                        "File '{}' ({}) for {}. A message with it (optional):",
+                        messages::clean_line(
+                            &path
+                                .file_name()
+                                .map(|n| n.to_string_lossy())
+                                .unwrap_or_default(),
+                            60
+                        ),
+                        messages::size_text(*size),
+                        messages::short_address(peer)
+                    ),
+                    "Enter send, Ctrl-N new line, Esc cancel | A copy is sent; it is retried until delivered",
+                ),
+                ChatInput::ContactName { .. } => (
+                    "NAME THIS PERSON",
+                    "Your own name for this address (empty: no name):".to_string(),
+                    "Only you see it | Enter save, Esc cancel",
+                ),
+            };
+            let mut l = vec![Line::from(ask)];
+            // One screen line per typed line; the cursor after the last.
+            let typed: Vec<&str> = value.split('\n').collect();
+            for (i, part) in typed.iter().enumerate() {
+                let mut spans = vec![Span::styled(
+                    format!("{}{part}", if i == 0 { "> " } else { "  " }),
+                    t.accent,
+                )];
+                if i + 1 == typed.len() {
+                    spans.push(Span::styled("█", t.base));
+                }
+                l.push(Line::from(spans));
+            }
+            l.push(Line::from(""));
+            match error {
+                Some(e) => l.push(Line::from(Span::styled(format!("[!!] {e}"), t.error))),
+                None => l.push(Line::from(Span::styled(hint, t.dim))),
+            }
+            (title, l, t.base)
+        }
         Modal::ExpectedSum { file, value, error } => {
             let mut l = vec![
                 Line::from(format!(
@@ -2180,6 +2291,12 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
     };
     let width = 64u16;
     lines = wrap(lines, width as usize - 4);
+    // A long message being typed: keep its end (the cursor) on the screen.
+    let room = usize::from(area.height.saturating_sub(4)).max(4);
+    if matches!(m, Modal::ChatInput { .. }) && lines.len() > room {
+        let cut = lines.len() - room;
+        lines.drain(1..=cut);
+    }
     let r = centered(area, width, lines.len() as u16 + 2);
     f.render_widget(Clear, r);
     let b = Block::new()
@@ -2189,4 +2306,242 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
         .title(Span::styled(format!(" {title} "), t.title))
         .style(Style::new().patch(t.base));
     f.render_widget(Paragraph::new(lines).style(t.base).block(b), r);
+}
+
+// ----- local messages (ADR 0018) ---------------------------------------------
+
+fn chat_status_line(t: &Theme, status: &Status) -> Line<'static> {
+    match status {
+        Status::Running { address, .. } => Line::from(vec![
+            Span::styled("[OK] ", t.ok),
+            Span::raw(format!(
+                "Messaging is running. My address: {} (m shows all of it)",
+                messages::short_address(address)
+            )),
+        ]),
+        Status::Stopped { .. } => Line::from(Span::styled(
+            "[!!] Messaging is not running for your account: nothing is sent or received. \
+             Log out and in again.",
+            t.warn,
+        )),
+    }
+}
+
+fn draw_chats(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    rows: &[ChatRow],
+    status: &Status,
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    let now = crate::app::chat_now();
+    let items: Vec<ListItem> = rows
+        .iter()
+        .map(|r| {
+            let c = &r.conv;
+            let flag = if c.failed > 0 {
+                "[!!]"
+            } else if c.pending > 0 {
+                "[..]"
+            } else {
+                "    "
+            };
+            let who = if c.last_direction == Direction::Out {
+                "You: "
+            } else {
+                ""
+            };
+            ListItem::new(format!(
+                "{flag} {:<22.22} {:>11}  {who}{}",
+                r.name.display(&c.peer),
+                messages::ago(c.last_time, now),
+                c.last_text
+            ))
+        })
+        .collect();
+    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(6)]).areas(area);
+    draw_list(
+        f,
+        &t,
+        l,
+        "LOCAL MESSAGES",
+        items,
+        list,
+        "No messages yet. Press p to see the people on your local network, or n to write \
+         to an address someone gave you. Press m for your own address.",
+    );
+    let mut lines = vec![chat_status_line(&t, status)];
+    // Store-and-forward (ADR 0019): whether people who are away can be
+    // written to, a property of the network rather than of a conversation.
+    if let Status::Running { store, .. } = status {
+        lines.push(Line::from(Span::styled(
+            if *store {
+                "Messages for people who are away wait in a message store on this network \
+                 until their computer collects them."
+            } else {
+                "No message store on this network: a message arrives only when both \
+                 computers are on at the same time."
+            },
+            t.dim,
+        )));
+    }
+    match list.selected().and_then(|i| rows.get(i)) {
+        Some(r) => {
+            let c = &r.conv;
+            lines.push(Line::from(format!(
+                "{} messages with {}. {} waiting or sent without proof, {} failed.",
+                c.count,
+                messages::format_address(&c.peer),
+                c.pending,
+                c.failed
+            )));
+            if let Name::Claimed(_) = r.name {
+                lines.push(Line::from(Span::styled(
+                    "A name in quotes with ? is what that address says about itself: anyone \
+                     can claim any name.",
+                    t.dim,
+                )));
+            }
+        }
+        None => lines.push(Line::from(Span::styled(
+            "Messages travel on the local network only, without the Internet, between \
+             computers that have local messaging.",
+            t.dim,
+        ))),
+    }
+    details(f, &t, d, lines);
+}
+
+fn draw_nearby(f: &mut Frame, app: &App, area: Rect, rows: &[NearbyRow], list: &mut ListState) {
+    let t = app.theme;
+    let now = crate::app::chat_now();
+    let items: Vec<ListItem> = rows
+        .iter()
+        .map(|r| {
+            ListItem::new(format!(
+                "{:<26.26} {}  heard {}",
+                r.name.display(&r.peer.address),
+                messages::format_address(&r.peer.address),
+                messages::ago(r.peer.heard, now)
+            ))
+        })
+        .collect();
+    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(5)]).areas(area);
+    draw_list(
+        f,
+        &t,
+        l,
+        "PEOPLE NEARBY",
+        items,
+        list,
+        "Nobody has been heard on the local network yet. Other computers appear here a \
+         little after they join the same network, if they have local messaging.",
+    );
+    details(
+        f,
+        &t,
+        d,
+        vec![
+            Line::from(
+                "Everyone heard on the local network. A name in quotes with ? is only what \
+                 that address says about itself.",
+            ),
+            Line::from(Span::styled(
+                "Compare the address with the person (in person or by voice), then press a \
+                 to give it a name of your own.",
+                t.dim,
+            )),
+        ],
+    );
+}
+
+fn message_item(r: &Record, t: &Theme, now: u64, width: usize) -> ListItem<'static> {
+    let (who, style) = match (r.direction, r.state) {
+        (Direction::In, _) if r.verified => ("Them", t.accent),
+        (Direction::In, _) => ("Them", t.warn),
+        (_, State::Failed) => ("You", t.error),
+        (_, State::Delivered) => ("You", t.ok),
+        _ => ("You", t.dim),
+    };
+    let mut head = format!("{who} [{}] {}", r.marker(), messages::ago(r.created, now));
+    if !r.detail.is_empty() && r.state != State::Delivered {
+        head.push_str(&format!(" - {}", messages::clean_line(&r.detail, 80)));
+    }
+    let mut lines = vec![Line::from(Span::styled(head, style))];
+    let body: Vec<Line<'static>> = messages::clean_text(&r.text, 200)
+        .into_iter()
+        .map(|l| Line::from(format!("  {l}")))
+        .collect();
+    lines.extend(wrap(body, width.max(20)));
+    if let Some(file) = &r.file {
+        let mut l = format!(
+            "  [file] {} ({})",
+            file.shown(),
+            messages::size_text(file.size)
+        );
+        if r.direction == Direction::In {
+            l.push_str(if file.data.is_some() {
+                "  o open, s save"
+            } else {
+                "  not kept"
+            });
+        }
+        lines.push(Line::from(Span::styled(l, t.accent)));
+    }
+    ListItem::new(Text::from(wrap(lines, width.max(20))))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_chat(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    peer: &str,
+    name: &Name,
+    records: &[Record],
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    let now = crate::app::chat_now();
+    let width = usize::from(area.width.saturating_sub(6));
+    let items: Vec<ListItem> = records
+        .iter()
+        .map(|r| message_item(r, &t, now, width))
+        .collect();
+    let title = format!(
+        "MESSAGES WITH {} ({})",
+        name.display(peer),
+        messages::short_address(peer)
+    );
+    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(5)]).areas(area);
+    draw_list(
+        f,
+        &t,
+        l,
+        &title,
+        items,
+        list,
+        "No messages with this person yet. Press w to write one.",
+    );
+    details(
+        f,
+        &t,
+        d,
+        vec![
+            Line::from(
+                "waiting: kept here and tried again | sent: no proof yet | delivered: their \
+                 computer confirmed it has the message | FAILED: given up.",
+            ),
+            Line::from(
+                "kept on the network: a copy waits in a message store for them | stopped, may \
+                 still arrive: given up here, but a stored copy may still reach them.",
+            ),
+            Line::from(Span::styled(
+                "NOT VERIFIED: the message could not be checked against this address's key.",
+                t.dim,
+            )),
+        ],
+    );
 }

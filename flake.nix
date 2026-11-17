@@ -29,6 +29,16 @@
         };
 
       vmTest = file: pkgs.testers.runNixOSTest (import file { inherit self; });
+
+      # Map packs (ADR 0016 §2), for build machines: not in any system.
+      maps = pkgs.callPackage ./nix/maps { };
+      # Local messaging (ADR 0018): unfree Reticulum and LXMF, opt-in.
+      reticulum = pkgs.callPackage ./nix/packages/resilience-reticulum { };
+      messages = pkgs.callPackage ./nix/packages/resilience-messages { inherit reticulum; };
+      mapChecks = pkgs.callPackage ./nix/maps/checks.nix {
+        inherit maps;
+        worldMap = pkgs.resilience-world-map;
+      };
     in
     {
       overlays.default = import ./nix/overlays/default.nix;
@@ -51,12 +61,22 @@
       };
 
       packages.${system} = {
-        inherit (pkgs) resilience resilience-session resilience-handbook;
+        inherit (pkgs)
+          resilience
+          resilience-session
+          resilience-handbook
+          resilience-world-map
+          ;
         default = pkgs.resilience;
         iso = self.nixosConfigurations.live-standard.config.system.build.isoImage;
         iso-minimal = self.nixosConfigurations.live-minimal.config.system.build.isoImage;
         vm = self.nixosConfigurations.dev-vm.config.system.build.vm;
       };
+
+      # `nix build .#mapPacks.<id>` -> result/map-osm-<id>_<YYYY-MM>.mbtiles.
+      # A set of packs is not a derivation, so it lives in legacyPackages
+      # (`packages` may only hold derivations); `nix build` finds it there.
+      legacyPackages.${system}.mapPacks = maps.packs;
 
       apps.${system}.vm = {
         type = "app";
@@ -76,6 +96,16 @@
         vm-packs = vmTest ./tests/vm/packs.nix;
         vm-documents = vmTest ./tests/vm/documents.nix;
         vm-crypto = vmTest ./tests/vm/crypto.nix;
+        vm-maps = vmTest ./tests/vm/maps.nix;
+        vm-comms = vmTest ./tests/vm/comms.nix;
+        vm-mesh = vmTest ./tests/vm/mesh.nix;
+        # The messaging program with the real Reticulum and LXMF, no VM.
+        comms-messages = pkgs.callPackage ./nix/packages/resilience-messages/check.nix {
+          inherit reticulum messages;
+        };
+        # The synthetic test pack: reproducible, and read back by the reader.
+        # The built-in world overview (Natural Earth), read back the same way.
+        inherit (mapChecks) map-pack-reproducible map-pack-testland map-world;
         security-invariants = pkgs.callPackage ./tests/eval/security-invariants.nix {
           configurations = {
             inherit (self.nixosConfigurations) live-standard live-minimal dev-vm;

@@ -95,7 +95,8 @@ OPENPGP (GnuPG): WITH PEOPLE WHO USE IT
   contacts (a name, and an e-mail address if you want: others will see
   them). GnuPG asks its passphrase in a box on the screen, every time. When
   it asks for a new passphrase twice in the same box, press Tab to go to the
-  second line ("Repeat"), then Enter.
+  second line ("Repeat"), then Enter. On a slow computer it may then ask
+  once more, to unlock the new key: type the same passphrase.
   Encrypt for: OpenPGP keys appear as "OpenPGP: name". One file is for one
   kind of key: a passphrase, OR Resilience keys, OR OpenPGP keys.
   GnuPG never looks for keys on the Internet here.

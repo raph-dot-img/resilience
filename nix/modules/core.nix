@@ -141,6 +141,7 @@ let
     backup = "${cfg.package}/bin/resilience-backup";
     nmcli = "${lib.getBin config.networking.networkmanager.package}/bin/nmcli";
     library = "${cfg.package}/bin/resilience-library";
+    maps = "${cfg.package}/bin/resilience-maps";
     man = "${config.documentation.man.man-db.package}/bin/man";
     apropos = "${config.documentation.man.man-db.package}/bin/apropos";
     less = "${pkgs.less}/bin/less";
@@ -181,6 +182,10 @@ let
     };
     # Removable media and backups (media.nix, ADR 0008), Wi-Fi (ADR 0010).
     inherit tools;
+    keyboard = {
+      default = config.resilience.keyboard.layout;
+      layouts = map (l: { inherit (l) id label; }) config.resilience.keyboard.layouts;
+    };
   };
 
   # Fails the system build if a tool path is wrong.

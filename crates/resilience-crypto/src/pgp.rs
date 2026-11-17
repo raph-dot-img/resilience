@@ -508,12 +508,11 @@ fn verify_inline(c: &Ctx, sig: &Path) -> Res {
         .map(|n| n.as_encoded_bytes().to_vec())
         .unwrap_or_default();
     for ext in [&b".sig"[..], b".asc", b".gpg"] {
-        if let Some(stem) = name.strip_suffix(ext) {
-            if let Ok(stem) = std::str::from_utf8(stem) {
-                if sig.with_file_name(stem).exists() {
-                    return Err(Failure::Refused(not_detached(sig)));
-                }
-            }
+        if let Some(stem) = name.strip_suffix(ext)
+            && let Ok(stem) = std::str::from_utf8(stem)
+            && sig.with_file_name(stem).exists()
+        {
+            return Err(Failure::Refused(not_detached(sig)));
         }
     }
     let (_, data, status, truncated) = capture(c, &[OsStr::new("--decrypt"), sig.as_os_str()])?;
@@ -698,7 +697,12 @@ pub fn new_key(c: &Ctx) -> Res {
             Err(e) => say(e),
         }
     };
-    say("\nGnuPG will now ask for the passphrase, twice.");
+    // gpg-agent keeps the passphrase only for an instant (max-cache-ttl 0):
+    // on a slow computer it is gone before the new key is signed.
+    say(
+        "\nGnuPG will now ask for the passphrase, twice. On a slow computer it may ask \
+         once more, to unlock the new key and sign it: type the same passphrase.",
+    );
     let (ok, status, err) = run(gpg(c)
         .arg("--quick-generate-key")
         .arg("--")

@@ -221,6 +221,8 @@ fn run_interactive() -> ExitCode {
     }));
 
     let mut app = App::new(s);
+    // Before the screen is taken: loadkeys may print to the console.
+    app.apply_saved_layout();
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal, &mut app);
     ratatui::restore();

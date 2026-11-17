@@ -11,6 +11,7 @@ use resilience_core::catalog::{Catalog, Category};
 use resilience_core::clock;
 use resilience_core::config::{SystemConfig, ThemeName, ToolPaths, UserSettings};
 use resilience_core::mode::{Detected, Mode};
+use resilience_core::packs::PackKind;
 
 use crate::app::{
     App, BACKUP_LABEL, Builtin, CHECK_LABEL, CRYPTO_LABEL, Effect, EncryptTarget, Entry, ItemPlace,
@@ -130,6 +131,10 @@ description = "Carol the admin"
         booted_system: sys.join("booted"),
         running_system: sys.join("current"),
         packs_config: sys.join("packs.toml"),
+        // Absent: local messaging is off unless a test creates the file.
+        comms_client: sys.join("comms-client-config"),
+        // Absent: the mesh is off.
+        mesh_devices: sys.join("mesh-devices"),
     }
 }
 
@@ -396,8 +401,9 @@ fn home_renders_at_80x24() {
     assert!(screen.contains("ULTRA-STABLE"));
     assert!(screen.contains("[1] KNOWLEDGE & DOCUMENTATION"));
     assert!(screen.contains("F1 Help"));
-    // Empty categories (maps, radio...) are not offered.
-    assert!(!screen.contains("MAPS & NAVIGATION"));
+    // Maps come with the resource packs of the system.
+    assert!(screen.contains("[2] MAPS & NAVIGATION"), "{screen}");
+    // Empty categories (radio...) are not offered.
     assert!(!screen.contains("RADIO"));
 }
 
@@ -626,7 +632,10 @@ fn theme_change_is_saved() {
     let mut a = app(Mode::UltraStable, "theme");
     let (v, _) = a.activate(Entry::Builtin(Builtin::Settings));
     a.stack.push(v.expect("settings"));
-    press(&mut a, KeyCode::End); // Mono
+    press(&mut a, KeyCode::Home);
+    for _ in 0..3 {
+        press(&mut a, KeyCode::Down); // Mono, the last theme
+    }
     press(&mut a, KeyCode::Enter);
     assert_eq!(a.settings.theme, ThemeName::Mono);
     let (loaded, _) = UserSettings::load(&a.settings_path);
@@ -2231,6 +2240,10 @@ fn library_entries_are_hidden_without_a_catalog() {
     assert!(!e.contains(&Entry::Builtin(Builtin::Packs)));
     assert!(!e.contains(&Entry::Builtin(Builtin::Library)));
     assert!(a.search("resource packs").is_empty());
+    // No maps either: the section is empty, so it is not offered.
+    assert!(a.entries(Category::Maps).is_empty());
+    assert!(!a.home_categories().contains(&Category::Maps));
+    assert!(a.search("atlas").is_empty());
     a.paths.packs_config = a.home.join("missing.toml");
     let (v, e) = a.activate(Entry::Builtin(Builtin::Library));
     assert!(v.is_none() && e == Effect::None);
@@ -2275,7 +2288,7 @@ fn packs_on_a_stick_are_read_without_installing_and_can_be_checked() {
     std::fs::write(stick.join("Resilience-packs/own_docs.zim"), b"x").expect("w");
     std::fs::write(stick.join("Resilience-packs/notes.txt"), b"x").expect("w");
     let cfg = resilience_core::packs::PackConfig::load(&a.paths.packs_config).expect("cfg");
-    let items = stick_items(&cfg, "STICK", &stick);
+    let items = stick_items(&cfg, "STICK", &stick, PackKind::Zim);
     let got: Vec<(&str, &ItemPlace)> = items.iter().map(|i| (i.title.as_str(), &i.place)).collect();
     let on = |known| ItemPlace::Stick {
         volume: "STICK".into(),
@@ -2326,6 +2339,392 @@ fn packs_on_a_stick_are_read_without_installing_and_can_be_checked() {
     assert!(
         matches!(a.view(), View::Library { .. }),
         "back in the library"
+    );
+}
+
+// ----- map packs in the resource-pack machinery (ADR 0016, slice 1) --------
+
+/// The coverage text of the test map pack: long enough to wrap, and with a
+/// last word that shows whether it was shown in full.
+/// Add the built-in world overview to the test catalog of `write_packs`.
+fn add_world_map(a: &App) -> PathBuf {
+    let sys = a.home.join("sys");
+    let world = sys.join("map-world-natural-earth_2022-05.mbtiles");
+    std::fs::write(&world, b"SQLite format 3\0").expect("w");
+    let mut text = std::fs::read_to_string(sys.join("packs.toml")).expect("read");
+    text.push_str(&format!(
+        "[[builtin]]\ntitle = \"World overview map (built in)\"\n\
+         description = \"The whole world at overview detail. No streets.\"\n\
+         category = \"maps\"\nlanguage = \"en\"\npath = \"{}\"\n\
+         license = \"Public domain\"\nsource = \"Natural Earth\"\n",
+        world.display()
+    ));
+    std::fs::write(sys.join("packs.toml"), text).expect("write");
+    world
+}
+
+fn map_argv(files: &[&Path]) -> Vec<String> {
+    let mut argv = vec!["resilience-maps".to_string(), "view".into()];
+    for f in files {
+        argv.extend(["--pack".to_string(), f.display().to_string()]);
+    }
+    argv
+}
+
+#[test]
+fn map_opens_the_viewer_on_built_in_and_installed_maps() {
+    let mut a = app(Mode::UltraStable, "map-open");
+    assert_eq!(
+        a.entries(Category::Maps),
+        [
+            Entry::Builtin(Builtin::Map),
+            Entry::Builtin(Builtin::MapFiles)
+        ]
+    );
+    assert!(
+        a.search("atlas")
+            .contains(&SearchHit::Entry(Entry::Builtin(Builtin::Map)))
+    );
+    // No map at all: explained, nothing runs.
+    let (v, e) = a.activate(Entry::Builtin(Builtin::Map));
+    assert!(v.is_none() && e == Effect::None);
+    assert!(matches!(&a.modal, Some(Modal::Message { title, .. }) if title == "NO MAP"));
+    a.modal = None;
+
+    // Only the built-in overview.
+    let world = add_world_map(&a);
+    let (v, e) = a.activate(Entry::Builtin(Builtin::Map));
+    assert!(v.is_none());
+    let Effect::Run(req) = e else {
+        panic!("expected a run")
+    };
+    assert_eq!(req.argv, map_argv(&[&world]));
+    assert!(req.extra_args.is_empty() && req.polkit_agent.is_none() && !req.pause_after);
+
+    // With an installed pack: the overview first, then the pack. The older
+    // version left in the packs directory is not opened by default.
+    add_map_pack(&a);
+    let pack = a.home.join("sys/packs/map-osm-testland_2026-01.mbtiles");
+    let (_, e) = a.activate(Entry::Builtin(Builtin::Map));
+    let Effect::Run(req) = e else {
+        panic!("expected a run")
+    };
+    assert_eq!(req.argv, map_argv(&[&world, &pack]));
+
+    // Every mode may look at maps.
+    for mode in [Mode::Stable, Mode::Advanced] {
+        let b = app(mode, "map-open-modes");
+        assert_eq!(b.entries(Category::Maps).len(), 2, "{mode:?}");
+    }
+}
+
+#[test]
+fn maps_list_shows_only_maps_and_opens_the_chosen_one() {
+    let mut a = app(Mode::UltraStable, "map-list");
+    open(&mut a, Builtin::MapFiles);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("This computer has no map yet"), "{screen}");
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    a.stack.pop();
+
+    let world = add_world_map(&a);
+    add_map_pack(&a);
+    let dir = a.home.join("sys/packs");
+    let pack = dir.join("map-osm-testland_2026-01.mbtiles");
+    let older = dir.join("map-osm-testland_2025-07.mbtiles");
+    // A map on an open stick, as the list would find it.
+    let stick = a.home.join("stick");
+    std::fs::create_dir_all(stick.join("Resilience-packs")).expect("mkdir");
+    let own = stick.join("Resilience-packs/own-town.mbtiles");
+    std::fs::write(&own, b"x").expect("w");
+    let cfg = resilience_core::packs::PackConfig::load(&a.paths.packs_config).expect("cfg");
+    let on_stick = stick_items(&cfg, "STICK", &stick, PackKind::Map);
+    assert_eq!(on_stick.len(), 1);
+
+    open(&mut a, Builtin::MapFiles);
+    if let Some(View::Library { items, .. }) = a.stack.last_mut() {
+        items.extend(on_stick);
+    }
+    let View::Library { kind, items, .. } = a.view() else {
+        panic!("not on the maps list")
+    };
+    assert_eq!(*kind, PackKind::Map);
+    let titles: Vec<&str> = items.iter().map(|i| i.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        [
+            "World overview map (built in)",
+            "Testland (OpenStreetMap)",
+            "Testland (OpenStreetMap) (older version)",
+            "own-town.mbtiles"
+        ]
+    );
+    for (w, h) in [(80, 24), (60, 20), (160, 50)] {
+        let screen = render(&mut a, w, h);
+        assert!(screen.contains("MAPS"), "{screen}");
+        assert!(screen.contains("World overview map"), "{screen}");
+        assert!(!screen.contains("OFFLINE LIBRARY"), "{screen}");
+        assert!(!screen.contains("Wikipedia"), "{screen}");
+        assert_console_glyphs(&screen);
+    }
+    assert!(render(&mut a, 80, 24).contains("Enter Open the map"));
+
+    let run = |a: &mut App| match press(a, KeyCode::Enter) {
+        Effect::Run(req) => req.argv,
+        e => panic!("expected a run, got {e:?}"),
+    };
+    // The overview alone.
+    assert_eq!(run(&mut a), map_argv(&[&world]));
+    // An installed pack: over the overview.
+    press(&mut a, KeyCode::Down);
+    assert_eq!(run(&mut a), map_argv(&[&world, &pack]));
+    // The older version: asked for, so opened, before the current one.
+    press(&mut a, KeyCode::Down);
+    assert_eq!(run(&mut a), map_argv(&[&world, &older, &pack]));
+    // A file on a stick: the same, with the installed pack.
+    press(&mut a, KeyCode::Down);
+    assert_eq!(run(&mut a), map_argv(&[&world, &own, &pack]));
+    // c checks it with the library tool; s (full-text search) is for ZIM files.
+    let Effect::Run(req) = press(&mut a, KeyCode::Char('c')) else {
+        panic!("expected a run")
+    };
+    assert_eq!(
+        req.argv,
+        [
+            "resilience-library".to_string(),
+            "check".into(),
+            own.display().to_string()
+        ]
+    );
+    assert_eq!(press(&mut a, KeyCode::Char('s')), Effect::None);
+    assert!(a.modal.is_none());
+    // Help is about maps.
+    press(&mut a, KeyCode::F(1));
+    assert!(render(&mut a, 80, 24).contains("== MAPS =="));
+    press(&mut a, KeyCode::Esc);
+    // p: the packs screen.
+    press(&mut a, KeyCode::Char('p'));
+    assert!(matches!(a.view(), View::Packs { .. }));
+}
+
+#[test]
+fn at_most_eight_maps_are_given_to_the_viewer() {
+    let mut a = app(Mode::UltraStable, "map-many");
+    add_world_map(&a);
+    let sys = a.home.join("sys");
+    let mut text = std::fs::read_to_string(sys.join("packs.toml")).expect("read");
+    for i in 0..10 {
+        let file = format!("map-osm-region{i}_2026-01.mbtiles");
+        text.push_str(&format!(
+            "[[pack]]\nid = \"map-osm-region{i}\"\ntitle = \"Region {i}\"\n\
+             description = \"D\"\ncategory = \"maps\"\nlanguage = \"en\"\n\
+             file = \"{file}\"\nsize = 1\nsha256 = \"{}\"\nlicense = \"ODbL-1.0\"\n\
+             source = \"S\"\ndata_date = \"2026-01-01\"\ncoverage = \"Region {i} only\"\n\
+             attribution = \"(c) OpenStreetMap contributors\"\n",
+            "c".repeat(64)
+        ));
+        std::fs::write(sys.join("packs").join(file), b"x").expect("w");
+    }
+    std::fs::write(sys.join("packs.toml"), text).expect("write");
+    let (_, e) = a.activate(Entry::Builtin(Builtin::Map));
+    let Effect::Run(req) = e else {
+        panic!("expected a run")
+    };
+    assert_eq!(req.argv.iter().filter(|x| *x == "--pack").count(), 8);
+    assert!(req.argv[3].ends_with("map-world-natural-earth_2022-05.mbtiles"));
+}
+
+const MAP_COVERAGE: &str = "Testland only: streets, places and points of interest from \
+    OpenStreetMap. Buildings and house numbers are left out. Outside Testland only the world \
+    overview is shown. OpenStreetMap is made by volunteers: something absent from the map may \
+    still exist. END-OF-COVERAGE";
+
+/// Add a map pack (installed, no download address) and an older version of
+/// it to the test catalog of `write_packs`. It is catalog pack 3.
+fn add_map_pack(a: &App) {
+    let sys = a.home.join("sys");
+    let mut text = std::fs::read_to_string(sys.join("packs.toml")).expect("read");
+    text.push_str(&format!(
+        "[[pack]]\nid = \"map-osm-testland\"\ntitle = \"Testland (OpenStreetMap)\"\n\
+         description = \"A detailed map of Testland\"\ncategory = \"maps\"\nlanguage = \"en\"\n\
+         file = \"map-osm-testland_2026-01.mbtiles\"\nsize = 16\nsha256 = \"{}\"\n\
+         license = \"ODbL-1.0\"\nsource = \"Geofabrik extract, built by resilience-mapmaker\"\n\
+         data_date = \"2026-01-01\"\ncoverage = \"{MAP_COVERAGE}\"\n\
+         attribution = \"(c) OpenStreetMap contributors\"\n",
+        "b".repeat(64)
+    ));
+    std::fs::write(sys.join("packs.toml"), text).expect("write");
+    std::fs::write(
+        sys.join("packs/map-osm-testland_2026-01.mbtiles"),
+        b"SQLite format 3\0",
+    )
+    .expect("w");
+    std::fs::write(sys.join("packs/map-osm-testland_2025-07.mbtiles"), b"old").expect("w");
+}
+
+#[test]
+fn map_pack_details_show_date_coverage_and_attribution() {
+    let mut a = app(Mode::UltraStable, "map-details");
+    add_map_pack(&a);
+    open(&mut a, Builtin::Packs);
+    use resilience_core::packs::PackCategory::*;
+    assert_eq!(
+        pack_rows(&a),
+        vec![
+            PackRow::Header(Encyclopedia),
+            PackRow::Pack(0),
+            PackRow::Pack(2),
+            PackRow::Header(Health),
+            PackRow::Pack(1),
+            PackRow::Header(Maps),
+            PackRow::Pack(3),
+            PackRow::OthersHeader,
+            PackRow::Other(0),
+            PackRow::Other(1),
+        ]
+    );
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("-- MAPS --"), "{screen}");
+    assert!(screen.contains("[*] Testland (OpenStreetMap)"), "{screen}");
+
+    select_row(&mut a, PackRow::Pack(3));
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    let View::Pager { title, text, .. } = a.view() else {
+        panic!("details are a scrolling view")
+    };
+    assert_eq!(title, "PACK DETAILS");
+    // The coverage text is kept whole, never shortened.
+    assert!(
+        text.contains(&format!("Coverage: {MAP_COVERAGE}\n")),
+        "{text}"
+    );
+    assert!(text.contains("Data date: 2026-01-01"), "{text}");
+    assert!(
+        text.contains("Attribution: (c) OpenStreetMap contributors"),
+        "{text}"
+    );
+    assert!(text.contains("License: ODbL-1.0"), "{text}");
+    assert!(text.contains("opened from Maps & navigation"), "{text}");
+    assert!(text.contains("copy it from a USB stick"), "{text}");
+    // On the smallest screen, the coverage, date and attribution are all on
+    // the first page, before the size and the fingerprint.
+    let screen = render(&mut a, 80, 24);
+    for want in [
+        "PACK DETAILS",
+        "Coverage: Testland only",
+        "END-OF-COVERAGE",
+        "Data date: 2026-01-01",
+        "Attribution: (c) OpenStreetMap",
+    ] {
+        assert!(screen.contains(want), "{want}: {screen}");
+    }
+    assert_console_glyphs(&screen);
+    press(&mut a, KeyCode::Esc);
+    assert!(matches!(a.view(), View::Packs { .. }));
+
+    // A ZIM entry without the new fields shows none of them.
+    select_row(&mut a, PackRow::Pack(0));
+    press(&mut a, KeyCode::Enter);
+    let View::Pager { text, .. } = a.view() else {
+        panic!("details")
+    };
+    assert!(
+        text.starts_with("Wikipedia (English)\n\nAbout wiki-en\n"),
+        "{text}"
+    );
+    for absent in ["Coverage", "Data date", "Attribution", "Maps & navigation"] {
+        assert!(!text.contains(absent), "{absent}: {text}");
+    }
+    assert!(text.contains("State: installed"), "{text}");
+    press(&mut a, KeyCode::Esc);
+
+    // The older map file is recognised as an older version of the map pack.
+    select_row(&mut a, PackRow::Other(0));
+    let View::Packs { s, .. } = a.view() else {
+        panic!("packs")
+    };
+    let older: Vec<_> = s
+        .inv
+        .others
+        .iter()
+        .map(|o| (o.file.as_str(), o.older_of))
+        .collect();
+    assert_eq!(
+        older,
+        [
+            ("map-osm-testland_2025-07.mbtiles", Some(3)),
+            ("wiki_en_2026-03.zim", Some(0))
+        ]
+    );
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(a.view(), View::Pager { text, .. } if text.contains("older version of 'Testland")
+            && text.contains("opened in Maps & navigation"))
+    );
+}
+
+#[test]
+fn the_library_does_not_offer_map_files_to_the_reader() {
+    let mut a = app(Mode::UltraStable, "map-library");
+    add_map_pack(&a);
+    let stick = a.home.join("stick");
+    std::fs::create_dir_all(stick.join("Resilience-packs")).expect("mkdir");
+    std::fs::write(
+        stick.join("map-osm-testland_2026-01.mbtiles"),
+        b"SQLite format 3\0",
+    )
+    .expect("w");
+    std::fs::write(stick.join("Resilience-packs/own-town.mbtiles"), b"x").expect("w");
+    std::fs::write(stick.join("Resilience-packs/own_docs.zim"), b"x").expect("w");
+
+    open(&mut a, Builtin::Library);
+    let View::Library { items, .. } = a.view() else {
+        panic!("not on the library view")
+    };
+    let titles: Vec<&str> = items.iter().map(|i| i.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        [
+            "System documentation (built in)",
+            "Wikipedia (English)",
+            "Wikipedia (English) (older version)"
+        ]
+    );
+    assert!(
+        items
+            .iter()
+            .all(|i| !i.path.to_string_lossy().ends_with(".mbtiles"))
+    );
+    // Going through the whole list never runs the reader on a map.
+    for _ in 0..items.len() {
+        if let Effect::Run(req) = press(&mut a, KeyCode::Enter) {
+            assert!(!req.argv.iter().any(|x| x.ends_with(".mbtiles")), "{req:?}");
+        }
+        press(&mut a, KeyCode::Down);
+    }
+
+    // On a stick: the library sees only ZIM files; maps are kept apart for
+    // Maps & navigation.
+    let cfg = resilience_core::packs::PackConfig::load(&a.paths.packs_config).expect("cfg");
+    let zim: Vec<String> = stick_items(&cfg, "STICK", &stick, PackKind::Zim)
+        .into_iter()
+        .map(|i| i.title)
+        .collect();
+    assert_eq!(zim, ["own_docs.zim"]);
+    let maps: Vec<(String, ItemPlace)> = stick_items(&cfg, "STICK", &stick, PackKind::Map)
+        .into_iter()
+        .map(|i| (i.title, i.place))
+        .collect();
+    let on = |known| ItemPlace::Stick {
+        volume: "STICK".into(),
+        known,
+    };
+    assert_eq!(
+        maps,
+        [
+            ("Testland (OpenStreetMap)".to_string(), on(true)),
+            ("own-town.mbtiles".to_string(), on(false))
+        ]
     );
 }
 
@@ -2916,5 +3315,737 @@ fn openpgp_keys_are_listed_offered_and_removable() {
             "--to-pgp",
             "0123456789ABCDEF0123456789ABCDEFB0B0B0B0"
         ]
+    );
+}
+
+/// A fake `pkexec` (in the test admin.toml) that logs its arguments and
+/// fails for the layout "de", as the helper would for a layout it refuses.
+fn fake_keymap_helper(a: &mut App) -> std::path::PathBuf {
+    use resilience_core::keyboard::{KeyboardConfig, Layout};
+    use std::os::unix::fs::PermissionsExt;
+    let dir = a.home.join("sys");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let log = dir.join("pkexec.log");
+    let script = dir.join("pkexec");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> {}\necho \"SHELL=$SHELL\" >> {}\nif [ \"$3\" = de ]; then echo 'this keyboard layout is not offered' >&2; exit 1; fi\n",
+            log.display(),
+            log.display()
+        ),
+    )
+    .expect("write");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let admin = std::fs::read_to_string(&a.paths.admin_config).expect("admin.toml");
+    std::fs::write(
+        &a.paths.admin_config,
+        admin.replace("/run/wrappers/bin/pkexec", &script.display().to_string()),
+    )
+    .expect("admin.toml");
+    let l = |id: &str, label: &str| Layout {
+        id: id.into(),
+        label: label.into(),
+    };
+    a.sys.keyboard = KeyboardConfig {
+        default: "us".into(),
+        layouts: vec![
+            l("us", "English (US, QWERTY)"),
+            l("fr", "French (AZERTY)"),
+            l("de", "German (QWERTZ)"),
+        ],
+    };
+    log
+}
+
+#[test]
+fn keyboard_layout_is_loaded_saved_and_restored_at_login() {
+    let mut a = app(Mode::UltraStable, "keyboard");
+    let log = fake_keymap_helper(&mut a);
+    let (v, _) = a.activate(Entry::Builtin(Builtin::Settings));
+    a.stack.push(v.expect("settings"));
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("Keyboard  French (AZERTY)"), "{screen}");
+    assert!(
+        screen.contains("Keyboard  English (US, QWERTY)  (current)"),
+        "{screen}"
+    );
+    // Themes first, then layouts: French is the 6th row.
+    press(&mut a, KeyCode::Home);
+    for _ in 0..5 {
+        press(&mut a, KeyCode::Down);
+    }
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.settings.keyboard.as_deref(), Some("fr"));
+    assert_eq!(
+        UserSettings::load(&a.settings_path).0.keyboard.as_deref(),
+        Some("fr")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&log).expect("log"),
+        "/store/bin/resilience-admin set-keymap fr\nSHELL=/run/current-system/sw/bin/resilience-session\n"
+    );
+    assert!(render(&mut a, 80, 24).contains("French (AZERTY)  (current)"));
+    // A layout loadkeys refuses is reported and not saved.
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.settings.keyboard.as_deref(), Some("fr"));
+    assert!(a.notices.iter().any(|n| n.text.contains("not offered")));
+
+    // Next login: the saved choice is loaded again; the default is not
+    // (the login prompt already loaded it); a choice no longer offered
+    // falls back to the default with a warning.
+    let mut b = app(Mode::UltraStable, "keyboard-login");
+    let log = fake_keymap_helper(&mut b);
+    b.settings.keyboard = Some("fr".into());
+    b.apply_saved_layout();
+    b.settings.keyboard = Some("us".into());
+    b.apply_saved_layout();
+    b.settings.keyboard = Some("xx; rm".into());
+    b.apply_saved_layout();
+    let calls = std::fs::read_to_string(&log).expect("log");
+    assert_eq!(calls.matches("set-keymap").count(), 1, "{calls}");
+    assert!(calls.contains("set-keymap fr"), "{calls}");
+    assert!(
+        b.notices
+            .iter()
+            .any(|n| n.text.contains("no longer offered"))
+    );
+}
+
+#[test]
+fn the_mesh_is_offered_explained_and_turned_on_and_off() {
+    let mut a = app(Mode::UltraStable, "mesh");
+    // Without a mesh on this system: no entry, not even in search.
+    assert!(!a.builtin_present(Builtin::Mesh));
+    let log = fake_keymap_helper(&mut a);
+    let admin = std::fs::read_to_string(&a.paths.admin_config).expect("admin.toml");
+    std::fs::write(
+        &a.paths.admin_config,
+        format!("mesh_unit = \"resilience-mesh.service\"\n{admin}"),
+    )
+    .expect("admin.toml");
+    assert!(a.builtin_present(Builtin::Mesh));
+    assert!(
+        a.search("mesh")
+            .contains(&SearchHit::Entry(Entry::Builtin(Builtin::Mesh)))
+    );
+    assert!(
+        a.search("router")
+            .contains(&SearchHit::Entry(Entry::Builtin(Builtin::Mesh)))
+    );
+
+    // Off: what turning it on means, Cancel first.
+    a.activate(Entry::Builtin(Builtin::Mesh));
+    let screen = render(&mut a, 100, 40);
+    assert!(screen.contains("MESH NETWORK"), "{screen}");
+    assert!(screen.contains("The mesh network is off."), "{screen}");
+    assert!(screen.contains("cannot join an"), "{screen}");
+    assert!(screen.contains("Turn on"), "{screen}");
+    assert_console_glyphs(&screen);
+    press(&mut a, KeyCode::Enter);
+    assert!(!log.exists(), "turned on without confirming");
+    a.activate(Entry::Builtin(Builtin::Mesh));
+    press(&mut a, KeyCode::Left);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        std::fs::read_to_string(&log).expect("log"),
+        "/store/bin/resilience-admin set-mesh on\nSHELL=/run/current-system/sw/bin/resilience-session\n"
+    );
+    assert!(
+        a.notices
+            .last()
+            .expect("notice")
+            .text
+            .contains("The mesh network is on")
+    );
+
+    // On (the service wrote its cards): turning it off.
+    std::fs::write(&a.paths.mesh_devices, "wlan0\n").expect("w");
+    a.activate(Entry::Builtin(Builtin::Mesh));
+    let screen = render(&mut a, 100, 40);
+    assert!(
+        screen.contains("The mesh network is ON (wlan0)"),
+        "{screen}"
+    );
+    assert!(screen.contains("Turn off"), "{screen}");
+    press(&mut a, KeyCode::Left);
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        std::fs::read_to_string(&log)
+            .expect("log")
+            .contains("set-mesh off")
+    );
+    assert!(a.notices.last().expect("n").text.contains("is off"));
+}
+
+// ----- local messages (ADR 0018) ---------------------------------------------
+
+const ME: &str = "0123456789abcdef0123456789abcdef";
+const MARIE: &str = "aaaabbbbccccddddeeeeffff00001111";
+
+/// Local messaging enabled on the machine, the account's program "running".
+fn chat_app(tag: &str) -> App {
+    let a = app(Mode::UltraStable, tag);
+    std::fs::write(&a.paths.comms_client, "[reticulum]\n").expect("w");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    std::fs::create_dir_all(box_.join("messages")).expect("mkdir");
+    std::fs::write(box_.join("address"), format!("{ME}\n")).expect("w");
+    std::fs::write(
+        box_.join("status.json"),
+        format!(
+            r#"{{"address":"{ME}","name":"demo","pid":1,"time":{}}}"#,
+            crate::app::chat_now()
+        ),
+    )
+    .expect("w");
+    a
+}
+
+/// What the messaging program would write for a message.
+fn chat_record(a: &App, id: &str, direction: &str, state: &str, verified: bool, text: &str) {
+    let body = serde_json_string(text);
+    let detail = if state == "queued" {
+        "waiting for the recipient"
+    } else {
+        ""
+    };
+    std::fs::write(
+        resilience_core::messages::store_dir(&a.home)
+            .join("messages")
+            .join(format!("{id}.json")),
+        format!(
+            r#"{{"id":"{id}","direction":"{direction}","peer":"{MARIE}","text":{body},"created":{},"state":"{state}","verified":{verified},"detail":"{detail}"}}"#,
+            crate::app::chat_now()
+        ),
+    )
+    .expect("w");
+}
+
+/// A JSON string literal (the tests' texts need only these escapes).
+fn serde_json_string(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Let the periodic reload of the messages screens happen.
+fn chat_refresh(a: &mut App) {
+    for _ in 0..8 {
+        a.on_tick();
+    }
+}
+
+#[test]
+fn local_messages_exist_only_where_messaging_is_enabled() {
+    let a = app(Mode::UltraStable, "chat-off");
+    assert!(a.entries(Category::Communications).is_empty());
+    assert!(!a.home_categories().contains(&Category::Communications));
+    assert!(
+        !a.search("nearby")
+            .contains(&SearchHit::Entry(Entry::Builtin(Builtin::Chat)))
+    );
+    for mode in [Mode::UltraStable, Mode::Stable, Mode::Advanced] {
+        let b = app(mode, "chat-on");
+        std::fs::write(&b.paths.comms_client, "x").expect("w");
+        assert_eq!(
+            b.entries(Category::Communications),
+            [Entry::Builtin(Builtin::Chat)],
+            "{mode:?}"
+        );
+        assert!(
+            b.search("nearby")
+                .contains(&SearchHit::Entry(Entry::Builtin(Builtin::Chat)))
+        );
+    }
+}
+
+#[test]
+fn my_address_and_a_stopped_program_are_said_plainly() {
+    let mut a = app(Mode::UltraStable, "chat-stopped");
+    std::fs::write(&a.paths.comms_client, "x").expect("w");
+    open(&mut a, Builtin::Chat);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("LOCAL MESSAGES"), "{screen}");
+    assert!(screen.contains("No messages yet"), "{screen}");
+    assert!(screen.contains("Messaging is not running"), "{screen}");
+    assert_console_glyphs(&screen);
+    press(&mut a, KeyCode::Char('m'));
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("Messaging has not started"), "{screen}");
+    press(&mut a, KeyCode::Enter);
+
+    let mut a = chat_app("chat-address");
+    open(&mut a, Builtin::Chat);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("Messaging is running"), "{screen}");
+    assert!(screen.contains("01234567.."), "{screen}");
+    press(&mut a, KeyCode::Char('m'));
+    let screen = render(&mut a, 80, 24);
+    assert!(
+        screen.contains("0123 4567 89ab cdef 0123 4567 89ab cdef"),
+        "{screen}"
+    );
+    assert!(!screen.contains("not running"), "{screen}");
+}
+
+#[test]
+fn a_message_store_and_a_copy_left_in_it_are_shown() {
+    // No store heard: said plainly on the conversations screen.
+    let mut a = chat_app("chat-nostore");
+    open(&mut a, Builtin::Chat);
+    let screen = render(&mut a, 120, 30);
+    assert!(
+        screen.contains("No message store on this network"),
+        "{screen}"
+    );
+
+    // A store in use (ADR 0019) and a message whose copy waits in it.
+    let mut a = chat_app("chat-store");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    std::fs::write(
+        box_.join("status.json"),
+        format!(
+            r#"{{"address":"{ME}","name":"demo","pid":1,"time":{},"store":"{MARIE}"}}"#,
+            crate::app::chat_now()
+        ),
+    )
+    .expect("w");
+    std::fs::write(
+        box_.join("messages").join("m1.json"),
+        format!(
+            r#"{{"id":"m1","direction":"out","peer":"{MARIE}","text":"Left for later","created":{},"state":"sent","stored":true,"detail":"a copy waits"}}"#,
+            crate::app::chat_now()
+        ),
+    )
+    .expect("w");
+    open(&mut a, Builtin::Chat);
+    press(&mut a, KeyCode::Up);
+    let screen = render(&mut a, 120, 30);
+    assert!(screen.contains("wait in a message store"), "{screen}");
+    press(&mut a, KeyCode::Enter);
+    let screen = render(&mut a, 120, 30);
+    assert!(screen.contains("[sent, kept on the network]"), "{screen}");
+    assert!(screen.contains("Left for later"), "{screen}");
+    assert!(!screen.contains("[delivered]"), "{screen}");
+    assert_console_glyphs(&screen);
+}
+
+#[test]
+fn writing_to_an_address_saves_a_request_and_never_claims_more() {
+    let mut a = chat_app("chat-write");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    open(&mut a, Builtin::Chat);
+    press(&mut a, KeyCode::Char('n'));
+    assert!(render(&mut a, 80, 24).contains("WRITE TO AN ADDRESS"));
+    // Not an address; then my own address: explained, nothing written.
+    type_text(&mut a, "marie");
+    press(&mut a, KeyCode::Enter);
+    assert!(render(&mut a, 80, 24).contains("An address has 32 characters"));
+    for _ in 0..5 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    type_text(&mut a, ME);
+    press(&mut a, KeyCode::Enter);
+    assert!(render(&mut a, 80, 24).contains("This is your own address"));
+    assert!(!box_.join("outbox").exists());
+    press(&mut a, KeyCode::Esc);
+    assert!(a.modal.is_none());
+
+    // As read aloud: groups, upper case.
+    press(&mut a, KeyCode::Char('n'));
+    type_text(&mut a, "AAAA bbbb cccc dddd eeee ffff 0000 1111");
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(a.view(), View::Chat { peer, .. } if peer == MARIE));
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("WRITE A MESSAGE"), "{screen}");
+    // Empty: refused in the dialog.
+    press(&mut a, KeyCode::Enter);
+    assert!(render(&mut a, 80, 24).contains("the message is empty"));
+    type_text(&mut a, "Water at the \"school\", 9h; $(reboot)");
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    assert!(a.modal.is_none());
+
+    let files: Vec<PathBuf> = std::fs::read_dir(box_.join("outbox"))
+        .expect("outbox")
+        .map(|e| e.expect("entry").path())
+        .collect();
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert!(files[0].extension().is_some_and(|e| e == "json"));
+    let text = std::fs::read_to_string(&files[0]).expect("read");
+    assert!(text.contains(&format!("\"to\":\"{MARIE}\"")), "{text}");
+    assert!(
+        text.contains(r#""text":"Water at the \"school\", 9h; $(reboot)""#),
+        "{text}"
+    );
+    // Saved, not "sent" and certainly not "delivered".
+    let said = &a.notices.last().expect("notice").text;
+    assert!(said.contains("Message saved"), "{said}");
+    let lower = said.to_lowercase();
+    assert!(
+        !lower.contains("delivered") && !lower.contains("sent"),
+        "{said}"
+    );
+    let screen = render(&mut a, 80, 24);
+    assert!(
+        screen.contains("No messages with this person yet"),
+        "{screen}"
+    );
+    assert!(!screen.contains("[delivered]"), "{screen}");
+}
+
+#[test]
+fn a_message_can_have_several_lines() {
+    let mut a = chat_app("chat-lines");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    open(&mut a, Builtin::Chat);
+    press(&mut a, KeyCode::Char('n'));
+    type_text(&mut a, MARIE);
+    press(&mut a, KeyCode::Enter);
+    let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+    type_text(&mut a, "Water:");
+    a.handle_key(ctrl('n'));
+    type_text(&mut a, "school, 9h");
+    a.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+    a.handle_key(ctrl('j'));
+    type_text(&mut a, "Bring cans");
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("> Water:"), "{screen}");
+    assert!(screen.contains("  school, 9h"), "{screen}");
+    assert!(screen.contains("  Bring cans█"), "{screen}");
+    assert!(screen.contains("Ctrl-N new line"), "{screen}");
+    // Backspace takes a line break back like any character.
+    for _ in 0.."Bring cans".len() + 1 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    type_text(&mut a, "Bring cans.");
+    assert!(
+        matches!(a.modal, Some(Modal::ChatInput { ref value, .. }) if value == "Water:\nschool, 9h\nBring cans.")
+    );
+    press(&mut a, KeyCode::Enter);
+    assert!(a.modal.is_none());
+    let files: Vec<PathBuf> = std::fs::read_dir(box_.join("outbox"))
+        .expect("outbox")
+        .map(|e| e.expect("entry").path())
+        .collect();
+    let text = std::fs::read_to_string(&files[0]).expect("read");
+    assert!(
+        text.contains(r#""text":"Water:\nschool, 9h\nBring cans.""#),
+        "{text}"
+    );
+    // Only line breaks: still empty.
+    press(&mut a, KeyCode::Char('w'));
+    for _ in 0..3 {
+        a.handle_key(ctrl('n'));
+    }
+    press(&mut a, KeyCode::Enter);
+    assert!(render(&mut a, 80, 24).contains("the message is empty"));
+    press(&mut a, KeyCode::Esc);
+    // A name has one line.
+    press(&mut a, KeyCode::Char('a'));
+    a.handle_key(ctrl('n'));
+    assert!(matches!(a.modal, Some(Modal::ChatInput { ref value, .. }) if value.is_empty()));
+    press(&mut a, KeyCode::Esc);
+    // At most 40 lines (MAX_TYPED_LINES).
+    press(&mut a, KeyCode::Char('w'));
+    for _ in 0..100 {
+        type_text(&mut a, "x");
+        a.handle_key(ctrl('n'));
+    }
+    let Some(Modal::ChatInput { value, .. }) = &a.modal else {
+        panic!("dialog closed");
+    };
+    assert_eq!(value.split('\n').count(), 40);
+    // The end being typed stays on the screen.
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("WRITE A MESSAGE"), "{screen}");
+    assert!(screen.contains("xxxxxxxxxxxxxxxxxxxxx"), "{screen}");
+    assert!(screen.contains("█"), "{screen}");
+}
+
+#[test]
+fn a_file_is_chosen_copied_and_sent_with_a_text() {
+    let mut a = chat_app("chat-send-file");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    std::fs::write(a.home.join("water-points.txt"), "School\nChurch\n").expect("w");
+    std::fs::write(a.home.join("too-big.iso"), vec![0u8; 900_001]).expect("w");
+    chat_record(&a, "m1", "out", "delivered", false, "hello");
+    open(&mut a, Builtin::Chat);
+    press(&mut a, KeyCode::Enter);
+    assert!(render(&mut a, 100, 30).contains("f File"));
+
+    // Too large: said, nothing written.
+    press(&mut a, KeyCode::Char('f'));
+    assert!(render(&mut a, 100, 30).contains("CHOOSE THE FILE TO SEND"));
+    type_text(&mut a, "too-big");
+    press(&mut a, KeyCode::Enter);
+    let screen = render(&mut a, 100, 30);
+    assert!(screen.contains("CANNOT SEND THIS FILE"), "{screen}");
+    assert!(screen.contains("900 KB"), "{screen}");
+    assert!(!box_.join("outbox").exists());
+    press(&mut a, KeyCode::Esc);
+    assert!(matches!(a.view(), View::Chat { .. }));
+
+    press(&mut a, KeyCode::Char('f'));
+    type_text(&mut a, "water-po");
+    press(&mut a, KeyCode::Enter);
+    let screen = render(&mut a, 100, 30);
+    assert!(screen.contains("SEND A FILE"), "{screen}");
+    assert!(screen.contains("water-points.txt' (14 bytes)"), "{screen}");
+    type_text(&mut a, "Where to find water");
+    press(&mut a, KeyCode::Enter);
+    assert!(a.modal.is_none(), "{:?}", a.modal);
+    assert!(matches!(a.view(), View::Chat { .. }));
+    let said = &a.notices.last().expect("notice").text;
+    assert!(said.contains("copy of the file is saved"), "{said}");
+    let mut names: Vec<String> = std::fs::read_dir(box_.join("outbox"))
+        .expect("outbox")
+        .map(|e| e.expect("e").file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert!(names[0].ends_with(".file") && names[1].ends_with(".json"));
+    assert_eq!(
+        std::fs::read_to_string(box_.join("outbox").join(&names[0])).expect("r"),
+        "School\nChurch\n"
+    );
+    let req = std::fs::read_to_string(box_.join("outbox").join(&names[1])).expect("r");
+    assert!(req.contains(r#""file":"water-points.txt""#), "{req}");
+    assert!(req.contains(r#""text":"Where to find water""#), "{req}");
+}
+
+#[test]
+fn a_received_file_is_viewed_and_saved_without_replacing_anything() {
+    let mut a = chat_app("chat-recv-file");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    std::fs::create_dir_all(box_.join("files")).expect("mkdir");
+    std::fs::write(box_.join("files/in-1.txt"), "Bring cans\n").expect("w");
+    let now = crate::app::chat_now();
+    let rec = |id: &str, file: &str| {
+        std::fs::write(
+            box_.join("messages").join(format!("{id}.json")),
+            format!(
+                r#"{{"id":"{id}","direction":"in","peer":"{MARIE}","text":"","created":{now},"state":"received","verified":true,"file":{file}}}"#
+            ),
+        )
+        .expect("w");
+    };
+    rec("in-0", r#"{"name":"huge.bin","size":5000000}"#);
+    rec(
+        "in-1",
+        r#"{"name":"../list\u001b[2J.txt","size":11,"data":"in-1.txt"}"#,
+    );
+    std::fs::create_dir_all(a.home.join("Received")).expect("mkdir");
+    std::fs::write(a.home.join("Received/_.._list [2J.txt"), "mine").expect("w");
+    open(&mut a, Builtin::Chat);
+    press(&mut a, KeyCode::Enter);
+    let screen = render(&mut a, 100, 30);
+    assert!(
+        screen.contains("[file] huge.bin (5.0 MB)  not kept"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("[file] ../list [2J.txt (11 bytes)  o open, s save"),
+        "{screen}"
+    );
+    assert_console_glyphs(&screen);
+
+    // The newest (in-1) is selected: view it, read-only, inside the TUI.
+    assert_eq!(press(&mut a, KeyCode::Char('o')), Effect::None);
+    let screen = render(&mut a, 100, 30);
+    assert!(screen.contains("Bring cans"), "{screen}");
+    press(&mut a, KeyCode::Esc);
+    assert!(matches!(a.view(), View::Chat { .. }));
+
+    // Saved under a safe name beside the user's own file, which stays.
+    press(&mut a, KeyCode::Char('s'));
+    let said = a.notices.last().expect("notice").text.clone();
+    assert!(
+        said.contains("Saved as ~/Received/_.._list [2J (2).txt"),
+        "{said}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(a.home.join("Received/_.._list [2J (2).txt")).expect("r"),
+        "Bring cans\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(a.home.join("Received/_.._list [2J.txt")).expect("r"),
+        "mine"
+    );
+    assert!(!box_.join("files/in-1.txt").exists());
+    // Moved, so neither shown nor saved again.
+    press(&mut a, KeyCode::Char('o'));
+    assert!(a.notices.last().expect("n").text.contains("no longer here"));
+    press(&mut a, KeyCode::Up);
+    press(&mut a, KeyCode::Char('s'));
+    assert!(a.notices.last().expect("n").text.contains("was not kept"));
+}
+
+#[test]
+fn a_conversation_shows_what_is_known_about_each_message() {
+    let mut a = chat_app("chat-states");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    chat_record(&a, "m1", "out", "queued", false, "Water at the school, 9h");
+    open(&mut a, Builtin::Chat);
+    let screen = render(&mut a, 100, 30);
+    assert!(screen.contains("[..] aaaabbbb.."), "{screen}");
+    assert!(screen.contains("You: Water at the school, 9h"), "{screen}");
+    assert!(
+        screen.contains("1 waiting or sent without proof"),
+        "{screen}"
+    );
+    press(&mut a, KeyCode::Enter);
+    let screen = render(&mut a, 100, 30);
+    assert!(screen.contains("MESSAGES WITH aaaabbbb.."), "{screen}");
+    assert!(screen.contains("You [waiting]"), "{screen}");
+    assert!(screen.contains("waiting for the recipient"), "{screen}");
+
+    // The program reports progress; the screen follows by itself.
+    chat_record(&a, "m1", "out", "sent", false, "Water at the school, 9h");
+    chat_refresh(&mut a);
+    assert!(render(&mut a, 100, 30).contains("You [sent]"));
+    chat_record(
+        &a,
+        "m1",
+        "out",
+        "delivered",
+        false,
+        "Water at the school, 9h",
+    );
+    chat_record(&a, "in-1", "in", "received", true, "OK, see you there");
+    chat_record(
+        &a,
+        "in-2",
+        "in",
+        "received",
+        false,
+        "trust me\u{1b}[2J\u{202e}\nsecond line",
+    );
+    chat_record(&a, "m2", "out", "failed", false, "too late");
+    chat_record(&a, "m3", "out", "queued", false, "still trying");
+    chat_refresh(&mut a);
+    let screen = render(&mut a, 100, 40);
+    assert!(screen.contains("You [delivered]"), "{screen}");
+    assert!(screen.contains("Them [from them]"), "{screen}");
+    assert!(
+        screen.contains("Them [from them, NOT VERIFIED]"),
+        "{screen}"
+    );
+    assert!(screen.contains("You [FAILED]"), "{screen}");
+    // The escape sequence and the direction override are not drawn.
+    assert!(screen.contains("trust me[2J"), "{screen}");
+    assert!(screen.contains("second line"), "{screen}");
+    assert!(!screen.contains('\u{1b}') && !screen.contains('\u{202e}'));
+
+    // Small and large screens: the newest message stays in view.
+    for (w, h) in [(160, 50), (80, 24), (60, 20)] {
+        let screen = render(&mut a, w, h);
+        assert!(screen.contains("still trying"), "{screen}");
+        assert_console_glyphs(&screen);
+    }
+
+    // c gives up on a waiting message only.
+    let View::Chat { records, list, .. } = a.view() else {
+        panic!("not in a conversation")
+    };
+    let order: Vec<&str> = records.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(list.selected(), Some(records.len() - 1));
+    let waiting = order.iter().position(|i| *i == "m3").expect("m3");
+    let done = order.iter().position(|i| *i == "m1").expect("m1");
+    let n = order.len();
+    press(&mut a, KeyCode::Home);
+    for _ in 0..done {
+        press(&mut a, KeyCode::Down);
+    }
+    press(&mut a, KeyCode::Char('c'));
+    assert!(!box_.join("cancel").exists());
+    press(&mut a, KeyCode::Home);
+    for _ in 0..waiting {
+        press(&mut a, KeyCode::Down);
+    }
+    press(&mut a, KeyCode::Char('c'));
+    assert!(box_.join("cancel/m3").is_file());
+    assert_eq!(
+        std::fs::read_dir(box_.join("cancel")).expect("ls").count(),
+        1
+    );
+    assert!(n >= 5);
+
+    // a: a name of my own for this address; i: the whole address.
+    press(&mut a, KeyCode::Char('a'));
+    assert!(render(&mut a, 100, 40).contains("NAME THIS PERSON"));
+    type_text(&mut a, "Marie");
+    press(&mut a, KeyCode::Enter);
+    assert!(render(&mut a, 100, 40).contains("MESSAGES WITH Marie (aaaabbbb..)"));
+    press(&mut a, KeyCode::Char('i'));
+    let screen = render(&mut a, 100, 40);
+    assert!(
+        screen.contains("aaaa bbbb cccc dddd eeee ffff 0000 1111"),
+        "{screen}"
+    );
+    assert!(screen.contains("You named this address: Marie"), "{screen}");
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::F(1));
+    assert!(render(&mut a, 100, 40).contains("== LOCAL MESSAGES =="));
+    press(&mut a, KeyCode::Esc);
+    press(&mut a, KeyCode::Esc);
+    let screen = render(&mut a, 100, 30);
+    assert!(screen.contains("[!!] Marie"), "{screen}");
+}
+
+#[test]
+fn people_nearby_are_listed_with_claimed_names() {
+    let mut a = chat_app("chat-nearby");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    open(&mut a, Builtin::Chat);
+    press(&mut a, KeyCode::Char('p'));
+    assert!(render(&mut a, 80, 24).contains("Nobody has been heard"));
+    std::fs::write(
+        box_.join("peers.json"),
+        format!(
+            r#"{{"{MARIE}":{{"name":"marie\u001b[31m","heard":{}}}}}"#,
+            crate::app::chat_now()
+        ),
+    )
+    .expect("w");
+    press(&mut a, KeyCode::Char('r'));
+    for (w, h) in [(80, 24), (60, 20), (160, 50)] {
+        let screen = render(&mut a, w, h);
+        assert!(screen.contains("PEOPLE NEARBY"), "{screen}");
+        assert_console_glyphs(&screen);
+    }
+    let screen = render(&mut a, 100, 30);
+    // A claimed name is quoted and questioned, and cleaned.
+    assert!(screen.contains("\"marie [31m\"?"), "{screen}");
+    assert!(
+        screen.contains("aaaa bbbb cccc dddd eeee ffff 0000 1111"),
+        "{screen}"
+    );
+    press(&mut a, KeyCode::Char('i'));
+    let screen = render(&mut a, 100, 30);
+    assert!(screen.contains("says its name is"), "{screen}");
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::Char('a'));
+    type_text(&mut a, "Marie C.");
+    press(&mut a, KeyCode::Enter);
+    assert!(render(&mut a, 100, 30).contains("Marie C. "));
+    // Enter opens the conversation, ready to write.
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(a.view(), View::Chat { peer, .. } if peer == MARIE));
+    press(&mut a, KeyCode::Char('w'));
+    type_text(&mut a, "hello");
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        std::fs::read_dir(box_.join("outbox")).expect("ls").count(),
+        1
     );
 }

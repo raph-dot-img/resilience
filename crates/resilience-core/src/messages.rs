@@ -1,0 +1,1192 @@
+//! Local messages (ADR 0018): the files shared with the per-user program
+//! `resilience-messages`, which does all the networking.
+//!
+//! ```text
+//! ~/.local/share/resilience/messages/      (0700)
+//!   status.json      written by the program every second while it runs
+//!   address          this account's address (32 hex digits)
+//!   messages/ID.json one record per message, written by the program only
+//!   peers.json       addresses heard on the network, with claimed names
+//!   outbox/ID.json   written HERE: a message to send
+//!   outbox/ID.file   written HERE, just before: the copy of a file to send
+//!   files/           received files (ID.EXT), copies being sent (ID.data)
+//!   cancel/ID        written HERE: give up on a waiting message
+//!   contacts.json    written HERE: names the user gave to addresses
+//! ```
+//!
+//! Everything read comes from the network in the end (texts, names):
+//! sizes and counts are bounded, what does not parse is skipped, and
+//! [`clean_line`] / [`clean_text`] make text safe to draw. Received files
+//! are named by message id; the name that came with one is only shown,
+//! and made safe ([`safe_file_name`]) when the user saves it (ADR 0020).
+//! Nothing here touches the network or starts a program.
+
+use std::collections::BTreeMap;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::Deserialize;
+
+/// Longest message text, in bytes (the program refuses more).
+pub const MAX_TEXT_BYTES: usize = 8 * 1024;
+/// Largest file sent in a message (ADR 0020): the whole message stays
+/// under LXMF's 1000 KB delivery limit.
+pub const MAX_SEND_BYTES: u64 = 900 * 1000;
+/// Folder of the home where received files are saved.
+pub const RECEIVED_DIR: &str = "Received";
+/// Longest file name kept, in characters.
+pub const MAX_FILE_NAME_CHARS: usize = 100;
+/// Largest record or list file read.
+pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
+/// Most records read (the program keeps at most 5,000 finished ones).
+pub const MAX_RECORDS: usize = 6000;
+/// Most nearby addresses and contacts listed.
+pub const MAX_PEERS: usize = 500;
+/// Longest contact name, in characters.
+pub const MAX_NAME_CHARS: usize = 40;
+/// The program writes its status every second; older than this, it is
+/// not running (or stuck).
+pub const STATUS_FRESH_SECS: u64 = 20;
+
+/// The message store of the account whose home is `home`.
+pub fn store_dir(home: &Path) -> PathBuf {
+    home.join(".local/share/resilience/messages")
+}
+
+/// A valid address: 32 lower-case hexadecimal digits.
+pub fn valid_address(s: &str) -> bool {
+    s.len() == 32
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// An address as typed or pasted: spaces, dashes and colons dropped,
+/// upper case accepted. `None` if it is not an address.
+pub fn parse_address(input: &str) -> Option<String> {
+    let s: String = input
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-' && *c != ':')
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    valid_address(&s).then_some(s)
+}
+
+/// An address in groups of four, to read aloud and compare.
+pub fn format_address(addr: &str) -> String {
+    addr.as_bytes()
+        .chunks(4)
+        .map(|c| String::from_utf8_lossy(c).into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The short form shown in lists: the first two groups.
+pub fn short_address(addr: &str) -> String {
+    format!("{}..", addr.chars().take(8).collect::<String>())
+}
+
+fn drawable(c: char) -> bool {
+    // No control characters, and none of the invisible formatting
+    // characters that reorder or hide text (bidi controls, zero width).
+    !c.is_control()
+        && !matches!(c,
+            '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
+}
+
+/// One line that is safe to draw: no control or invisible formatting
+/// characters, white space runs as one space, at most `max` characters.
+pub fn clean_line(s: &str, max: usize) -> String {
+    let mut out = String::new();
+    let mut space = false;
+    for c in s.chars() {
+        if c.is_whitespace() || c.is_control() {
+            space = !out.is_empty();
+        } else if drawable(c) {
+            if space {
+                out.push(' ');
+                space = false;
+            }
+            out.push(c);
+        }
+        if out.chars().count() >= max {
+            break;
+        }
+    }
+    out.chars().take(max).collect()
+}
+
+/// A message text that is safe to draw: its lines, each cleaned (tabs
+/// become spaces), empty lines kept, at most `max_lines`.
+pub fn clean_text(s: &str, max_lines: usize) -> Vec<String> {
+    s.lines()
+        .take(max_lines)
+        .map(|l| {
+            l.chars()
+                .map(|c| if c == '\t' { ' ' } else { c })
+                .filter(|c| drawable(*c))
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Direction {
+    Out,
+    In,
+}
+
+/// What happened to a message (ADR 0018 §5). Never more than what is known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum State {
+    /// Kept on this computer; it will be tried again.
+    Queued,
+    /// Handed to the network; no proof of delivery yet.
+    Sent,
+    /// The recipient's computer confirmed it has the message.
+    Delivered,
+    /// Given up; `detail` says why.
+    Failed,
+    /// An incoming message.
+    Received,
+}
+
+impl State {
+    pub fn label(self) -> &'static str {
+        match self {
+            State::Queued => "waiting",
+            State::Sent => "sent",
+            State::Delivered => "delivered",
+            State::Failed => "FAILED",
+            State::Received => "received",
+        }
+    }
+
+    /// Whether the user can still cancel it.
+    pub fn pending(self) -> bool {
+        matches!(self, State::Queued | State::Sent)
+    }
+}
+
+/// The file of a message (ADR 0020).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct FileInfo {
+    /// The name it came (or was sent) with: only shown, never a path.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub size: u64,
+    /// Incoming: its name in `files/`, absent if it was not kept.
+    #[serde(default)]
+    pub data: Option<String>,
+}
+
+impl FileInfo {
+    /// The name to show: cleaned, never empty.
+    pub fn shown(&self) -> String {
+        let n = clean_line(&self.name, MAX_FILE_NAME_CHARS);
+        if n.is_empty() { "file".into() } else { n }
+    }
+}
+
+/// "300 KB", "12 bytes", "1.2 MB": decimal units, as LXMF and the 900 KB
+/// limit count them.
+pub fn size_text(n: u64) -> String {
+    match n {
+        0..1000 => format!("{n} bytes"),
+        1000..1_000_000 => format!("{} KB", n.div_ceil(1000)),
+        _ => format!("{:.1} MB", n as f64 / 1e6),
+    }
+}
+
+/// A name that is safe to create in a folder: one line, no `/`, not
+/// hidden, not taken for an option, at most [`MAX_FILE_NAME_CHARS`].
+pub fn safe_file_name(name: &str) -> String {
+    let n = clean_line(name, MAX_FILE_NAME_CHARS).replace(['/', '\\'], "_");
+    let n = n.trim().to_string();
+    if n.is_empty() || n == "." || n == ".." {
+        return "file".into();
+    }
+    if n.starts_with('.') || n.starts_with('-') || n.starts_with('~') {
+        return format!("_{n}");
+    }
+    n
+}
+
+/// `name`, then `stem (2).ext`, `stem (3).ext`...
+fn numbered(name: &str, n: usize) -> String {
+    if n < 2 {
+        return name.to_string();
+    }
+    // Before a plain extension: `list (2).pdf`.
+    match name.rfind('.') {
+        Some(i)
+            if i > 0
+                && (2..=9).contains(&(name.len() - i))
+                && name[i + 1..].bytes().all(|b| b.is_ascii_alphanumeric()) =>
+        {
+            format!("{} ({n}){}", &name[..i], &name[i..])
+        }
+        _ => format!("{name} ({n})"),
+    }
+}
+
+fn valid_data_name(id: &str, data: &str) -> bool {
+    match data.strip_prefix(id) {
+        Some("") => true,
+        // `.data` is a copy being sent, never a received file.
+        Some(rest) => rest.strip_prefix('.').is_some_and(|ext| {
+            ext != "data"
+                && (1..=8).contains(&ext.len())
+                && ext
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        }),
+        None => false,
+    }
+}
+
+/// One message, as the program recorded it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Record {
+    pub id: String,
+    pub direction: Direction,
+    /// The other person's address; empty for a refused request.
+    #[serde(default)]
+    pub peer: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub created: u64,
+    pub state: State,
+    /// Incoming only: the signature was checked against the sender's key.
+    #[serde(default)]
+    pub verified: bool,
+    #[serde(default)]
+    pub detail: String,
+    /// Outgoing only: a copy was left in a message store on the local
+    /// network for the recipient to collect (ADR 0019).
+    #[serde(default)]
+    pub stored: bool,
+    /// A file sent or received with it (ADR 0020).
+    #[serde(default)]
+    pub file: Option<FileInfo>,
+}
+
+impl Record {
+    /// The marker shown beside the message.
+    pub fn marker(&self) -> String {
+        match (self.direction, self.state) {
+            (Direction::In, _) if self.verified => "from them".into(),
+            (Direction::In, _) => "from them, NOT VERIFIED".into(),
+            (Direction::Out, State::Sent) if self.stored => "sent, kept on the network".into(),
+            (Direction::Out, State::Failed) if self.stored => "stopped, may still arrive".into(),
+            (_, s) => s.label().into(),
+        }
+    }
+}
+
+/// Someone heard on the network. The name is what that address claims.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Peer {
+    pub address: String,
+    pub claimed_name: String,
+    pub heard: u64,
+}
+
+/// Whether the account's messaging program is running.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Status {
+    Running {
+        address: String,
+        /// A message store (ADR 0019) is in use: messages for people who
+        /// are away can wait on the network.
+        store: bool,
+    },
+    /// Not running, or not answering; the address is known if it ever ran.
+    Stopped { address: Option<String> },
+}
+
+impl Status {
+    pub fn address(&self) -> Option<&str> {
+        match self {
+            Status::Running { address, .. } => Some(address),
+            Status::Stopped { address } => address.as_deref(),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum SendError {
+    #[error("this is not an address: an address has 32 characters, digits and the letters a to f")]
+    BadAddress,
+    #[error("the message is empty")]
+    Empty,
+    #[error("the message is too long ({0} bytes; at most {MAX_TEXT_BYTES})")]
+    TooLong(usize),
+    #[error("the file is too large ({}; at most 900 KB): use a USB stick", size_text(*.0))]
+    FileTooLarge(u64),
+    #[error("this is not a file that can be sent (a folder, a device or a link?)")]
+    NotAFile,
+    #[error("this is your own address")]
+    Own,
+    #[error("could not save the message: {0}")]
+    Io(String),
+}
+
+fn read_bounded(path: &Path) -> Option<Vec<u8>> {
+    let f = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    let meta = f.metadata().ok()?;
+    if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+        return None;
+    }
+    let mut buf = Vec::new();
+    f.take(MAX_FILE_BYTES + 1).read_to_end(&mut buf).ok()?;
+    (buf.len() as u64 <= MAX_FILE_BYTES).then_some(buf)
+}
+
+/// A new message id: time, nanoseconds, process.
+fn new_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    format!("m{}-{:09}-{}", now_secs(), nanos, std::process::id())
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Write `data` at `path` through a temporary name (the program ignores
+/// `*.tmp`), mode 0600, never following a link.
+fn write_new(path: &Path, data: &[u8]) -> io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    let _ = fs::remove_file(&tmp);
+    let mut f = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&tmp)?;
+    f.write_all(data)?;
+    f.sync_all()?;
+    fs::rename(&tmp, path)
+}
+
+/// One account's message store.
+#[derive(Debug, Clone)]
+pub struct Store {
+    pub root: PathBuf,
+}
+
+impl Store {
+    pub fn new(root: PathBuf) -> Store {
+        Store { root }
+    }
+
+    fn dir(&self, name: &str) -> io::Result<PathBuf> {
+        let d = self.root.join(name);
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&d)?;
+        Ok(d)
+    }
+
+    /// Whether the program is running, from its status file and `now`
+    /// (seconds since 1970).
+    pub fn status(&self, now: u64) -> Status {
+        #[derive(Deserialize)]
+        struct Raw {
+            address: String,
+            time: u64,
+            #[serde(default)]
+            store: Option<String>,
+        }
+        let known = fs::read_to_string(self.root.join("address"))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| valid_address(s));
+        let raw = read_bounded(&self.root.join("status.json"))
+            .and_then(|b| serde_json::from_slice::<Raw>(&b).ok())
+            .filter(|r| valid_address(&r.address));
+        match raw {
+            Some(r) if now.saturating_sub(r.time) <= STATUS_FRESH_SECS => Status::Running {
+                store: r.store.as_deref().is_some_and(valid_address),
+                address: r.address,
+            },
+            Some(r) => Status::Stopped {
+                address: Some(r.address),
+            },
+            None => Status::Stopped { address: known },
+        }
+    }
+
+    /// Every readable record, oldest first (by time, then id).
+    pub fn records(&self) -> Vec<Record> {
+        let Ok(dir) = fs::read_dir(self.root.join("messages")) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for entry in dir.flatten().take(MAX_RECORDS * 2) {
+            let name = entry.file_name();
+            let Some(id) = name.to_str().and_then(|n| n.strip_suffix(".json")) else {
+                continue;
+            };
+            let Some(rec) =
+                read_bounded(&entry.path()).and_then(|b| serde_json::from_slice::<Record>(&b).ok())
+            else {
+                continue;
+            };
+            let peer_ok = rec.peer.is_empty() || valid_address(&rec.peer);
+            if rec.id == id && peer_ok && rec.text.len() <= 4 * MAX_TEXT_BYTES {
+                let mut rec = rec;
+                if let Some(f) = &mut rec.file
+                    && f.data
+                        .as_deref()
+                        .is_some_and(|d| !valid_data_name(&rec.id, d))
+                {
+                    f.data = None;
+                }
+                out.push(rec);
+            }
+            if out.len() >= MAX_RECORDS {
+                break;
+            }
+        }
+        out.sort_by(|a, b| (a.created, &a.id).cmp(&(b.created, &b.id)));
+        out
+    }
+
+    /// People heard on the network, most recently heard first.
+    pub fn peers(&self) -> Vec<Peer> {
+        #[derive(Deserialize)]
+        struct Raw {
+            #[serde(default)]
+            name: String,
+            #[serde(default)]
+            heard: u64,
+        }
+        let map: BTreeMap<String, Raw> = read_bounded(&self.root.join("peers.json"))
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        let mut out: Vec<Peer> = map
+            .into_iter()
+            .filter(|(a, _)| valid_address(a))
+            .map(|(address, r)| Peer {
+                address,
+                claimed_name: clean_line(&r.name, MAX_NAME_CHARS),
+                heard: r.heard,
+            })
+            .collect();
+        out.sort_by(|a, b| b.heard.cmp(&a.heard).then(a.address.cmp(&b.address)));
+        out.truncate(MAX_PEERS);
+        out
+    }
+
+    /// Names the user gave to addresses.
+    pub fn contacts(&self) -> BTreeMap<String, String> {
+        let map: BTreeMap<String, String> = read_bounded(&self.root.join("contacts.json"))
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        map.into_iter()
+            .filter(|(a, _)| valid_address(a))
+            .map(|(a, n)| (a, clean_line(&n, MAX_NAME_CHARS)))
+            .filter(|(_, n)| !n.is_empty())
+            .take(MAX_PEERS)
+            .collect()
+    }
+
+    /// Give `address` a name (an empty name removes the contact).
+    pub fn set_contact(&self, address: &str, name: &str) -> Result<(), SendError> {
+        if !valid_address(address) {
+            return Err(SendError::BadAddress);
+        }
+        let mut all = self.contacts();
+        let name = clean_line(name, MAX_NAME_CHARS);
+        if name.is_empty() {
+            all.remove(address);
+        } else {
+            all.insert(address.to_string(), name);
+        }
+        let io = |e: io::Error| SendError::Io(e.to_string());
+        self.dir("").map_err(io)?;
+        let data = serde_json::to_vec(&all).map_err(|e| SendError::Io(e.to_string()))?;
+        write_new(&self.root.join("contacts.json"), &data).map_err(io)
+    }
+
+    /// Ask the program to send `text` to `to`. Returns the message's id;
+    /// its record appears once the program has taken the request.
+    pub fn queue(&self, to: &str, text: &str, own: Option<&str>) -> Result<String, SendError> {
+        if !valid_address(to) {
+            return Err(SendError::BadAddress);
+        }
+        if own == Some(to) {
+            return Err(SendError::Own);
+        }
+        let text = text.trim_end();
+        if text.trim().is_empty() {
+            return Err(SendError::Empty);
+        }
+        if text.len() > MAX_TEXT_BYTES {
+            return Err(SendError::TooLong(text.len()));
+        }
+        let io = |e: io::Error| SendError::Io(e.to_string());
+        let dir = self.dir("outbox").map_err(io)?;
+        let id = new_id();
+        let body = serde_json::json!({ "to": to, "text": text });
+        let data = serde_json::to_vec(&body).map_err(|e| SendError::Io(e.to_string()))?;
+        write_new(&dir.join(format!("{id}.json")), &data).map_err(io)?;
+        Ok(id)
+    }
+
+    /// Whether `path` can be sent: a regular file of at most
+    /// [`MAX_SEND_BYTES`]. Its size.
+    pub fn check_file(path: &Path) -> Result<u64, SendError> {
+        let meta = fs::metadata(path).map_err(|e| SendError::Io(e.to_string()))?;
+        if !meta.is_file() {
+            return Err(SendError::NotAFile);
+        }
+        if meta.len() > MAX_SEND_BYTES {
+            return Err(SendError::FileTooLarge(meta.len()));
+        }
+        Ok(meta.len())
+    }
+
+    /// Ask the program to send the file at `path` (a copy of it, taken
+    /// now) with an optional `text`. Returns the message's id.
+    pub fn queue_file(
+        &self,
+        to: &str,
+        text: &str,
+        path: &Path,
+        own: Option<&str>,
+    ) -> Result<String, SendError> {
+        if !valid_address(to) {
+            return Err(SendError::BadAddress);
+        }
+        if own == Some(to) {
+            return Err(SendError::Own);
+        }
+        let text = text.trim_end();
+        if text.len() > MAX_TEXT_BYTES {
+            return Err(SendError::TooLong(text.len()));
+        }
+        Store::check_file(path)?;
+        let io = |e: io::Error| SendError::Io(e.to_string());
+        // Read through one descriptor, bounded: the file may change.
+        let mut data = Vec::new();
+        let f = fs::File::open(path).map_err(io)?;
+        if !f.metadata().map_err(io)?.is_file() {
+            return Err(SendError::NotAFile);
+        }
+        f.take(MAX_SEND_BYTES + 1)
+            .read_to_end(&mut data)
+            .map_err(io)?;
+        if data.len() as u64 > MAX_SEND_BYTES {
+            return Err(SendError::FileTooLarge(data.len() as u64));
+        }
+        let name = path
+            .file_name()
+            .map(|n| clean_line(&n.to_string_lossy(), MAX_FILE_NAME_CHARS))
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "file".into());
+        let dir = self.dir("outbox").map_err(io)?;
+        let id = new_id();
+        // The file first: the program takes it with its request.
+        let copy = dir.join(format!("{id}.file"));
+        let written = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&copy)
+            .and_then(|mut f| {
+                f.write_all(&data)?;
+                f.sync_all()
+            });
+        if let Err(e) = written {
+            let _ = fs::remove_file(&copy);
+            return Err(io(e));
+        }
+        let body = serde_json::json!({ "to": to, "text": text, "file": name });
+        let json = serde_json::to_vec(&body).map_err(|e| SendError::Io(e.to_string()))?;
+        if let Err(e) = write_new(&dir.join(format!("{id}.json")), &json) {
+            let _ = fs::remove_file(&copy);
+            return Err(io(e));
+        }
+        Ok(id)
+    }
+
+    /// The received file of `rec`, if it is (still) here.
+    pub fn received_file(&self, rec: &Record) -> Option<PathBuf> {
+        let data = rec.file.as_ref()?.data.as_deref()?;
+        if rec.direction != Direction::In || !valid_data_name(&rec.id, data) {
+            return None;
+        }
+        let p = self.root.join("files").join(data);
+        fs::symlink_metadata(&p)
+            .ok()
+            .filter(|m| m.is_file())
+            .map(|_| p)
+    }
+
+    /// Move the received file of `rec` into `dest` (created if needed)
+    /// under its own name made safe, never replacing a file: `NAME (2)`
+    /// and so on. Where it went.
+    pub fn save_received(&self, rec: &Record, dest: &Path) -> io::Result<PathBuf> {
+        let from = self
+            .received_file(rec)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "the file is no longer here"))?;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dest)?;
+        let name = safe_file_name(&rec.file.as_ref().map(FileInfo::shown).unwrap_or_default());
+        for n in 1..=100 {
+            let to = dest.join(numbered(&name, n));
+            match crate::crypto::rename_noreplace(&from, &to) {
+                Ok(()) => return Ok(to),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "too many files with this name",
+        ))
+    }
+
+    /// Ask the program to give up on a waiting message.
+    pub fn cancel(&self, id: &str) -> io::Result<()> {
+        let ok = !id.is_empty()
+            && id.len() <= 64
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            && !id.starts_with('-');
+        if !ok {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "bad message id",
+            ));
+        }
+        let dir = self.dir("cancel")?;
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(dir.join(id))
+            .map(|_| ())
+    }
+}
+
+/// What to call an address, and how sure that is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Name {
+    /// A name the user chose for this address.
+    Contact(String),
+    /// A name the address announces: a claim, not checked by anyone.
+    Claimed(String),
+    Unknown,
+}
+
+impl Name {
+    pub fn of(address: &str, contacts: &BTreeMap<String, String>, peers: &[Peer]) -> Name {
+        if let Some(n) = contacts.get(address) {
+            return Name::Contact(n.clone());
+        }
+        match peers.iter().find(|p| p.address == address) {
+            Some(p) if !p.claimed_name.is_empty() => Name::Claimed(p.claimed_name.clone()),
+            _ => Name::Unknown,
+        }
+    }
+
+    /// For lists: `Marie`, `"marie"?` (claimed) or the short address.
+    pub fn display(&self, address: &str) -> String {
+        match self {
+            Name::Contact(n) => n.clone(),
+            Name::Claimed(n) => format!("\"{n}\"?"),
+            Name::Unknown => short_address(address),
+        }
+    }
+}
+
+/// The messages exchanged with one address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Conversation {
+    pub peer: String,
+    pub count: usize,
+    /// Messages still waiting or sent without proof.
+    pub pending: usize,
+    pub failed: usize,
+    pub last_time: u64,
+    pub last_text: String,
+    pub last_direction: Direction,
+}
+
+/// Conversations, the most recent first. Refused requests without an
+/// address are left out (they are shown as errors when they happen).
+pub fn conversations(records: &[Record]) -> Vec<Conversation> {
+    let mut by_peer: BTreeMap<&str, Conversation> = BTreeMap::new();
+    for r in records.iter().filter(|r| !r.peer.is_empty()) {
+        let c = by_peer.entry(&r.peer).or_insert_with(|| Conversation {
+            peer: r.peer.clone(),
+            count: 0,
+            pending: 0,
+            failed: 0,
+            last_time: 0,
+            last_text: String::new(),
+            last_direction: r.direction,
+        });
+        c.count += 1;
+        c.pending += usize::from(r.state.pending());
+        c.failed += usize::from(r.state == State::Failed);
+        if r.created >= c.last_time {
+            c.last_time = r.created;
+            c.last_text = clean_line(&r.text, 60);
+            c.last_direction = r.direction;
+        }
+    }
+    let mut out: Vec<Conversation> = by_peer.into_values().collect();
+    out.sort_by(|a, b| b.last_time.cmp(&a.last_time).then(a.peer.cmp(&b.peer)));
+    out
+}
+
+/// "just now", "5 min ago", "3 h ago", "2 days ago".
+pub fn ago(then: u64, now: u64) -> String {
+    let d = now.saturating_sub(then);
+    match d {
+        0..=59 => "just now".into(),
+        60..=3599 => format!("{} min ago", d / 60),
+        3600..=86_399 => format!("{} h ago", d / 3600),
+        _ => format!("{} days ago", d / 86_400),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    const A: &str = "0123456789abcdef0123456789abcdef";
+    const B: &str = "ffffffffffffffffffffffffffffffff";
+
+    fn temp(tag: &str) -> Store {
+        let d = std::env::temp_dir().join(format!("res-msg-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(d.join("messages")).expect("mkdir");
+        Store::new(d)
+    }
+
+    fn record(s: &Store, id: &str, json: &str) {
+        fs::write(s.root.join("messages").join(format!("{id}.json")), json).expect("w");
+    }
+
+    #[test]
+    fn addresses() {
+        assert!(valid_address(A));
+        for bad in [
+            "",
+            "0123",
+            &A[1..],
+            &format!("{A}0"),
+            &A.to_uppercase(),
+            &A.replace('0', "g"),
+        ] {
+            assert!(!valid_address(bad), "{bad}");
+        }
+        assert_eq!(parse_address(&format_address(A)).as_deref(), Some(A));
+        assert_eq!(parse_address(&A.to_uppercase()).as_deref(), Some(A));
+        assert_eq!(
+            parse_address(" 0123-4567:89ab cdef 0123 4567 89ab cdef\n").as_deref(),
+            Some(A)
+        );
+        assert_eq!(parse_address("hello"), None);
+        assert_eq!(format_address(A), "0123 4567 89ab cdef 0123 4567 89ab cdef");
+        assert_eq!(short_address(A), "01234567..");
+    }
+
+    #[test]
+    fn hostile_text_is_made_safe_to_draw() {
+        assert_eq!(
+            clean_line("  a\tb\n\x1b[2Jc\u{202E}d\u{200B}  ", 40),
+            "a b [2Jcd"
+        );
+        assert_eq!(clean_line("abcdef", 3), "abc");
+        assert_eq!(clean_line("\x07\x00", 9), "");
+        assert_eq!(
+            clean_text("one\ttwo\x1b[31m\n\n  three \u{202E}x\r\nfour", 3),
+            ["one two[31m", "", "  three x"]
+        );
+        assert!(clean_text("", 5).is_empty());
+    }
+
+    #[test]
+    fn records_are_read_bounded_and_sorted() {
+        let s = temp("records");
+        record(
+            &s,
+            "m2",
+            &format!(
+                r#"{{"id":"m2","direction":"out","peer":"{B}","text":"second","created":20,"state":"delivered","verified":false,"detail":"","attempts":1,"next_try":0,"updated":21}}"#
+            ),
+        );
+        record(
+            &s,
+            "m1",
+            &format!(
+                r#"{{"id":"m1","direction":"out","peer":"{B}","text":"first","created":10,"state":"queued","detail":"waiting"}}"#
+            ),
+        );
+        record(
+            &s,
+            "in-1",
+            &format!(
+                r#"{{"id":"in-1","direction":"in","peer":"{B}","text":"reply","created":15,"state":"received","verified":true}}"#
+            ),
+        );
+        // Skipped: wrong id, bad state, bad peer, not JSON, a link, too large.
+        record(
+            &s,
+            "x",
+            &format!(r#"{{"id":"y","direction":"out","peer":"{B}","state":"sent"}}"#),
+        );
+        record(
+            &s,
+            "bad-state",
+            r#"{"id":"bad-state","direction":"out","state":"teleported"}"#,
+        );
+        record(
+            &s,
+            "bad-peer",
+            r#"{"id":"bad-peer","direction":"in","peer":"../x","state":"received"}"#,
+        );
+        record(&s, "junk", "not json");
+        std::os::unix::fs::symlink("/etc/passwd", s.root.join("messages/link.json")).expect("ln");
+        record(&s, "huge", &"x".repeat(2 * 1024 * 1024));
+        fs::write(s.root.join("messages/notes.txt"), "x").expect("w");
+
+        let r = s.records();
+        assert_eq!(
+            r.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["m1", "in-1", "m2"]
+        );
+        assert_eq!(r[0].state, State::Queued);
+        assert_eq!(r[0].marker(), "waiting");
+        assert_eq!(r[1].marker(), "from them");
+        assert_eq!(r[2].marker(), "delivered");
+        let c = conversations(&r);
+        assert_eq!(c.len(), 1);
+        assert_eq!((c[0].count, c[0].pending, c[0].failed), (3, 1, 0));
+        assert_eq!(
+            (c[0].last_text.as_str(), c[0].last_direction),
+            ("second", Direction::Out)
+        );
+        assert!(Store::new(s.root.join("missing")).records().is_empty());
+        let _ = fs::remove_dir_all(&s.root);
+    }
+
+    #[test]
+    fn an_unverified_message_says_so() {
+        let r: Record = serde_json::from_str(&format!(
+            r#"{{"id":"in-2","direction":"in","peer":"{B}","text":"x","state":"received"}}"#
+        ))
+        .expect("record");
+        assert!(!r.verified);
+        assert_eq!(r.marker(), "from them, NOT VERIFIED");
+    }
+
+    #[test]
+    fn a_copy_left_in_a_store_says_so() {
+        let rec = |state: &str, stored: bool| -> Record {
+            serde_json::from_str(&format!(
+                r#"{{"id":"m","direction":"out","peer":"{B}","text":"x","state":"{state}","stored":{stored}}}"#
+            ))
+            .expect("record")
+        };
+        assert_eq!(rec("sent", false).marker(), "sent");
+        assert_eq!(rec("sent", true).marker(), "sent, kept on the network");
+        assert_eq!(rec("failed", false).marker(), "FAILED");
+        assert_eq!(rec("failed", true).marker(), "stopped, may still arrive");
+        assert_eq!(rec("delivered", true).marker(), "delivered");
+        // Records written before ADR 0019 have no "stored".
+        assert!(!rec("queued", false).stored);
+    }
+
+    #[test]
+    fn status_peers_and_names() {
+        let s = temp("status");
+        assert_eq!(s.status(100), Status::Stopped { address: None });
+        fs::write(s.root.join("address"), format!("{A}\n")).expect("w");
+        assert_eq!(
+            s.status(100),
+            Status::Stopped {
+                address: Some(A.into())
+            }
+        );
+        fs::write(
+            s.root.join("status.json"),
+            format!(r#"{{"address":"{A}","name":"n","pid":1,"time":90}}"#),
+        )
+        .expect("w");
+        assert_eq!(
+            s.status(100),
+            Status::Running {
+                address: A.into(),
+                store: false
+            }
+        );
+        assert_eq!(
+            s.status(90 + STATUS_FRESH_SECS + 1),
+            Status::Stopped {
+                address: Some(A.into())
+            }
+        );
+        // A message store in use (ADR 0019); a malformed one is none.
+        for (store, expected) in [
+            (format!(r#""{B}""#), true),
+            ("null".into(), false),
+            (r#""zz""#.into(), false),
+        ] {
+            fs::write(
+                s.root.join("status.json"),
+                format!(r#"{{"address":"{A}","time":90,"store":{store}}}"#),
+            )
+            .expect("w");
+            assert_eq!(
+                s.status(100),
+                Status::Running {
+                    address: A.into(),
+                    store: expected
+                },
+                "{store}"
+            );
+        }
+        fs::write(s.root.join("status.json"), r#"{"address":"zz","time":99}"#).expect("w");
+        assert_eq!(s.status(100).address(), Some(A));
+
+        fs::write(
+            s.root.join("peers.json"),
+            format!(r#"{{"{B}":{{"name":"Marie\u001b[2J\n Curie","heard":50}},"{A}":{{"heard":70}},"nope":{{"name":"x","heard":99}}}}"#),
+        )
+        .expect("w");
+        let p = s.peers();
+        assert_eq!(p.len(), 2);
+        assert_eq!((p[0].address.as_str(), p[0].claimed_name.as_str()), (A, ""));
+        assert_eq!(p[1].claimed_name, "Marie [2J Curie");
+
+        let mut contacts = s.contacts();
+        assert!(contacts.is_empty());
+        assert_eq!(
+            Name::of(B, &contacts, &p).display(B),
+            "\"Marie [2J Curie\"?"
+        );
+        assert_eq!(Name::of(A, &contacts, &p).display(A), "01234567..");
+        s.set_contact(B, "  Marie\x07 C. ").expect("set");
+        contacts = s.contacts();
+        assert_eq!(Name::of(B, &contacts, &p), Name::Contact("Marie C.".into()));
+        let mode = fs::metadata(s.root.join("contacts.json"))
+            .expect("meta")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        s.set_contact(B, "").expect("remove");
+        assert!(s.contacts().is_empty());
+        assert_eq!(s.set_contact("x", "n"), Err(SendError::BadAddress));
+        let _ = fs::remove_dir_all(&s.root);
+    }
+
+    #[test]
+    fn queue_and_cancel_write_what_the_program_reads() {
+        let s = temp("queue");
+        assert_eq!(s.queue("nope", "hi", None), Err(SendError::BadAddress));
+        assert_eq!(s.queue(B, " \n ", None), Err(SendError::Empty));
+        assert_eq!(s.queue(B, "hi", Some(B)), Err(SendError::Own));
+        let long = "é".repeat(MAX_TEXT_BYTES / 2 + 1);
+        assert_eq!(
+            s.queue(B, &long, None),
+            Err(SendError::TooLong(MAX_TEXT_BYTES + 2))
+        );
+        assert!(
+            !s.root.join("outbox").exists()
+                || fs::read_dir(s.root.join("outbox"))
+                    .expect("ls")
+                    .next()
+                    .is_none()
+        );
+
+        let id = s
+            .queue(B, "Water at \"the\" school\n9h\n", Some(A))
+            .expect("queue");
+        let path = s.root.join("outbox").join(format!("{id}.json"));
+        let v: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).expect("read")).expect("json");
+        assert_eq!(v["to"], B);
+        assert_eq!(v["text"], "Water at \"the\" school\n9h");
+        assert_eq!(
+            fs::metadata(&path).expect("meta").permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(s.root.join("outbox"))
+                .expect("meta")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        // Only the finished file is there.
+        assert_eq!(fs::read_dir(s.root.join("outbox")).expect("ls").count(), 1);
+        let id2 = s.queue(B, "again", None).expect("queue");
+        assert_ne!(id, id2);
+
+        s.cancel(&id).expect("cancel");
+        assert!(s.root.join("cancel").join(&id).is_file());
+        for bad in ["", "../x", "a/b", "-x", &"a".repeat(65)] {
+            assert!(s.cancel(bad).is_err(), "{bad}");
+        }
+        let _ = fs::remove_dir_all(&s.root);
+    }
+
+    #[test]
+    fn files_are_sent_as_copies_and_saved_under_safe_names() {
+        let s = temp("files");
+        let src = s.root.join("Liste des besoins.pdf");
+        fs::write(&src, b"%PDF-1.4 list").expect("w");
+        // Refused: a folder, too large, a bad address; nothing written.
+        assert_eq!(s.queue_file(B, "", &s.root, None), Err(SendError::NotAFile));
+        let big = s.root.join("big");
+        fs::write(&big, vec![0u8; MAX_SEND_BYTES as usize + 1]).expect("w");
+        assert_eq!(
+            s.queue_file(B, "", &big, None),
+            Err(SendError::FileTooLarge(MAX_SEND_BYTES + 1))
+        );
+        assert!(
+            SendError::FileTooLarge(MAX_SEND_BYTES + 1)
+                .to_string()
+                .contains("900 KB")
+        );
+        assert_eq!(
+            s.queue_file("x", "", &src, None),
+            Err(SendError::BadAddress)
+        );
+        assert!(!s.root.join("outbox").exists());
+
+        let id = s.queue_file(B, "The list\n", &src, Some(A)).expect("queue");
+        let out = s.root.join("outbox");
+        assert_eq!(
+            fs::read(out.join(format!("{id}.file"))).expect("copy"),
+            b"%PDF-1.4 list"
+        );
+        let v: serde_json::Value =
+            serde_json::from_slice(&fs::read(out.join(format!("{id}.json"))).expect("r"))
+                .expect("json");
+        assert_eq!(v["file"], "Liste des besoins.pdf");
+        assert_eq!(v["text"], "The list");
+        assert_eq!(
+            fs::metadata(out.join(format!("{id}.file")))
+                .expect("m")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        // Received: kept under the message id; the name is only shown.
+        fs::create_dir_all(s.root.join("files")).expect("mkdir");
+        fs::write(s.root.join("files/in-1.pdf"), b"data").expect("w");
+        record(
+            &s,
+            "in-1",
+            &format!(
+                r#"{{"id":"in-1","direction":"in","peer":"{B}","text":"","state":"received","file":{{"name":".bashrc\u001b[2J","size":4,"data":"in-1.pdf"}}}}"#
+            ),
+        );
+        record(
+            &s,
+            "in-2",
+            &format!(
+                r#"{{"id":"in-2","direction":"in","peer":"{B}","state":"received","file":{{"name":"x","size":4,"data":"../../.ssh/id"}}}}"#
+            ),
+        );
+        let recs = s.records();
+        let r1 = recs.iter().find(|r| r.id == "in-1").expect("in-1");
+        let r2 = recs.iter().find(|r| r.id == "in-2").expect("in-2");
+        assert_eq!(r2.file.as_ref().and_then(|f| f.data.clone()), None);
+        assert!(s.received_file(r2).is_none());
+        assert_eq!(
+            r1.file.as_ref().map(FileInfo::shown).as_deref(),
+            Some(".bashrc [2J")
+        );
+        assert_eq!(s.received_file(r1), Some(s.root.join("files/in-1.pdf")));
+
+        let dest = s.root.join("Received");
+        fs::create_dir_all(&dest).expect("mkdir");
+        fs::write(dest.join("_.bashrc [2J"), b"mine").expect("w");
+        let saved = s.save_received(r1, &dest).expect("save");
+        assert_eq!(saved, dest.join("_.bashrc [2J (2)"));
+        assert_eq!(fs::read(&saved).expect("r"), b"data");
+        assert_eq!(fs::read(dest.join("_.bashrc [2J")).expect("r"), b"mine");
+        // Moved: the space is freed, and it cannot be saved twice.
+        assert!(s.received_file(r1).is_none());
+        assert!(s.save_received(r1, &dest).is_err());
+        let _ = fs::remove_dir_all(&s.root);
+    }
+
+    #[test]
+    fn file_names_and_sizes() {
+        assert_eq!(safe_file_name("report.pdf"), "report.pdf");
+        assert_eq!(safe_file_name("../../etc/passwd"), "_.._.._etc_passwd");
+        assert_eq!(safe_file_name("-rf"), "_-rf");
+        assert_eq!(safe_file_name("~x"), "_~x");
+        assert_eq!(safe_file_name(""), "file");
+        assert_eq!(safe_file_name(".."), "file");
+        assert_eq!(safe_file_name("a\u{202E}b\x07"), "ab");
+        assert_eq!(safe_file_name(&"x".repeat(300)).len(), MAX_FILE_NAME_CHARS);
+        assert_eq!(numbered("a.pdf", 1), "a.pdf");
+        assert_eq!(numbered("a.tar.gz", 2), "a.tar (2).gz");
+        assert_eq!(numbered(".x", 3), ".x (3)");
+        assert_eq!(numbered("noext", 2), "noext (2)");
+        assert_eq!(numbered("_.bashrc x", 2), "_.bashrc x (2)");
+        assert!(valid_data_name("in-1", "in-1"));
+        assert!(valid_data_name("in-1", "in-1.pdf"));
+        for bad in [
+            "in-1.data",
+            "in-1.PDF",
+            "in-1.",
+            "in-1.toolongext",
+            "in-12",
+            "x/in-1",
+            "in-1.p/f",
+        ] {
+            assert!(!valid_data_name("in-1", bad), "{bad}");
+        }
+        assert_eq!(size_text(12), "12 bytes");
+        assert_eq!(size_text(300_000), "300 KB");
+        assert_eq!(size_text(1_200_000), "1.2 MB");
+    }
+
+    #[test]
+    fn times_are_said_roughly() {
+        assert_eq!(ago(100, 130), "just now");
+        assert_eq!(ago(100, 100 + 300), "5 min ago");
+        assert_eq!(ago(100, 100 + 3 * 3600), "3 h ago");
+        assert_eq!(ago(100, 100 + 2 * 86_400), "2 days ago");
+        assert_eq!(ago(500, 100), "just now");
+    }
+}

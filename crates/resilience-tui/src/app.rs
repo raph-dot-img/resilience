@@ -19,24 +19,30 @@ use resilience_core::clock;
 use resilience_core::config::{SystemConfig, ThemeName, UserSettings};
 use resilience_core::handbook;
 use resilience_core::human_bytes;
+use resilience_core::keyboard;
 use resilience_core::manpage;
 use resilience_core::media::{self, Ejected, Volume};
 use resilience_core::mode::{Detected, Mode};
 use resilience_core::network::{self, NetworkState, ProbeConfig, ProbeReport};
 use resilience_core::notes;
-use resilience_core::proc::run_full;
+use resilience_core::packs::PackKind;
+use resilience_core::proc::{run_full, run_full_env};
 use resilience_core::recovery;
 use resilience_core::status::{self, Snapshot, SystemState};
 use resilience_core::wifi::{self, Network, Overview};
 
 use crate::theme::Theme;
 
+#[path = "chat_ui.rs"]
+mod chat_ui;
 #[path = "crypto_ui.rs"]
 mod crypto_ui;
 #[path = "files_ui.rs"]
 mod files_ui;
 #[path = "library.rs"]
 mod library;
+pub use chat_ui::now_secs as chat_now;
+pub use chat_ui::{ChatInput, ChatRow, NearbyRow};
 #[cfg(test)]
 pub use crypto_ui::CRYPTO_LABEL;
 pub use crypto_ui::{Choice, EncryptTarget, KeyRow, Pick, Recipient};
@@ -74,6 +80,11 @@ pub struct Paths {
     pub running_system: PathBuf,
     /// Catalog of resource packs (ADR 0013); absent when packs are disabled.
     pub packs_config: PathBuf,
+    /// Written by the machine's Reticulum service (ADR 0018); absent when
+    /// local messaging is not enabled on this computer.
+    pub comms_client: PathBuf,
+    /// Written by the mesh service while the mesh is on (ADR 0021).
+    pub mesh_devices: PathBuf,
 }
 
 impl Default for Paths {
@@ -86,6 +97,8 @@ impl Default for Paths {
             booted_system: "/run/booted-system".into(),
             running_system: "/run/current-system".into(),
             packs_config: resilience_core::packs::PACKS_CONFIG_PATH.into(),
+            comms_client: "/run/resilience-reticulum/client/config".into(),
+            mesh_devices: "/run/resilience-mesh/devices".into(),
         }
     }
 }
@@ -155,6 +168,11 @@ pub enum Builtin {
     Manual,
     Library,
     Packs,
+    Map,
+    MapFiles,
+    Chat,
+    /// The Wi-Fi mesh network (ADR 0021).
+    Mesh,
     Notes,
     Network,
     Wifi,
@@ -182,12 +200,16 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 29] = [
+    pub const ALL: [Builtin; 33] = [
         Builtin::Handbook,
         Builtin::Files,
         Builtin::Manual,
         Builtin::Library,
         Builtin::Packs,
+        Builtin::Map,
+        Builtin::MapFiles,
+        Builtin::Chat,
+        Builtin::Mesh,
         Builtin::Notes,
         Builtin::Network,
         Builtin::Wifi,
@@ -221,6 +243,10 @@ impl Builtin {
             Builtin::Files => "Find & view files",
             Builtin::Library => "Offline library",
             Builtin::Packs => "Resource packs: choose what to get",
+            Builtin::Map => "Map",
+            Builtin::MapFiles => "Maps on this computer & USB sticks",
+            Builtin::Chat => "Local messages",
+            Builtin::Mesh => "Mesh network (Wi-Fi without a router)",
             Builtin::Notes => "Notes",
             Builtin::Network => "Network status & diagnostics",
             Builtin::Wifi => "Wi-Fi networks",
@@ -272,6 +298,28 @@ impl Builtin {
                  ones you want: download them when online, or copy them from a USB stick. \
                  Installing or removing needs an administrator's password."
             }
+            Builtin::Map => {
+                "The offline map: the whole world at overview detail, and streets, \
+                 places and points of interest wherever a map pack is installed. Arrows \
+                 move, + and - zoom, ? shows every key, q comes back here."
+            }
+            Builtin::MapFiles => {
+                "See which maps this computer has (built in, installed, or on an open USB \
+                 stick), what each one covers and how old its data is, and open the map \
+                 on one of them. Map packs are added in Resource packs."
+            }
+            Builtin::Chat => {
+                "Write to people nearby, without the Internet: computers on the same \
+                 local network find each other. Each message shows whether it is still \
+                 waiting, sent, or delivered; a message for someone who is away waits \
+                 and is sent when they are back."
+            }
+            Builtin::Mesh => {
+                "When there is no Wi-Fi router, computers can reach each other directly \
+                 by Wi-Fi, each one relaying for the others, so that local messages \
+                 still get through. Turn it on here; turn it off to use ordinary Wi-Fi \
+                 again."
+            }
             Builtin::Notes => {
                 "Write and keep personal text notes. Notes are private files in your Notes folder."
             }
@@ -322,7 +370,9 @@ impl Builtin {
                 "Detailed health report: services, storage, memory, power, system generation."
             }
             Builtin::Notifications => "Messages the interface has shown during this session.",
-            Builtin::Settings => "Choose the colour theme. Your security mode is shown here too.",
+            Builtin::Settings => {
+                "Choose the colour theme and the keyboard layout. Your security mode is shown here too."
+            }
             Builtin::Clock => {
                 "Shows the date, time and time zone, and sets the clock when it is wrong \
                  (there is no network time). Setting it asks for an administrator password."
@@ -352,6 +402,8 @@ impl Builtin {
             Builtin::Handbook | Builtin::Manual | Builtin::Library | Builtin::Packs => {
                 Category::Knowledge
             }
+            Builtin::Map | Builtin::MapFiles => Category::Maps,
+            Builtin::Chat | Builtin::Mesh => Category::Communications,
             Builtin::Notes | Builtin::Files => Category::Productivity,
             Builtin::Network | Builtin::Wifi => Category::Networking,
             Builtin::Encrypt
@@ -365,6 +417,14 @@ impl Builtin {
             | Builtin::Keys => Category::Security,
             _ => Category::System,
         }
+    }
+
+    /// Entries that exist only on a system with resource packs.
+    pub fn needs_packs(self) -> bool {
+        matches!(
+            self,
+            Builtin::Library | Builtin::Packs | Builtin::Map | Builtin::MapFiles
+        )
     }
 
     pub fn min_mode(self) -> Mode {
@@ -390,6 +450,19 @@ impl Builtin {
                 "packs resource download install usb kiwix zim wikipedia encyclopedia \
                  dictionary content get add remove"
             }
+            Builtin::Map => {
+                "map maps world atlas country city town street road place where navigation \
+                 geography openstreetmap osm"
+            }
+            Builtin::MapFiles => "map maps pack packs mbtiles usb stick coverage region",
+            Builtin::Chat => {
+                "message messages chat talk write contact contacts nearby local network \
+                 mesh reticulum lxmf address offline communication"
+            }
+            Builtin::Mesh => {
+                "mesh batman ad hoc adhoc wifi wi-fi router relay neighbourhood neighborhood \
+                 network without router disaster"
+            }
             Builtin::Notes => "write text memo journal",
             Builtin::Network => "wifi ethernet internet offline online dns",
             Builtin::Wifi => {
@@ -412,7 +485,9 @@ impl Builtin {
             Builtin::Random => "random password passphrase generate diceware key pin",
             Builtin::Keys => "keys key contact contacts public private export import age minisign",
             Builtin::SystemStatus => "health battery disk storage memory",
-            Builtin::Settings => "theme colour color preferences",
+            Builtin::Settings => {
+                "theme colour color preferences keyboard layout azerty qwerty clavier"
+            }
             Builtin::Clock => "clock time date hour timezone zone ntp calendar rtc wrong",
             Builtin::Users => {
                 "account accounts mode modes administrator admin permissions privileges sudo"
@@ -464,6 +539,8 @@ pub enum HelpTopic {
     Recovery,
     Backup,
     Library,
+    Maps,
+    Chat,
     Files,
     Crypto,
 }
@@ -561,9 +638,29 @@ pub enum View {
     PackSets {
         list: ListState,
     },
-    /// Installed resource packs; Enter reads one.
+    /// Installed resource packs of one kind; Enter reads one (ZIM) or
+    /// opens the map on it (map packs).
     Library {
+        kind: PackKind,
         items: Vec<LibItem>,
+        list: ListState,
+    },
+    /// Local messages: one line per person written to or heard from.
+    Chats {
+        rows: Vec<ChatRow>,
+        status: resilience_core::messages::Status,
+        list: ListState,
+    },
+    /// People heard on the local network.
+    Nearby {
+        rows: Vec<NearbyRow>,
+        list: ListState,
+    },
+    /// The messages exchanged with one address.
+    Chat {
+        peer: String,
+        name: resilience_core::messages::Name,
+        records: Vec<resilience_core::messages::Record>,
         list: ListState,
     },
     /// The catalog of resource packs with the user's ticks.
@@ -595,6 +692,10 @@ pub enum Pending {
     Logout,
     Reboot,
     PowerOff,
+    /// Turn the mesh network on or off (ADR 0021).
+    SetMesh {
+        on: bool,
+    },
     SetMode {
         user: String,
         to: Mode,
@@ -669,6 +770,12 @@ pub enum Modal {
     },
     /// Words to search for in one pack.
     PackSearch { item: LibItem, value: String },
+    /// Local messages: an address, a message or a contact's name.
+    ChatInput {
+        kind: ChatInput,
+        value: String,
+        error: Option<String>,
+    },
     /// Who to encrypt for: Space ticks, Enter goes on.
     Recipients {
         target: EncryptTarget,
@@ -859,6 +966,7 @@ impl App {
             self.refresh_slow();
         }
         self.poll_wifi_job();
+        self.chat_tick();
         if let Some((rx, _)) = &self.probe.running {
             match rx.try_recv() {
                 Ok(report) => {
@@ -935,7 +1043,8 @@ impl App {
         Builtin::ALL
             .iter()
             .filter(|b| b.category() == cat && mode.allows(b.min_mode()))
-            .filter(|b| packs || !matches!(b, Builtin::Library | Builtin::Packs))
+            .filter(|b| packs || !b.needs_packs())
+            .filter(|b| self.builtin_present(**b))
             .map(|b| Entry::Builtin(*b))
             .chain(
                 self.catalog
@@ -988,7 +1097,8 @@ impl App {
             Builtin::ALL
                 .iter()
                 .filter(|b| mode.allows(b.min_mode()))
-                .filter(|b| packs || !matches!(b, Builtin::Library | Builtin::Packs))
+                .filter(|b| packs || !b.needs_packs())
+                .filter(|b| self.builtin_present(**b))
                 .filter(|b| {
                     [b.name(), b.description(), b.keywords()]
                         .iter()
@@ -1040,6 +1150,7 @@ impl App {
             | View::Status { .. }
             | View::Help { .. } => HelpTopic::Reader,
             View::Notes { .. } => HelpTopic::Notes,
+            View::Chats { .. } | View::Nearby { .. } | View::Chat { .. } => HelpTopic::Chat,
             View::Network { .. } => HelpTopic::Network,
             View::Settings { .. } => HelpTopic::Settings,
             View::Users { .. } | View::ChooseMode { .. } => HelpTopic::Users,
@@ -1052,6 +1163,10 @@ impl App {
             View::Wifi { .. } => HelpTopic::Network,
             View::Files { pick: None, .. } | View::Table(_) => HelpTopic::Files,
             View::Files { .. } | View::Choices { .. } | View::Keys { .. } => HelpTopic::Crypto,
+            View::Library {
+                kind: PackKind::Map,
+                ..
+            } => HelpTopic::Maps,
             View::Library { .. } | View::Packs { .. } | View::PackSets { .. } => HelpTopic::Library,
             View::Search { .. } => HelpTopic::Search,
         }
@@ -1129,9 +1244,17 @@ impl App {
     /// stack: returning `Some(view)` keeps it on top, `None` means it was
     /// either closed or already pushed back underneath a newly opened view.
     fn handle_view_key(&mut self, mut view: View, key: KeyEvent) -> (Option<View>, Effect) {
+        if matches!(
+            view,
+            View::Chats { .. } | View::Nearby { .. } | View::Chat { .. }
+        ) {
+            return self.chat_key(view, key);
+        }
         let mut next: Option<View> = None;
         let mut effect = Effect::None;
         match &mut view {
+            // Handled by chat_key above.
+            View::Chats { .. } | View::Nearby { .. } | View::Chat { .. } => {}
             View::Home { list } => {
                 let cats = self.home_categories();
                 if let Some(i) = digit(key) {
@@ -1219,14 +1342,22 @@ impl App {
                 _ => nav(list, list_notes.len(), key),
             },
             View::Settings { list } => {
+                let themes = ThemeName::ALL.len();
                 if is_activate(key) {
-                    if let Some(t) = list.selected().and_then(|i| ThemeName::ALL.get(i)) {
-                        self.set_theme(*t);
+                    match list.selected() {
+                        Some(i) if i < themes => self.set_theme(ThemeName::ALL[i]),
+                        Some(i) => {
+                            if let Some(l) = self.sys.keyboard.layouts.get(i - themes) {
+                                let id = l.id.clone();
+                                self.set_layout(&id);
+                            }
+                        }
+                        None => {}
                     }
                 } else if is_back(key) {
                     return (None, Effect::None);
                 } else {
-                    nav(list, ThemeName::ALL.len(), key);
+                    nav(list, themes + self.sys.keyboard.layouts.len(), key);
                 }
             }
             View::Users { rows, error, list } => {
@@ -1425,10 +1556,11 @@ impl App {
                     _ => nav(list, files.len() + 1, key),
                 }
             }
-            View::Library { items, list } => {
+            View::Library { kind, items, list } => {
+                let kind = *kind;
                 let selected = list.selected().and_then(|i| items.get(i)).cloned();
                 match key.code {
-                    KeyCode::Char('s') => {
+                    KeyCode::Char('s') if kind == PackKind::Zim => {
                         if let Some(item) = selected {
                             self.modal = Some(Modal::PackSearch {
                                 item,
@@ -1443,10 +1575,13 @@ impl App {
                             effect = self.check_pack_effect(&item);
                         }
                     }
-                    KeyCode::Char('r') => self.reload_packs_in(items, list),
+                    KeyCode::Char('r') => self.reload_packs_in(kind, items, list),
                     _ if is_activate(key) => {
                         if let Some(item) = selected {
-                            effect = self.open_pack_effect(&item, None);
+                            effect = match kind {
+                                PackKind::Zim => self.open_pack_effect(&item, None),
+                                PackKind::Map => self.open_map_effect(Some(&item)),
+                            };
                         }
                     }
                     _ if is_back(key) => return (None, Effect::None),
@@ -1483,7 +1618,7 @@ impl App {
                     }
                     KeyCode::Enter => {
                         if let Some(r) = row {
-                            self.pack_details(s, r);
+                            next = self.pack_details(s, r);
                         }
                     }
                     _ if is_back(key) => return (None, Effect::None),
@@ -1823,6 +1958,13 @@ impl App {
             Builtin::Library => (self.open_library(), Effect::None),
             Builtin::Files => (Some(self.open_files()), Effect::None),
             Builtin::Packs => (self.open_packs(), Effect::None),
+            Builtin::Map => (None, self.open_map_effect(None)),
+            Builtin::Chat => (self.open_chats(), Effect::None),
+            Builtin::Mesh => {
+                self.open_mesh();
+                (None, Effect::None)
+            }
+            Builtin::MapFiles => (self.open_map_files(), Effect::None),
             Builtin::Backup => {
                 let (volumes, error) = self.load_volumes();
                 let sel = (!volumes.is_empty()).then_some(0);
@@ -1913,6 +2055,90 @@ impl App {
         })
     }
 
+    /// Load a keyboard layout for the consoles and save it as this
+    /// account's choice. The kernel lets only privileged programs change
+    /// the console keymap: `pkexec <helper> set-keymap ID` (ADR 0017; no
+    /// password for the active local session, listed layouts only).
+    fn set_layout(&mut self, id: &str) {
+        let label = self.sys.keyboard.label(id).to_string();
+        match self.load_layout(id) {
+            Ok(()) => {
+                self.settings.keyboard = Some(id.to_string());
+                match self.settings.save(&self.settings_path) {
+                    Ok(()) => self.notify(
+                        Level::Info,
+                        format!(
+                            "Keyboard layout set to {label}. It applies to every console until \
+                             someone logs out; login prompts always use the system's layout."
+                        ),
+                    ),
+                    Err(e) => self.notify(
+                        Level::Error,
+                        format!("Keyboard layout applied but not saved: {e}"),
+                    ),
+                }
+            }
+            Err(e) => self.notify(
+                Level::Error,
+                format!("The keyboard layout {label} could not be loaded: {e}"),
+            ),
+        }
+    }
+
+    fn load_layout(&self, id: &str) -> Result<(), String> {
+        if self.sys.keyboard.find(id).is_none() || !keyboard::is_valid_id(id) {
+            return Err("it is not one of the layouts of this system".into());
+        }
+        let cfg = std::fs::read_to_string(&self.paths.admin_config)
+            .map_err(|e| e.to_string())
+            .and_then(|t| AdminConfig::parse(&t))?;
+        let pkexec = cfg.pkexec.to_string_lossy();
+        let helper = cfg.helper.to_string_lossy();
+        let shell = cfg.session_shell.to_string_lossy();
+        match run_full_env(
+            &[pkexec.as_ref(), helper.as_ref(), "set-keymap", id],
+            &[("SHELL", shell.as_ref())],
+            Duration::from_secs(15),
+        ) {
+            Some(o) if o.success() => Ok(()),
+            Some(o) => Err(o
+                .stderr
+                .lines()
+                .next()
+                .unwrap_or("the keyboard layout was refused")
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(200)
+                .collect()),
+            None => Err("the system helper did not run or took too long".into()),
+        }
+    }
+
+    /// At the start of a session: load the layout this account chose, if it
+    /// differs from the system's (which the login prompt already loaded).
+    pub fn apply_saved_layout(&mut self) {
+        let Some(saved) = self.settings.keyboard.clone() else {
+            return;
+        };
+        let id = self.sys.keyboard.effective(Some(&saved)).to_string();
+        if id != saved {
+            self.notify(
+                Level::Warn,
+                format!("Your keyboard layout '{saved}' is no longer offered; using {id}."),
+            );
+        }
+        if id == self.sys.keyboard.default {
+            return;
+        }
+        if let Err(e) = self.load_layout(&id) {
+            let label = self.sys.keyboard.label(&id).to_string();
+            self.notify(
+                Level::Error,
+                format!("Your keyboard layout {label} could not be loaded: {e}"),
+            );
+        }
+    }
+
     fn set_theme(&mut self, t: ThemeName) {
         self.settings.theme = t;
         self.theme = Theme::new(t);
@@ -1933,7 +2159,8 @@ impl App {
             | Pending::Restore { .. }
             | Pending::ChangePacks { .. }
             | Pending::RemoveContact { .. }
-            | Pending::RemovePgpKey { .. } => return,
+            | Pending::RemovePgpKey { .. }
+            | Pending::SetMesh { .. } => return,
             Pending::Logout => (
                 "LOG OUT",
                 "End this session? Programs you started from here will be closed.",
@@ -2106,6 +2333,7 @@ impl App {
                 ..
             } => self.recipients_key(target, rows, ticked, sel, key),
             Modal::ExpectedSum { file, value, .. } => self.expected_sum_key(file, value, key),
+            Modal::ChatInput { kind, value, error } => self.chat_input_key(kind, value, error, key),
             Modal::PackSearch { item, mut value } => match key.code {
                 KeyCode::Esc => Effect::None,
                 KeyCode::Enter if !value.trim().is_empty() => {
@@ -2179,6 +2407,10 @@ impl App {
             }
             Pending::JoinWifi { net } => {
                 self.create_and_join(&net, None);
+                return Effect::None;
+            }
+            Pending::SetMesh { on } => {
+                self.set_mesh(on);
                 return Effect::None;
             }
             Pending::ForgetWifi { name, uuid } => {
@@ -3022,9 +3254,9 @@ impl App {
         }
     }
 
-    fn reload_packs_in(&mut self, items: &mut Vec<LibItem>, list: &mut ListState) {
+    fn reload_packs_in(&mut self, kind: PackKind, items: &mut Vec<LibItem>, list: &mut ListState) {
         if let Ok(c) = resilience_core::packs::PackConfig::load(&self.paths.packs_config) {
-            *items = self.all_library_items(&c);
+            *items = self.all_library_items(&c, kind);
             clamp_selection(list, items.len());
         }
     }

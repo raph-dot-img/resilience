@@ -234,7 +234,21 @@ mod tests {
             .into_iter()
             .chain([d.join("args").display().to_string()])
             .collect();
-        let st = run_with_polkit_agent(&agent.to_string_lossy(), &argv, &[]).expect("run");
+        // Another test thread may fork while the script is still open for
+        // writing here; its child holds the descriptor until it execs, and
+        // executing the script meanwhile fails with ETXTBSY. Test-only race.
+        let st = (0..50)
+            .find_map(
+                |_| match run_with_polkit_agent(&agent.to_string_lossy(), &argv, &[]) {
+                    Err(e) if e.kind() == io::ErrorKind::ExecutableFileBusy => {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        None
+                    }
+                    r => Some(r),
+                },
+            )
+            .expect("script still busy after 1 s")
+            .expect("run");
         assert!(st.success(), "agent ran before the command");
         let args = std::fs::read_to_string(d.join("args")).expect("args");
         // SAFETY: getpid cannot fail.

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use ratatui::widgets::ListState;
 use resilience_core::human_bytes;
 use resilience_core::network::LinkLevel;
-use resilience_core::packs::{self, Inventory, PackCategory, PackConfig, PackState};
+use resilience_core::packs::{self, Inventory, PackCategory, PackConfig, PackKind, PackState};
 
 use super::{
     App, Effect, LIBRARY_LABEL, Level, MediaPurpose, Modal, PACKS_LABEL, Pending, RunRequest, View,
@@ -251,11 +251,26 @@ impl LibItem {
     }
 }
 
-/// `.zim` files a stick offers: catalog files (exact name and size) and
-/// any other `.zim` in its Resilience-packs folder.
-pub fn stick_items(cfg: &PackConfig, volume: &str, mount: &Path) -> Vec<LibItem> {
+/// The map viewer opens at most this many files (`resilience-maps view`).
+pub const MAX_MAPS: usize = 8;
+const MAP_LABEL: &str = "Map";
+
+/// Whether a pack file is of this kind (by its name).
+fn is_kind(path: &Path, kind: PackKind) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .and_then(PackKind::of)
+        == Some(kind)
+}
+
+/// Pack files of one kind a stick offers: catalog files (exact name and
+/// size) and any other file of that kind in its Resilience-packs folder.
+/// The Offline library asks for [`PackKind::Zim`]: map packs are not read in
+/// the text browser.
+pub fn stick_items(cfg: &PackConfig, volume: &str, mount: &Path, kind: PackKind) -> Vec<LibItem> {
     let mut items: Vec<LibItem> = packs::find_on_volume(cfg, mount)
         .into_iter()
+        .filter(|(_, path)| is_kind(path, kind))
         .map(|(i, path)| {
             let p = &cfg.packs[i];
             LibItem {
@@ -284,7 +299,8 @@ pub fn stick_items(cfg: &PackConfig, volume: &str, mount: &Path) -> Vec<LibItem>
                 let name = e.file_name().into_string().ok()?;
                 let meta = std::fs::symlink_metadata(e.path()).ok()?;
                 let listed = items.iter().any(|i| i.path == e.path());
-                (packs::valid_file_name(&name) && meta.is_file() && !listed).then(|| LibItem {
+                let wanted = packs::valid_file_name(&name) && is_kind(&e.path(), kind);
+                (wanted && meta.is_file() && !listed).then(|| LibItem {
                     title: name.clone(),
                     description: format!(
                         "On the stick {volume}: a file that is not in this system's catalog. \
@@ -309,13 +325,13 @@ pub fn stick_items(cfg: &PackConfig, volume: &str, mount: &Path) -> Vec<LibItem>
 }
 
 /// Built-in packs, installed catalog packs (by category, then title), then
-/// other files of the packs directory.
-pub fn library_items(cfg: &PackConfig) -> Vec<LibItem> {
+/// other files of the packs directory: only those of one kind.
+pub fn library_items(cfg: &PackConfig, kind: PackKind) -> Vec<LibItem> {
     let inv = packs::inventory(cfg);
     let mut items: Vec<LibItem> = cfg
         .builtin
         .iter()
-        .filter(|b| b.path.is_file())
+        .filter(|b| b.path.is_file() && is_kind(&b.path, kind))
         .map(|b| LibItem {
             title: b.title.clone(),
             description: b.description.clone(),
@@ -330,7 +346,7 @@ pub fn library_items(cfg: &PackConfig) -> Vec<LibItem> {
         .packs
         .iter()
         .zip(&inv.states)
-        .filter(|(_, s)| **s == PackState::Installed)
+        .filter(|(p, s)| **s == PackState::Installed && p.kind() == Some(kind))
         .map(|(p, _)| LibItem {
             title: p.title.clone(),
             description: p.description.clone(),
@@ -343,7 +359,11 @@ pub fn library_items(cfg: &PackConfig) -> Vec<LibItem> {
         .collect();
     installed.sort_by(|a, b| (a.category, &a.title).cmp(&(b.category, &b.title)));
     items.extend(installed);
-    items.extend(inv.others.iter().map(|o| {
+    let others = inv
+        .others
+        .iter()
+        .filter(|o| PackKind::of(&o.file) == Some(kind));
+    items.extend(others.map(|o| {
         let older = o.older_of.map(|i| cfg.packs[i].title.as_str());
         LibItem {
             title: older.map_or_else(|| o.file.clone(), |t| format!("{t} (older version)")),
@@ -417,13 +437,13 @@ impl App {
         }
     }
 
-    /// Library items, including packs on mounted sticks.
-    pub(super) fn all_library_items(&self, cfg: &PackConfig) -> Vec<LibItem> {
-        let mut items = library_items(cfg);
+    /// Pack files of one kind, including those on mounted sticks.
+    pub(super) fn all_library_items(&self, cfg: &PackConfig, kind: PackKind) -> Vec<LibItem> {
+        let mut items = library_items(cfg, kind);
         let (volumes, _) = self.load_volumes();
         for v in volumes.iter().filter(|v| v.usable()) {
             if let Some(m) = &v.mountpoint {
-                items.extend(stick_items(cfg, &v.display_name(), m));
+                items.extend(stick_items(cfg, &v.display_name(), m, kind));
             }
         }
         items
@@ -431,9 +451,22 @@ impl App {
 
     pub(super) fn open_library(&mut self) -> Option<View> {
         let cfg = self.packs_config_or_explain()?;
-        let items = self.all_library_items(&cfg);
+        let items = self.all_library_items(&cfg, PackKind::Zim);
         let sel = (!items.is_empty()).then_some(0);
         Some(View::Library {
+            kind: PackKind::Zim,
+            items,
+            list: ListState::default().with_selected(sel),
+        })
+    }
+
+    /// Maps & navigation: the maps of this computer and of open sticks.
+    pub(super) fn open_map_files(&mut self) -> Option<View> {
+        let cfg = self.packs_config_or_explain()?;
+        let items = self.all_library_items(&cfg, PackKind::Map);
+        let sel = (!items.is_empty()).then_some(0);
+        Some(View::Library {
+            kind: PackKind::Map,
             items,
             list: ListState::default().with_selected(sel),
         })
@@ -460,10 +493,18 @@ impl App {
     /// Refresh every library and packs screen after a change.
     pub(super) fn reload_packs(&mut self) {
         let cfg = PackConfig::load(&self.paths.packs_config).ok();
-        let fresh = cfg.as_ref().map(|c| self.all_library_items(c));
+        let fresh = cfg.as_ref().map(|c| {
+            (
+                self.all_library_items(c, PackKind::Zim),
+                self.all_library_items(c, PackKind::Map),
+            )
+        });
         for v in &mut self.stack {
-            if let (View::Library { items, list }, Some(f)) = (&mut *v, &fresh) {
-                *items = f.clone();
+            if let (View::Library { kind, items, list }, Some((zim, maps))) = (&mut *v, &fresh) {
+                *items = match kind {
+                    PackKind::Zim => zim.clone(),
+                    PackKind::Map => maps.clone(),
+                };
                 super::clamp_selection(list, items.len());
             }
             match v {
@@ -560,6 +601,58 @@ impl App {
         );
     }
 
+    /// Open the map viewer (`resilience-maps view`, in the foreground, as the
+    /// user). Without `item`: on the built-in and installed maps. With one:
+    /// on that map (and the built-in overview beneath it), then the other
+    /// installed maps; the built-in overview alone when it is the item.
+    /// At most [`MAX_MAPS`] files, as the viewer accepts.
+    pub(super) fn open_map_effect(&mut self, item: Option<&LibItem>) -> Effect {
+        let Some(cfg) = self.packs_config_or_explain() else {
+            return Effect::None;
+        };
+        let known = library_items(&cfg, PackKind::Map);
+        let builtin = known.iter().filter(|i| i.place == ItemPlace::Builtin);
+        let installed = known.iter().filter(|i| i.place == ItemPlace::Installed);
+        let mut files: Vec<PathBuf> = builtin.map(|i| i.path.clone()).collect();
+        match item {
+            Some(i) if i.place == ItemPlace::Builtin => {}
+            Some(i) => {
+                files.push(i.path.clone());
+                files.extend(installed.map(|i| i.path.clone()));
+            }
+            None => files.extend(installed.map(|i| i.path.clone())),
+        }
+        let mut seen = BTreeSet::new();
+        files.retain(|f| seen.insert(f.clone()));
+        files.truncate(MAX_MAPS);
+        if files.is_empty() {
+            self.modal = Some(Modal::Message {
+                title: "NO MAP".into(),
+                body: "This computer has no map yet. Map packs are listed in Resource \
+                       packs (Knowledge section): tick one and download it, or copy it \
+                       from a USB stick."
+                    .into(),
+                error: false,
+            });
+            return Effect::None;
+        }
+        let mut argv = vec![self.sys.tools.maps.clone(), "view".to_string()];
+        for f in &files {
+            argv.extend(["--pack".to_string(), f.to_string_lossy().into_owned()]);
+        }
+        tracing::info!(maps = files.len(), "opening the map");
+        Effect::Run(RunRequest {
+            label: MAP_LABEL.into(),
+            argv,
+            extra_args: Vec::new(),
+            env: Vec::new(),
+            polkit_agent: None,
+            clean_env: false,
+            pause_after: false,
+            banner: None,
+        })
+    }
+
     /// Open a pack in the text browser (through `resilience-library open`).
     pub(super) fn open_pack_effect(&self, item: &LibItem, search: Option<&str>) -> Effect {
         let mut argv = vec![self.sys.tools.library.clone(), "open".into()];
@@ -580,8 +673,11 @@ impl App {
         })
     }
 
-    pub(super) fn pack_details(&mut self, s: &PacksScreen, row: PackRow) {
-        let (title, body) = match row {
+    /// Enter on the packs screen: everything known about a pack, in a
+    /// scrolling view so that no part of it (a map's coverage text above
+    /// all) can be cut off on a small screen.
+    pub(super) fn pack_details(&self, s: &PacksScreen, row: PackRow) -> Option<View> {
+        let text = match row {
             PackRow::Pack(i) => {
                 let p = &s.cfg.packs[i];
                 let state = match s.inv.states[i] {
@@ -593,53 +689,74 @@ impl App {
                     ),
                     PackState::Absent => "not installed".into(),
                 };
-                let mut body = format!(
-                    "{}\n\n{}\n\nSize: {}\nLanguage: {}\nState: {state}\nLicense: {}\n\
-                     Source: {}\nFile: {}\nSHA-256: {}",
-                    p.title,
-                    p.description,
+                let mut text = format!("{}\n\n{}\n", p.title, p.description);
+                // What a map covers comes first: it says what is missing.
+                let facts = [
+                    ("Coverage", &p.coverage),
+                    ("Data date", &p.data_date),
+                    ("Attribution", &p.attribution),
+                ];
+                if facts.iter().any(|(_, v)| v.is_some()) {
+                    text.push('\n');
+                }
+                for (label, value) in facts {
+                    if let Some(v) = value {
+                        text.push_str(&format!("{label}: {}\n", v.trim()));
+                    }
+                }
+                text.push_str(&format!(
+                    "\nSize: {}\nLanguage: {}\nState: {state}\nLicense: {}\nSource: {}\n\
+                     File: {}\nSHA-256: {}",
                     human_bytes(p.size),
                     p.language,
                     p.license,
                     p.source,
                     p.file,
                     p.sha256
-                );
+                ));
                 if let Some(n) = &p.notice {
-                    body.push_str(&format!("\n\n[!!] {}", n.trim()));
+                    text.push_str(&format!("\n\n[!!] {}", n.trim()));
+                }
+                if p.kind() == Some(PackKind::Map) {
+                    text.push_str(
+                        "\n\nThis is a map pack: it is opened from Maps & navigation, not in \
+                         the Offline library.",
+                    );
                 }
                 if p.urls.is_empty() {
-                    body.push_str("\n\nThis pack cannot be downloaded: copy it from a USB stick.");
+                    text.push_str("\n\nThis pack cannot be downloaded: copy it from a USB stick.");
                 }
-                ("PACK DETAILS", body)
+                text
             }
             PackRow::Other(j) => {
                 let o = &s.inv.others[j];
-                let body = match o.older_of {
+                let place = match PackKind::of(&o.file) {
+                    Some(PackKind::Map) => "opened in Maps & navigation",
+                    _ => "read in the Offline library",
+                };
+                match o.older_of {
                     Some(i) => format!(
                         "{}\n\nAn older version of '{}', replaced in the catalog by a newer \
-                         one. It can still be read in the Offline library. Tick it and apply \
-                         to free {}.",
+                         one. It can still be {place}. Tick it and apply to free {}.",
                         o.file,
                         s.cfg.packs[i].title,
                         human_bytes(o.size)
                     ),
                     None => format!(
                         "{}\n\nThis file is not in the catalog of this system. It can still be \
-                         read in the Offline library, or removed to free {}.",
+                         {place}, or removed to free {}.",
                         o.file,
                         human_bytes(o.size)
                     ),
-                };
-                ("PACK DETAILS", body)
+                }
             }
-            _ => return,
+            _ => return None,
         };
-        self.modal = Some(Modal::Message {
-            title: title.into(),
-            body,
-            error: false,
-        });
+        Some(View::Pager {
+            title: "PACK DETAILS".into(),
+            text,
+            scroll: 0,
+        })
     }
 
     /// `d`: download the ticked packs (and remove the ticked ones).

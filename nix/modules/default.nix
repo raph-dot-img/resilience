@@ -11,6 +11,8 @@
     ./interface.nix
     ./security.nix
     ./networking.nix
+    ./comms.nix
+    ./mesh.nix
     ./boot.nix
     ./power.nix
     ./applications

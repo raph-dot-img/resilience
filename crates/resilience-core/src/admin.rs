@@ -106,6 +106,18 @@ pub struct AdminConfig {
     pub ultra_stable_only: bool,
     #[serde(default)]
     pub users: BTreeMap<String, ManagedUser>,
+    /// kbd's loadkeys, for `set-keymap` (ADR 0017).
+    #[serde(default)]
+    pub loadkeys: Option<PathBuf>,
+    /// The only keymap names `set-keymap` accepts.
+    #[serde(default)]
+    pub keymaps: Vec<String>,
+    /// systemctl, for `set-mesh` (ADR 0021).
+    #[serde(default)]
+    pub systemctl: Option<PathBuf>,
+    /// The mesh unit `set-mesh` starts and stops; absent: no mesh here.
+    #[serde(default)]
+    pub mesh_unit: Option<String>,
 }
 
 impl AdminConfig {
@@ -123,7 +135,11 @@ impl AdminConfig {
             &cfg.pkttyagent,
             &cfg.pkexec,
             &cfg.session_shell,
-        ] {
+        ]
+        .into_iter()
+        .chain(cfg.loadkeys.as_ref())
+        .chain(cfg.systemctl.as_ref())
+        {
             if !p.is_absolute() {
                 return Err(format!("program path must be absolute: {}", p.display()));
             }
@@ -481,6 +497,79 @@ pub fn now_rfc3339() -> String {
     rfc3339_utc(secs)
 }
 
+/// Why `set-mesh` refuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MeshRefusal {
+    /// The system has no mesh (`resilience.mesh.enable` is off).
+    Unavailable,
+    /// Neither `on` nor `off`.
+    BadState,
+}
+
+impl std::fmt::Display for MeshRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            MeshRefusal::Unavailable => "this system has no mesh network",
+            MeshRefusal::BadState => "the mesh can only be turned on or off",
+        })
+    }
+}
+
+/// `set-mesh` (ADR 0021): the systemctl argv that starts (`on`) or stops
+/// (`off`) the system's mesh unit, and nothing else.
+pub fn plan_set_mesh(cfg: &AdminConfig, state: &str) -> Result<Vec<String>, MeshRefusal> {
+    let (Some(systemctl), Some(unit)) = (cfg.systemctl.as_ref(), cfg.mesh_unit.as_ref()) else {
+        return Err(MeshRefusal::Unavailable);
+    };
+    let unit_ok = unit.ends_with(".service")
+        && !unit.starts_with('-')
+        && unit
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_');
+    if !unit_ok {
+        return Err(MeshRefusal::Unavailable);
+    }
+    let verb = match state {
+        "on" => "start",
+        "off" => "stop",
+        _ => return Err(MeshRefusal::BadState),
+    };
+    Ok(vec![
+        systemctl.to_string_lossy().into_owned(),
+        verb.into(),
+        "--".into(),
+        unit.clone(),
+    ])
+}
+
+/// Why `set-keymap` refuses a layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeymapRefusal {
+    /// This system has no keyboard layouts configured for the helper.
+    Unavailable,
+    /// Not a keymap name, or not one of the system's layouts.
+    NotOffered,
+}
+
+impl std::fmt::Display for KeymapRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            KeymapRefusal::Unavailable => "keyboard layouts cannot be changed on this system",
+            KeymapRefusal::NotOffered => "this keyboard layout is not offered on this system",
+        })
+    }
+}
+
+/// `set-keymap` (ADR 0017): the `loadkeys` argv for `id`, only if `id` is
+/// a valid name listed in the root-owned configuration.
+pub fn plan_set_keymap(cfg: &AdminConfig, id: &str) -> Result<Vec<String>, KeymapRefusal> {
+    let loadkeys = cfg.loadkeys.as_ref().ok_or(KeymapRefusal::Unavailable)?;
+    if !cfg.keymaps.iter().any(|k| k == id) {
+        return Err(KeymapRefusal::NotOffered);
+    }
+    crate::keyboard::loadkeys_argv(&loadkeys.to_string_lossy(), id).ok_or(KeymapRefusal::NotOffered)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,6 +589,10 @@ mod tests {
             session_shell: "/run/current-system/sw/bin/resilience-session".into(),
             autologin_user: autologin.map(String::from),
             ultra_stable_only: false,
+            loadkeys: None,
+            keymaps: Vec::new(),
+            systemctl: None,
+            mesh_unit: None,
             users: users
                 .iter()
                 .map(|(n, m)| {
@@ -576,6 +669,84 @@ mod tests {
                 .is_err()
         );
         assert!(AdminConfig::parse(&format!("{text}\nextra = 1\n")).is_err());
+    }
+
+    #[test]
+    fn set_mesh_only_starts_or_stops_the_mesh_unit() {
+        let mut c = cfg(&[], None);
+        assert_eq!(plan_set_mesh(&c, "on"), Err(MeshRefusal::Unavailable));
+        c.systemctl = Some("/sd/bin/systemctl".into());
+        assert_eq!(plan_set_mesh(&c, "on"), Err(MeshRefusal::Unavailable));
+        c.mesh_unit = Some("resilience-mesh.service".into());
+        assert_eq!(
+            plan_set_mesh(&c, "on"),
+            Ok(vec![
+                "/sd/bin/systemctl".to_string(),
+                "start".into(),
+                "--".into(),
+                "resilience-mesh.service".into()
+            ])
+        );
+        assert_eq!(plan_set_mesh(&c, "off").expect("off")[1], "stop");
+        for bad in ["", "ON", "restart", "on ", "start", "--force"] {
+            assert_eq!(
+                plan_set_mesh(&c, bad),
+                Err(MeshRefusal::BadState),
+                "{bad:?}"
+            );
+        }
+        for unit in ["sshd.socket", "-x.service", "a b.service", "../x.service"] {
+            c.mesh_unit = Some(unit.into());
+            assert_eq!(
+                plan_set_mesh(&c, "on"),
+                Err(MeshRefusal::Unavailable),
+                "{unit}"
+            );
+        }
+    }
+
+    #[test]
+    fn set_keymap_accepts_only_listed_layouts() {
+        let base = r#"
+            state_file = "/s"
+            audit_log = "/a"
+            lock_file = "/l"
+            gpasswd = "/g"
+            loginctl = "/lc"
+            timedatectl = "/t"
+            nix_env = "/n"
+            helper = "/h"
+            pkexec = "/p"
+            pkttyagent = "/pa"
+            session_shell = "/sh"
+        "#;
+        // Without a loadkeys path (older configuration): unavailable.
+        let none = AdminConfig::parse(base).expect("valid");
+        assert_eq!(
+            plan_set_keymap(&none, "us"),
+            Err(KeymapRefusal::Unavailable)
+        );
+        let text =
+            format!("loadkeys = \"/kbd/bin/loadkeys\"\nkeymaps = [\"us\", \"fr\", \"-q\"]\n{base}");
+        let c = AdminConfig::parse(&text).expect("valid");
+        assert_eq!(
+            plan_set_keymap(&c, "fr"),
+            Ok(vec![
+                "/kbd/bin/loadkeys".to_string(),
+                "-q".into(),
+                "--".into(),
+                "fr".into()
+            ])
+        );
+        for bad in ["de", "", "fr ", "../fr", "-q", "FR"] {
+            assert_eq!(
+                plan_set_keymap(&c, bad),
+                Err(KeymapRefusal::NotOffered),
+                "{bad:?}"
+            );
+        }
+        // A relative loadkeys path is refused when the file is read.
+        assert!(AdminConfig::parse(&text.replace("/kbd/bin/loadkeys", "loadkeys")).is_err());
     }
 
     #[test]

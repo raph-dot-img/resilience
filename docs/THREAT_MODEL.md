@@ -80,9 +80,26 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 | T38 | Decrypted data left behind or overwriting files | Decrypted files only in ~/Decrypted (0700/0600), O_EXCL + RENAME_NOREPLACE, partial output deleted on failure (wrong passphrase leaves nothing); messages decrypted in memory only | Implemented (vm-crypto, unit tests) |
 | T39 | GnuPG leaks presence, fetches keys, keeps passphrases, or trusts keys for the user | Always `--batch --no-auto-key-retrieve --no-auto-key-locate`, no key server; gpg-agent cache TTL 0 (invariant); fingerprint shown and confirmation asked before any import (`--show-keys`), private keys refused; `--trust-model always` only for keys the user chose; messages without integrity protection refused | Implemented (vm-crypto with a real GnuPG peer, security-invariants, unit tests on real gpg status output) |
 | T40 | A signature made to look like it covers a file it does not (clear-signed `NAME.asc` next to `NAME`), or options injected into gpg | Such signatures refused next to a same-named file; clear-signed text shown exactly as signed; "not a detached signature" is a refusal; names typed for keys cannot start with `-`, `--` before the user id; absolute paths everywhere (ADR 0015 review) | Implemented (vm-crypto regression step, host reproduction of the review's cases, unit tests) |
+| T41 | Console keymap used against another person: a key bound to a typed command line, or a login password typed with the wrong layout until faillock locks the account | The kernel allows keymap changes only with CAP_SYS_TTY_CONFIG; the only path for users is `resilience-admin set-keymap` with a name from the root-owned list in admin.toml (no user-supplied keymap files, so no string bindings of their choosing), `loadkeys -q -- NAME` with fixed argv, audited; polkit allows it without a password to the active local session only (ADR 0017); the system layout is loaded again before every login prompt (getty@ ExecStartPre) | Implemented (vm-boot-offline, unit tests). Concurrent sessions on several consoles share one keymap (kernel) |
+| T42 | Files from nearby computers in local messages: filling the disk, overwriting or hiding among the user's files, a name that is a path or an escape sequence, a file that runs | Received files kept apart in the messages folder (0700), named by message id (`ID.EXT`, extension `[a-z0-9]{1,8}` only), 0600, never executable, at most 900 KB each and 64 MB per account (then not kept, the text is); the name that came with them is cleaned and only shown; saved only on request, moved into ~/Received under a safe name (no `/`, no leading `.`, `-` or `~`) with RENAME_NOREPLACE; viewed only with the read-only viewers of T34; the sender's copy is a snapshot (ADR 0020) | Implemented (comms-messages, vm-comms, unit tests). The viewers parse hostile files (pdftotext, bsdtar) as they do for USB sticks |
+| T43 | The mesh network (ADR 0021) used to reach or misroute the computer: a neighbour in radio range sends router advertisements or DHCP to become its gateway, reaches services on it, or the mesh is turned on behind the user's back | bat0 has only an IPv6 link-local address (accept_ra=0, autoconf=0, no forwarding, no IPv4, NetworkManager never manages it); the firewall is unchanged (only Reticulum's two UDP ports); the mesh starts only when the person at the console asks (`set-mesh`, polkit allow_active only, audited) or with `autoStart` set by the administrator; turning it off restores the card | Implemented (vm-mesh, security-invariants, unit tests). Frames from anyone in range are parsed by the kernel's batman_adv and mac80211; the mesh is open by design (traffic on it is Reticulum's, end-to-end encrypted) |
 | T33 | Shell or Internet access from the offline library for Ultra-Stable accounts | lynx with `-restrictions=… -localhost` (no shell escape, no external programs, no typed address, no remote host); kiwix-serve on 127.0.0.1 only, `--blockexternal`, one file, stopped with the browser | Implemented (vm-packs: `!` refused, no shell process, loopback only). Usability measure, not a sandbox |
 
 ## 5. Known gaps (honest list)
+
+- Local messaging (ADR 0018, opt-in): every local account can read the
+  key of the machine's Reticulum instance, by design, and can therefore
+  disturb it (drop its paths). Anyone on the local network sees that the
+  machine runs Reticulum and can send it packets: the service is
+  unprivileged, sandboxed by systemd and limited to 256 MiB, but
+  Reticulum's own parsing of hostile packets has not been reviewed by us.
+  Wi-Fi networks with client isolation block its multicast.
+  The mesh network (ADR 0021), when someone turns it on, is open: anyone
+  in radio range with BATMAN-adv can join it, see the computer and send
+  it frames, which the kernel's batman_adv code parses.
+  Files in messages (ADR 0020) are accepted from any address, verified
+  or not, within 64 MB per account; their names and content are the
+  sender's choice.
 
 - The privileged helper offers `set-mode`, `set-time` and
   `set-default-generation` so far. The time zone can only be changed in the

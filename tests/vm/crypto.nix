@@ -41,7 +41,7 @@
 
     def tty_text(tty):
         """Screen text from /dev/vcsuN (UTF-32); see modes.nix."""
-        cols = int(machine.succeed(f"stty -F /dev/tty{tty} size").split()[1])
+        cols = int(machine.wait_until_succeeds(f"stty -F /dev/tty{tty} size", timeout=10).split()[1])
         raw = base64.b64decode(machine.succeed(f"base64 -w0 /dev/vcsu{tty}"))
         text = raw.decode("utf-32-le", errors="replace")
         return "\n".join(text[i:i + cols] for i in range(0, len(text), cols))
@@ -61,11 +61,14 @@
     def home():
         for _ in range(5):
             machine.send_key("esc")
-        wait_tty("1", "MAIN MENU")
+        return wait_tty("1", "MAIN MENU")
 
     def security(entry, title):
-        home()
-        machine.send_chars("3")
+        # The main menu numbers only the categories that have entries, so
+        # read Security's number from the screen instead of assuming it.
+        m = re.search(r"\[(\d)\] SECURITY & CRYPTOGRAPHY", home())
+        assert m is not None, "Security is not in the main menu"
+        machine.send_chars(m.group(1))
         wait_tty("1", "SECURITY & CRYPTOGRAPHY")
         machine.send_chars(entry)
         wait_tty("1", title)
@@ -297,7 +300,11 @@
         machine.send_chars(PGP_PASS)
         machine.send_key("tab")
         machine.send_chars(PGP_PASS + "\n")
-        wait_tty("1", "Your OpenPGP key:", timeout=120)
+        # gpg-agent keeps the passphrase only for an instant (max-cache-ttl
+        # 0): on a loaded host it asks again to sign the new key.
+        if "unlock the OpenPGP secret key" in wait_tty("1", "Your OpenPGP key:|unlock the OpenPGP secret key", timeout=120):
+            machine.send_chars(PGP_PASS + "\n")
+            wait_tty("1", "Your OpenPGP key:", timeout=120)
         back_to_interface()
         wait_tty("1", "Your OpenPGP key")
 

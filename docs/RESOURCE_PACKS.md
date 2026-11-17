@@ -1,13 +1,19 @@
 # Resource packs
 
-Status: **implemented for Kiwix ZIM files** (Phase 3, ADR 0013). This page
-describes what exists; the decision record has the reasoning and the
-alternatives.
+Status: **implemented for Kiwix ZIM files** (Phase 3, ADR 0013). The pack
+machinery also accepts **map packs** (`.mbtiles`, ADR 0016). A world
+overview map is built in (`resilience.packs.builtinWorldMap`, a `[[builtin]]`
+entry of the `maps` category, Natural Earth, 11.7 MB) and opens from Maps &
+navigation, with any installed map pack; no regional map pack is in the
+catalog yet. This page describes
+what exists; the decision records have the reasoning and the alternatives.
 
 ## What a pack is
 
-One file (today: a Kiwix ZIM file) declared in the system configuration
-with its exact size and SHA-256:
+One file declared in the system configuration with its exact size and
+SHA-256: a Kiwix ZIM file (`NAME.zim`, read in the text browser), or a map
+pack (`map-osm-REGION_YYYY-MM.mbtiles`, category `maps`, opened from Maps &
+navigation, never by the text browser):
 
 ```nix
 resilience.packs.catalog = [
@@ -15,7 +21,7 @@ resilience.packs.catalog = [
     id = "wikivoyage-en";                         # stable across versions
     title = "Wikivoyage (English): travel guide, text only";
     description = "Places to go, getting around, staying safe.";
-    category = "travel";   # encyclopedia dictionary health practical travel computing
+    category = "travel";   # encyclopedia dictionary health practical travel maps computing documentation
     language = "en";
     file = "wikivoyage_en_all_nopic_2026-09.zim";
     size = 272495142;
@@ -24,9 +30,24 @@ resilience.packs.catalog = [
     license = "CC-BY-SA-4.0";
     source = "Wikivoyage contributors; packaged by Kiwix (download.kiwix.org)";
     notice = null;                                # shown before opening
+    data_date = null;                             # optional: "YYYY-MM-DD" or "YYYY-MM"
+    coverage = null;                              # optional: what is covered and what is not
+    attribution = null;                           # optional: the credit the license requires
   }
 ];
 ```
+
+File names: ASCII letters, digits, `.`, `_` and `-`, at most 200
+characters, not starting with a dot, no `..`, ending in `.zim` or
+`.mbtiles`. A trailing `_YYYY-MM` marks the version: a file with the same
+name before the date and the same extension is recognised as an older
+version of a catalog pack.
+
+`data_date`, `coverage` and `attribution` are shown in the pack details
+(Enter on the Resource packs screen), coverage in full (at most 1000
+characters; attribution at most 300). A map pack must have all three and
+be in the `maps` category, and only map packs may be in it; the build
+fails otherwise. The coverage text is where a map says what it leaves out.
 
 The default catalog is `nix/packs/kiwix.nix`. Sizes and hashes come from
 Kiwix's metalinks (`<url>.meta4`). To add a pack: take the file's size and
@@ -63,10 +84,13 @@ documented in `crates/resilience-core/src/packs.rs`.
 - `resilience.packs.builtinDocs`: the "System documentation" ZIM built from
   the handbook and nixpkgs' NixOS manual and `options.json`
   (`nix/packages/resilience-docs/make-docs.py`), listed as `[[builtin]]`.
-- Packs on mounted sticks are listed in the Offline library and can be
-  checked with `resilience-library check FILE`.
+- ZIM packs on mounted sticks are listed in the Offline library and can be
+  checked with `resilience-library check FILE` (map files too).
+- The Offline library lists only ZIM files. `resilience-library open` on an
+  `.mbtiles` file refuses with a message pointing to Maps & navigation; it
+  never starts kiwix-serve for it.
 
 ## Not yet
 
-- Maps (Phase 5), documentation packs of our own, signed packs that can be
+- Regional map packs in the catalog, map search (Phase 5, ADR 0016), documentation packs of our own, signed packs that can be
   updated without a system update (Phase 8).

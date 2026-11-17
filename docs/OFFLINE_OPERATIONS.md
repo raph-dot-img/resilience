@@ -13,6 +13,34 @@ Resilience is designed for **no Internet, no DNS, no public servers**.
 | ModemManager | Disabled by default. |
 | SSH | Disabled; no listening sockets at all by default (tested). |
 
+## Local messaging network (standard edition, or when enabled)
+
+With `resilience.comms.enable = true` (the default of the **standard**
+edition; off in minimal; ADR 0018) the
+machine runs a Reticulum instance that **sends on its local network all
+the time**: IPv6 link-local multicast for discovery (UDP 29716) and data
+between machines (UDP 42671), both opened in the firewall. Nothing is sent
+beyond the local network: there is no Internet hub, no TCP and no routing
+for others. This is the one exception to "nothing in the background", and
+it exists only on machines where the option is set.
+
+With it, by default, the machine also runs a **message store**
+(`resilience.comms.store.enable`, ADR 0019): it keeps messages, encrypted
+for their recipients, for people who are away, and exchanges them with
+the stores of the other machines on the local network (about every half
+minute while there is something to exchange). Each logged-in account's
+messaging program asks its store for waiting messages every 5 minutes.
+This traffic goes through the same Reticulum instance and stays on the
+local network. Files sent in messages (ADR 0020, at most 900 KB each)
+travel the same way.
+
+Where local messaging is on, a **mesh network** can be turned on from the
+console (ADR 0021, off by default): the Wi-Fi card leaves NetworkManager
+and joins the ad hoc cell `resilience-mesh` on channel 1, and BATMAN-adv
+relays between the computers that have it on (its own messages about
+every second while it is on). It carries only link-local IPv6: no
+addresses from the network, no default route.
+
 ## Network states shown by the interface
 
 | State | Meaning | How it is determined |

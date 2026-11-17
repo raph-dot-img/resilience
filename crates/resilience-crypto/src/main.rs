@@ -840,10 +840,10 @@ fn verify(c: &Ctx, file: &Path) -> Res {
         (file.clone(), file.with_file_name(OsStr::from_bytes(&s)))
     };
     // OpenPGP (GnuPG) signatures: NAME.sig, NAME.asc, or a signed text.
-    if !sig.is_file() {
-        if let Some((pgp_sig, pgp_data)) = pgp::signature_for(&file) {
-            return pgp::verify(c, &pgp_sig, pgp_data.as_deref());
-        }
+    if !sig.is_file()
+        && let Some((pgp_sig, pgp_data)) = pgp::signature_for(&file)
+    {
+        return pgp::verify(c, &pgp_sig, pgp_data.as_deref());
     }
     head_of(&data)?;
     heading("CHECK A SIGNATURE");
@@ -1069,36 +1069,35 @@ fn inspect(c: &Ctx, file: &Path) -> Res {
         shown(&file),
         human_bytes(meta.len())
     ));
-    if fmt.is_age() {
-        if let Ok(o) = Command::new(&c.tools.age_inspect)
+    if fmt.is_age()
+        && let Ok(o) = Command::new(&c.tools.age_inspect)
             .arg(&file)
             .stdin(Stdio::null())
             .output()
-        {
-            let t = String::from_utf8_lossy(&o.stdout);
-            let t = t.split("Tip:").next().unwrap_or("");
-            if o.status.success() && !t.trim().is_empty() {
-                say(&format!(
-                    "\nDetails (age-inspect):\n{}",
-                    printable(t.trim_end())
-                ));
-            }
+    {
+        let t = String::from_utf8_lossy(&o.stdout);
+        let t = t.split("Tip:").next().unwrap_or("");
+        if o.status.success() && !t.trim().is_empty() {
+            say(&format!(
+                "\nDetails (age-inspect):\n{}",
+                printable(t.trim_end())
+            ));
         }
     }
     if is_pgp_message(&fmt) {
         pgp::inspect(c, &file);
     }
-    if let Format::MinisignSignature = fmt {
-        if let Some(id) = crypto::minisign_signature_key_id(&String::from_utf8_lossy(&head)) {
-            let who = match c.keys.signer(&id) {
-                Some(s) => s
-                    .name
-                    .map(|n| format!("your contact {}", printable(&n)))
-                    .unwrap_or_else(|| "your own key".into()),
-                None => "a key not in your contacts".into(),
-            };
-            say(&format!("\nMade with key number {id}: {who}."));
-        }
+    if let Format::MinisignSignature = fmt
+        && let Some(id) = crypto::minisign_signature_key_id(&String::from_utf8_lossy(&head))
+    {
+        let who = match c.keys.signer(&id) {
+            Some(s) => s
+                .name
+                .map(|n| format!("your contact {}", printable(&n)))
+                .unwrap_or_else(|| "your own key".into()),
+            None => "a key not in your contacts".into(),
+        };
+        say(&format!("\nMade with key number {id}: {who}."));
     }
     Ok(())
 }
@@ -1279,12 +1278,12 @@ fn add_contact(c: &Ctx, file: Option<&Path>) -> Res {
     if age.is_none() && minisign.is_none() {
         return Err(Failure::Refused("No public key found.".into()));
     }
-    if let Some(k) = &age {
-        if !age_accepts(c, k) {
-            return Err(Failure::Refused(
-                "The encryption key is not valid (a character is wrong or missing).".into(),
-            ));
-        }
+    if let Some(k) = &age
+        && !age_accepts(c, k)
+    {
+        return Err(Failure::Refused(
+            "The encryption key is not valid (a character is wrong or missing).".into(),
+        ));
     }
     say("\nKeys found:");
     if let Some(k) = &age {
@@ -1325,14 +1324,14 @@ fn add_contact(c: &Ctx, file: Option<&Path>) -> Res {
         (&contact.age, &age, "encryption"),
         (&contact.minisign, &minisign, "signing"),
     ] {
-        if let (Some(h), Some(n)) = (have, new) {
-            if h != n {
-                return Err(Failure::Refused(format!(
-                    "{} already has a DIFFERENT {kind} key. A key that changes is a warning \
+        if let (Some(h), Some(n)) = (have, new)
+            && h != n
+        {
+            return Err(Failure::Refused(format!(
+                "{} already has a DIFFERENT {kind} key. A key that changes is a warning \
                      sign: check with them. To replace it, remove the contact first.",
-                    printable(&name)
-                )));
-            }
+                printable(&name)
+            )));
         }
     }
     contact.age = contact.age.or(age);

@@ -36,7 +36,7 @@
         indices; with a CP437-ordered console font the box-drawing indices
         are invalid UTF-8 and corrupt neighbouring characters.
         """
-        cols = int(machine.succeed(f"stty -F /dev/tty{tty} size").split()[1])
+        cols = int(machine.wait_until_succeeds(f"stty -F /dev/tty{tty} size", timeout=10).split()[1])
         raw = base64.b64decode(machine.succeed(f"base64 -w0 /dev/vcsu{tty}"))
         text = raw.decode("utf-32-le", errors="replace")
         return "\n".join(text[i:i + cols] for i in range(0, len(text), cols))
@@ -150,6 +150,44 @@
         wait_tty("1", "STOPPED UNEXPECTEDLY")
         machine.send_key("ret")
         wait_tty("1", "MAIN MENU")
+
+    with subtest("keyboard layout chosen in Settings; login prompts use the system's"):
+        def key_q():
+            # What the key labelled Q on a US keyboard types: q (us), a (fr).
+            out = machine.succeed("dumpkeys -k 2>/dev/null | grep -E '^keycode +16 ' | head -1")
+            m = re.search(r"= \+?([a-z])", out)
+            assert m is not None, out
+            return m.group(1)
+
+        assert key_q() == "q", key_q()
+        # ADR 0017: set-keymap needs no password at the console, but only
+        # there; the other helper actions keep auth_admin.
+        out = machine.succeed("pkaction --action-id org.resilience.admin.set-keymap --verbose")
+        assert re.search(r"implicit active:\s+yes", out) and re.search(r"implicit any:\s+no", out), out
+        out = machine.succeed("pkaction --action-id org.resilience.admin.set-mode --verbose")
+        assert re.search(r"implicit active:\s+auth_admin$", out, re.M), out
+        # Outside the listed layouts the helper refuses, and audits it.
+        machine.fail(f"{helper} set-keymap ../../tmp/evil")
+        machine.succeed("grep 'op=set-keymap' /var/log/resilience/audit.log | grep -q 'result=refused'")
+        machine.send_chars("/azerty")
+        wait_tty("1", "Settings")
+        machine.send_key("ret")
+        wait_tty("1", "THEME & KEYBOARD")
+        machine.send_key("home")
+        for _ in range(6):  # 4 themes, then us, uk, fr
+            machine.send_key("down")
+        machine.send_key("ret")
+        wait_tty("1", "French \\(AZERTY\\)  \\(current\\)")
+        assert key_q() == "a", key_q()
+        machine.succeed("grep 'op=set-keymap' /var/log/resilience/audit.log | grep 'caller=alice' | grep -q 'result=ok'")
+        machine.succeed("grep -qx 'keyboard = \"fr\"' /home/alice/.config/resilience/settings.toml")
+        # Any login prompt loads the system's layout again (all consoles).
+        machine.succeed("systemctl restart getty@tty2")
+        machine.wait_until_succeeds("test \"$(dumpkeys -k 2>/dev/null | grep -cE '^keycode +16 = \\+?q')\" = 1", timeout=20)
+        # The next session of alice loads her choice again.
+        machine.succeed("loginctl terminate-user alice")
+        wait_tty("1", "MAIN MENU")
+        machine.wait_until_succeeds("dumpkeys -k 2>/dev/null | grep -qE '^keycode +16 = \\+?a'", timeout=20)
 
     with subtest("measure resource usage (reported, not asserted)"):
         print("MEASURE tui_rss_kib", machine.succeed("ps -o rss= -C resilience | head -1").strip())
