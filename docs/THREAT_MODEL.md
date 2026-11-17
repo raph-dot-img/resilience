@@ -85,6 +85,14 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 
 ## 5. Known gaps (honest list)
 
+- Local messaging (ADR 0018, opt-in): every local account can read the
+  key of the machine's Reticulum instance, by design, and can therefore
+  disturb it (drop its paths). Anyone on the local network sees that the
+  machine runs Reticulum and can send it packets: the service is
+  unprivileged, sandboxed by systemd and limited to 256 MiB, but
+  Reticulum's own parsing of hostile packets has not been reviewed by us.
+  Wi-Fi networks with client isolation block its multicast.
+
 - The privileged helper offers `set-mode`, `set-time` and
   `set-default-generation` so far. The time zone can only be changed in the
   Nix configuration.

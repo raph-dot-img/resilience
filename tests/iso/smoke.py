@@ -13,7 +13,8 @@ human (or a reviewer) can check what was displayed.
 translated to the keys that produce it in that layout.
 
 Steps: boot (GRUB default entry), wait, screenshot; press '/' and type
-'diagnostics', Enter, screenshot; Esc Esc; F5 screenshot.
+'diagnostics', Enter, screenshot; Esc Esc; F5 screenshot; Esc, '/messages'
+screenshot, Enter, screenshot (Local messages on the standard edition).
 """
 import argparse
 import os
@@ -112,6 +113,14 @@ def main():
         monitor(mon, "sendkey f5")
         time.sleep(3)
         shot("04-status")
+        monitor(mon, "sendkey esc")
+        time.sleep(1)
+        keys(mon, "/messages", a.keymap)
+        time.sleep(1)
+        shot("05-search-messages")
+        monitor(mon, "sendkey ret")
+        time.sleep(3)
+        shot("06-messages")
         if vm.poll() is not None:
             print("QEMU exited early with", vm.returncode)
             return 1

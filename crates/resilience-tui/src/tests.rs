@@ -131,6 +131,8 @@ description = "Carol the admin"
         booted_system: sys.join("booted"),
         running_system: sys.join("current"),
         packs_config: sys.join("packs.toml"),
+        // Absent: local messaging is off unless a test creates the file.
+        comms_client: sys.join("comms-client-config"),
     }
 }
 
@@ -3406,5 +3408,389 @@ fn keyboard_layout_is_loaded_saved_and_restored_at_login() {
         b.notices
             .iter()
             .any(|n| n.text.contains("no longer offered"))
+    );
+}
+
+// ----- local messages (ADR 0018) ---------------------------------------------
+
+const ME: &str = "0123456789abcdef0123456789abcdef";
+const MARIE: &str = "aaaabbbbccccddddeeeeffff00001111";
+
+/// Local messaging enabled on the machine, the account's program "running".
+fn chat_app(tag: &str) -> App {
+    let a = app(Mode::UltraStable, tag);
+    std::fs::write(&a.paths.comms_client, "[reticulum]\n").expect("w");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    std::fs::create_dir_all(box_.join("messages")).expect("mkdir");
+    std::fs::write(box_.join("address"), format!("{ME}\n")).expect("w");
+    std::fs::write(
+        box_.join("status.json"),
+        format!(
+            r#"{{"address":"{ME}","name":"demo","pid":1,"time":{}}}"#,
+            crate::app::chat_now()
+        ),
+    )
+    .expect("w");
+    a
+}
+
+/// What the messaging program would write for a message.
+fn chat_record(a: &App, id: &str, direction: &str, state: &str, verified: bool, text: &str) {
+    let body = serde_json_string(text);
+    let detail = if state == "queued" {
+        "waiting for the recipient"
+    } else {
+        ""
+    };
+    std::fs::write(
+        resilience_core::messages::store_dir(&a.home)
+            .join("messages")
+            .join(format!("{id}.json")),
+        format!(
+            r#"{{"id":"{id}","direction":"{direction}","peer":"{MARIE}","text":{body},"created":{},"state":"{state}","verified":{verified},"detail":"{detail}"}}"#,
+            crate::app::chat_now()
+        ),
+    )
+    .expect("w");
+}
+
+/// A JSON string literal (the tests' texts need only these escapes).
+fn serde_json_string(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Let the periodic reload of the messages screens happen.
+fn chat_refresh(a: &mut App) {
+    for _ in 0..8 {
+        a.on_tick();
+    }
+}
+
+#[test]
+fn local_messages_exist_only_where_messaging_is_enabled() {
+    let a = app(Mode::UltraStable, "chat-off");
+    assert!(a.entries(Category::Communications).is_empty());
+    assert!(!a.home_categories().contains(&Category::Communications));
+    assert!(
+        !a.search("nearby")
+            .contains(&SearchHit::Entry(Entry::Builtin(Builtin::Chat)))
+    );
+    for mode in [Mode::UltraStable, Mode::Stable, Mode::Advanced] {
+        let b = app(mode, "chat-on");
+        std::fs::write(&b.paths.comms_client, "x").expect("w");
+        assert_eq!(
+            b.entries(Category::Communications),
+            [Entry::Builtin(Builtin::Chat)],
+            "{mode:?}"
+        );
+        assert!(
+            b.search("nearby")
+                .contains(&SearchHit::Entry(Entry::Builtin(Builtin::Chat)))
+        );
+    }
+}
+
+#[test]
+fn my_address_and_a_stopped_program_are_said_plainly() {
+    let mut a = app(Mode::UltraStable, "chat-stopped");
+    std::fs::write(&a.paths.comms_client, "x").expect("w");
+    open(&mut a, Builtin::Chat);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("LOCAL MESSAGES"), "{screen}");
+    assert!(screen.contains("No messages yet"), "{screen}");
+    assert!(screen.contains("Messaging is not running"), "{screen}");
+    assert_console_glyphs(&screen);
+    press(&mut a, KeyCode::Char('m'));
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("Messaging has not started"), "{screen}");
+    press(&mut a, KeyCode::Enter);
+
+    let mut a = chat_app("chat-address");
+    open(&mut a, Builtin::Chat);
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("Messaging is running"), "{screen}");
+    assert!(screen.contains("01234567.."), "{screen}");
+    press(&mut a, KeyCode::Char('m'));
+    let screen = render(&mut a, 80, 24);
+    assert!(
+        screen.contains("0123 4567 89ab cdef 0123 4567 89ab cdef"),
+        "{screen}"
+    );
+    assert!(!screen.contains("not running"), "{screen}");
+}
+
+#[test]
+fn a_message_store_and_a_copy_left_in_it_are_shown() {
+    // No store heard: said plainly on the conversations screen.
+    let mut a = chat_app("chat-nostore");
+    open(&mut a, Builtin::Chat);
+    let screen = render(&mut a, 120, 30);
+    assert!(
+        screen.contains("No message store on this network"),
+        "{screen}"
+    );
+
+    // A store in use (ADR 0019) and a message whose copy waits in it.
+    let mut a = chat_app("chat-store");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    std::fs::write(
+        box_.join("status.json"),
+        format!(
+            r#"{{"address":"{ME}","name":"demo","pid":1,"time":{},"store":"{MARIE}"}}"#,
+            crate::app::chat_now()
+        ),
+    )
+    .expect("w");
+    std::fs::write(
+        box_.join("messages").join("m1.json"),
+        format!(
+            r#"{{"id":"m1","direction":"out","peer":"{MARIE}","text":"Left for later","created":{},"state":"sent","stored":true,"detail":"a copy waits"}}"#,
+            crate::app::chat_now()
+        ),
+    )
+    .expect("w");
+    open(&mut a, Builtin::Chat);
+    press(&mut a, KeyCode::Up);
+    let screen = render(&mut a, 120, 30);
+    assert!(screen.contains("wait in a message store"), "{screen}");
+    press(&mut a, KeyCode::Enter);
+    let screen = render(&mut a, 120, 30);
+    assert!(screen.contains("[sent, kept on the network]"), "{screen}");
+    assert!(screen.contains("Left for later"), "{screen}");
+    assert!(!screen.contains("[delivered]"), "{screen}");
+    assert_console_glyphs(&screen);
+}
+
+#[test]
+fn writing_to_an_address_saves_a_request_and_never_claims_more() {
+    let mut a = chat_app("chat-write");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    open(&mut a, Builtin::Chat);
+    press(&mut a, KeyCode::Char('n'));
+    assert!(render(&mut a, 80, 24).contains("WRITE TO AN ADDRESS"));
+    // Not an address; then my own address: explained, nothing written.
+    type_text(&mut a, "marie");
+    press(&mut a, KeyCode::Enter);
+    assert!(render(&mut a, 80, 24).contains("An address has 32 characters"));
+    for _ in 0..5 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    type_text(&mut a, ME);
+    press(&mut a, KeyCode::Enter);
+    assert!(render(&mut a, 80, 24).contains("This is your own address"));
+    assert!(!box_.join("outbox").exists());
+    press(&mut a, KeyCode::Esc);
+    assert!(a.modal.is_none());
+
+    // As read aloud: groups, upper case.
+    press(&mut a, KeyCode::Char('n'));
+    type_text(&mut a, "AAAA bbbb cccc dddd eeee ffff 0000 1111");
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(a.view(), View::Chat { peer, .. } if peer == MARIE));
+    let screen = render(&mut a, 80, 24);
+    assert!(screen.contains("WRITE A MESSAGE"), "{screen}");
+    // Empty: refused in the dialog.
+    press(&mut a, KeyCode::Enter);
+    assert!(render(&mut a, 80, 24).contains("the message is empty"));
+    type_text(&mut a, "Water at the \"school\", 9h; $(reboot)");
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    assert!(a.modal.is_none());
+
+    let files: Vec<PathBuf> = std::fs::read_dir(box_.join("outbox"))
+        .expect("outbox")
+        .map(|e| e.expect("entry").path())
+        .collect();
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert!(files[0].extension().is_some_and(|e| e == "json"));
+    let text = std::fs::read_to_string(&files[0]).expect("read");
+    assert!(text.contains(&format!("\"to\":\"{MARIE}\"")), "{text}");
+    assert!(
+        text.contains(r#""text":"Water at the \"school\", 9h; $(reboot)""#),
+        "{text}"
+    );
+    // Saved, not "sent" and certainly not "delivered".
+    let said = &a.notices.last().expect("notice").text;
+    assert!(said.contains("Message saved"), "{said}");
+    let lower = said.to_lowercase();
+    assert!(
+        !lower.contains("delivered") && !lower.contains("sent"),
+        "{said}"
+    );
+    let screen = render(&mut a, 80, 24);
+    assert!(
+        screen.contains("No messages with this person yet"),
+        "{screen}"
+    );
+    assert!(!screen.contains("[delivered]"), "{screen}");
+}
+
+#[test]
+fn a_conversation_shows_what_is_known_about_each_message() {
+    let mut a = chat_app("chat-states");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    chat_record(&a, "m1", "out", "queued", false, "Water at the school, 9h");
+    open(&mut a, Builtin::Chat);
+    let screen = render(&mut a, 100, 30);
+    assert!(screen.contains("[..] aaaabbbb.."), "{screen}");
+    assert!(screen.contains("You: Water at the school, 9h"), "{screen}");
+    assert!(
+        screen.contains("1 waiting or sent without proof"),
+        "{screen}"
+    );
+    press(&mut a, KeyCode::Enter);
+    let screen = render(&mut a, 100, 30);
+    assert!(screen.contains("MESSAGES WITH aaaabbbb.."), "{screen}");
+    assert!(screen.contains("You [waiting]"), "{screen}");
+    assert!(screen.contains("waiting for the recipient"), "{screen}");
+
+    // The program reports progress; the screen follows by itself.
+    chat_record(&a, "m1", "out", "sent", false, "Water at the school, 9h");
+    chat_refresh(&mut a);
+    assert!(render(&mut a, 100, 30).contains("You [sent]"));
+    chat_record(
+        &a,
+        "m1",
+        "out",
+        "delivered",
+        false,
+        "Water at the school, 9h",
+    );
+    chat_record(&a, "in-1", "in", "received", true, "OK, see you there");
+    chat_record(
+        &a,
+        "in-2",
+        "in",
+        "received",
+        false,
+        "trust me\u{1b}[2J\u{202e}\nsecond line",
+    );
+    chat_record(&a, "m2", "out", "failed", false, "too late");
+    chat_record(&a, "m3", "out", "queued", false, "still trying");
+    chat_refresh(&mut a);
+    let screen = render(&mut a, 100, 40);
+    assert!(screen.contains("You [delivered]"), "{screen}");
+    assert!(screen.contains("Them [from them]"), "{screen}");
+    assert!(
+        screen.contains("Them [from them, NOT VERIFIED]"),
+        "{screen}"
+    );
+    assert!(screen.contains("You [FAILED]"), "{screen}");
+    // The escape sequence and the direction override are not drawn.
+    assert!(screen.contains("trust me[2J"), "{screen}");
+    assert!(screen.contains("second line"), "{screen}");
+    assert!(!screen.contains('\u{1b}') && !screen.contains('\u{202e}'));
+
+    // Small and large screens: the newest message stays in view.
+    for (w, h) in [(160, 50), (80, 24), (60, 20)] {
+        let screen = render(&mut a, w, h);
+        assert!(screen.contains("still trying"), "{screen}");
+        assert_console_glyphs(&screen);
+    }
+
+    // c gives up on a waiting message only.
+    let View::Chat { records, list, .. } = a.view() else {
+        panic!("not in a conversation")
+    };
+    let order: Vec<&str> = records.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(list.selected(), Some(records.len() - 1));
+    let waiting = order.iter().position(|i| *i == "m3").expect("m3");
+    let done = order.iter().position(|i| *i == "m1").expect("m1");
+    let n = order.len();
+    press(&mut a, KeyCode::Home);
+    for _ in 0..done {
+        press(&mut a, KeyCode::Down);
+    }
+    press(&mut a, KeyCode::Char('c'));
+    assert!(!box_.join("cancel").exists());
+    press(&mut a, KeyCode::Home);
+    for _ in 0..waiting {
+        press(&mut a, KeyCode::Down);
+    }
+    press(&mut a, KeyCode::Char('c'));
+    assert!(box_.join("cancel/m3").is_file());
+    assert_eq!(
+        std::fs::read_dir(box_.join("cancel")).expect("ls").count(),
+        1
+    );
+    assert!(n >= 5);
+
+    // a: a name of my own for this address; i: the whole address.
+    press(&mut a, KeyCode::Char('a'));
+    assert!(render(&mut a, 100, 40).contains("NAME THIS PERSON"));
+    type_text(&mut a, "Marie");
+    press(&mut a, KeyCode::Enter);
+    assert!(render(&mut a, 100, 40).contains("MESSAGES WITH Marie (aaaabbbb..)"));
+    press(&mut a, KeyCode::Char('i'));
+    let screen = render(&mut a, 100, 40);
+    assert!(
+        screen.contains("aaaa bbbb cccc dddd eeee ffff 0000 1111"),
+        "{screen}"
+    );
+    assert!(screen.contains("You named this address: Marie"), "{screen}");
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::F(1));
+    assert!(render(&mut a, 100, 40).contains("== LOCAL MESSAGES =="));
+    press(&mut a, KeyCode::Esc);
+    press(&mut a, KeyCode::Esc);
+    let screen = render(&mut a, 100, 30);
+    assert!(screen.contains("[!!] Marie"), "{screen}");
+}
+
+#[test]
+fn people_nearby_are_listed_with_claimed_names() {
+    let mut a = chat_app("chat-nearby");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    open(&mut a, Builtin::Chat);
+    press(&mut a, KeyCode::Char('p'));
+    assert!(render(&mut a, 80, 24).contains("Nobody has been heard"));
+    std::fs::write(
+        box_.join("peers.json"),
+        format!(
+            r#"{{"{MARIE}":{{"name":"marie\u001b[31m","heard":{}}}}}"#,
+            crate::app::chat_now()
+        ),
+    )
+    .expect("w");
+    press(&mut a, KeyCode::Char('r'));
+    for (w, h) in [(80, 24), (60, 20), (160, 50)] {
+        let screen = render(&mut a, w, h);
+        assert!(screen.contains("PEOPLE NEARBY"), "{screen}");
+        assert_console_glyphs(&screen);
+    }
+    let screen = render(&mut a, 100, 30);
+    // A claimed name is quoted and questioned, and cleaned.
+    assert!(screen.contains("\"marie [31m\"?"), "{screen}");
+    assert!(
+        screen.contains("aaaa bbbb cccc dddd eeee ffff 0000 1111"),
+        "{screen}"
+    );
+    press(&mut a, KeyCode::Char('i'));
+    let screen = render(&mut a, 100, 30);
+    assert!(screen.contains("says its name is"), "{screen}");
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::Char('a'));
+    type_text(&mut a, "Marie C.");
+    press(&mut a, KeyCode::Enter);
+    assert!(render(&mut a, 100, 30).contains("Marie C. "));
+    // Enter opens the conversation, ready to write.
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(a.view(), View::Chat { peer, .. } if peer == MARIE));
+    press(&mut a, KeyCode::Char('w'));
+    type_text(&mut a, "hello");
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        std::fs::read_dir(box_.join("outbox")).expect("ls").count(),
+        1
     );
 }

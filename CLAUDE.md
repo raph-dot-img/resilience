@@ -51,13 +51,29 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            user namespaces off on Ultra-Stable-only machines (ADR 0012)
    │            networking.nix  NetworkManager (no connectivity check), polkit allowlist for
    │                            accounts without its group (ADR 0010), firewall, no NTP
+   │            comms.nix       local messaging network (ADR 0018): resilience.comms.enable
+   │                            (default off; the STANDARD profile turns it on)
+   │                            -> resilience-reticulum.service (rnsd, DynamicUser, AutoInterface
+   │                            only, UDP 29716+42671), /run/resilience-reticulum/client/config
+   │                            (instance name + RPC key, world-readable by design), and the
+   │                            systemd USER service resilience-messages (nix/packages/
+   │                            resilience-messages: Python around LXMF.LXMRouter; per-account
+   │                            identity + messages in ~/.local/share/resilience/messages;
+   │                            outbox/ID.json + cancel/ID in, messages/ID.json out), and
+   │                            resilience-messages-node.service (ADR 0019: message store = LXMF
+   │                            propagation node, `resilience-messages node`, DynamicUser, AF_UNIX
+   │                            only, no delivery address, cost 13, peers 1 hop, 32 MB;
+   │                            resilience.comms.store.{enable (default on),limitMB}). rns and lxmf
+   │                            are UNFREE (Reticulum License): allowed by name only in
+   │                            nix/packages/resilience-reticulum (its own nixpkgs import)
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
    ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
    ├─ packages: resilience, resilience-session, resilience-handbook, resilience-world-map, iso, iso-minimal, vm
    ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
-              vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-maps,
-              security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world
+              vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-maps, vm-comms,
+              security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world,
+              comms-messages (the messaging program with real Reticulum + LXMF, no VM)
 
 crates/resilience-core  library: status, network (passive + on-demand probe),
                         mode detection, catalog, config, handbook, notes, launch, proc,
@@ -70,7 +86,9 @@ crates/resilience-core  library: status, network (passive + on-demand probe),
                         pipeline, checksum, restore into ~/Restored), wifi (nmcli parsing,
                         private profiles, password via stdin), packs (catalog, inventory,
                         stdin chunk framing, receive+hash, remove, reader URLs), keyboard
-                        (layout list, names, loadkeys argv), maps/ (geo, mvt decoder, canvas,
+                        (layout list, names, loadkeys argv), messages (local messages store:
+                        bounded JSON records, peers, contacts, outbox/cancel files, text
+                        cleaning; ADR 0018), maps/ (geo, mvt decoder, canvas,
                         style, labels: pure, ADR 0016)
 crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR 0007):
                         list | set-mode USER MODE | set-time UTC |
@@ -173,6 +191,23 @@ catalog map packs, at most 8. "Maps on this computer & USB sticks" =
 → `resilience-library check`. The viewer opens SQLite hardened, lowers its
 memory limit, writes only ~/.local/state/resilience/maps.toml.
 
+Local messages flow (ADR 0018, only with resilience.comms.enable): TUI
+Communications → Local messages (shown when /run/resilience-reticulum/
+client/config exists) reads ~/.local/share/resilience/messages every 2 s
+(`resilience_core::messages::Store`: records, peers, contacts, status) and
+writes `outbox/ID.json` (tmp + rename), `cancel/ID`, `contacts.json`. The
+user service `resilience-messages` takes the request, sends through the
+machine's Reticulum instance and rewrites `messages/ID.json` (queued →
+sent → delivered only on LXMF's proof; failed). The TUI never touches the
+network; names from the network are shown as claims (`"name"?`).
+Store-and-forward (ADR 0019): still undelivered after 2 min → a copy with
+the same LXMF hash (record `ts`) goes to the machine's store
+(`/run/resilience-messages-node/address`) or the nearest heard; `sent` +
+`"stored": true` ("sent, kept on the network"); direct attempts go on.
+Stores peer on the local network; programs collect every 5 min. Programs
+attach with `require_shared_instance` (exit 75 if rnsd is not up) and save
+heard keys (`known_destinations`) every 10 min and at exit.
+
 Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
 with `connection.permissions user:U`, no secret → thread: `nmcli connection
 up uuid X passwd-file /dev/stdin` (secret on a pipe) → failure deletes a
@@ -208,6 +243,9 @@ new profile. Never `nmcli --ask` (wrong password = inescapable prompt loop).
   repertoire, 256 glyphs so the VT keeps 16 colours). Enforced by the test
   `only_console_font_glyphs_are_drawn`. ter-v16n lacks ▀▄ and double lines.
 - See `docs/COMPONENTS.md` for every third-party component, version and license.
+- Resilience's own code: **Hippocratic License 2.1** (`LICENSE`, owner's decision
+  2026-11-16; SPDX `Hippocratic-2.1` in Cargo.toml; Nix `meta.license = import
+  nix/lib/license.nix`, which leaves `free` unset so nixpkgs still builds it).
 
 ## 5. Build
 
@@ -367,21 +405,47 @@ needlessly. Watch `free -h` during VM tests.
 
 ## 14. Current implementation status (2026-11-16)
 
-Phases 0 to 4 are done (see ROADMAP.md). Phase 5 (offline maps, ADR 0016)
-is in progress. Slices 1 to 7 are in `develop` (PR #1 merged); slice 8
+**Now: Phase 6 (networking and communications), branch `feat/comms`.**
+Maps (Phase 5) were parked by the owner on 2026-11-16 after slice 9: do
+not continue slices 10 to 13 unless asked. Phase 6 so far: ADR 0018
+(Reticulum + LXMF, opt-in because their licence is not free: owner's
+decision); slice 1 = `nix/modules/comms.nix`, `nix/packages/
+resilience-reticulum`, `vm-comms`; slice 2 = the per-user program
+`resilience-messages` (file formats in ADR 0018), check `comms-messages`.
+Slice 3 = `resilience-core/src/messages.rs` and the TUI screens
+(`crates/resilience-tui/src/chat_ui.rs`: `Builtin::Chat` "Local
+messages" under Communications, views Chats / Nearby / Chat, dialog
+`Modal::ChatInput`), handbook `60-local-messages.md`, vm-comms through
+the TUI. Slice 4 = ADR 0019 store-and-forward (`resilience-messages node`,
+service `resilience-messages-node`, client fallback to the store, TUI
+markers, vm-comms subtest with alpha switched off). Open: file exchange; multi-line
+messages; Internet messengers (toxic, signal-cli); Yggdrasil/BATMAN.
+`resilience.comms.enable` is ON by default in the standard edition
+(owner, 2026-11-16; `nix/profiles/standard.nix`, mkDefault) and off in
+minimal. After that change: full flake check passed (2026-11-17, after
+fixing vm-crypto's menu number) and the standard ISO was rebuilt and
+booted in QEMU (BIOS, UEFI, 1 GiB) with Local messages running. After
+slice 4 (ADR 0019): full flake check passed again and the ISO, rebuilt,
+boots with the message store running (2026-11-17).
+
+Phase 5 state when parked:
+
+Phases 0 to 4 are done (see ROADMAP.md). Phase 5 (offline maps, ADR 0016):
+slices 1 to 9 are in `develop`. Slices 1 to 7 came with PR #1; slice 8
 (built-in world overview: `resilience-mapmaker natural-earth`,
 `nix/packages/resilience-world-map`, `[[builtin]]` entry, check
 `map-world`) and slice 9 (TUI Maps & navigation: `Builtin::Map`,
 `Builtin::MapFiles`, `[tools] maps`, handbook `45-maps.md`, first part of
-`vm-maps`) are on `feat/maps-overview`, not reviewed, ISO not rebuilt
-with them. Slices 1 to 5 done and reviewed (packs accept `.mbtiles`, geographic
+`vm-maps`) were merged from `feat/maps-overview`, not reviewed, ISO not
+rebuilt with them. Slices 1 to 5 done and reviewed (packs accept `.mbtiles`, geographic
 maths, MVT decoder, canvas/style/labels, hardened pack reader); slice 6
 (viewer `resilience-maps view`) reviewed in its risky parts and run on the
 real Luxembourg pack in QEMU at 170x48 (label fixes followed); slice 7
 (pack builder `resilience-mapmaker`, `nix/maps/`) merged, builds the
 Luxembourg pack, code not reviewed line by line. Slices 10 to 13 (search,
 nearby/go-to, spot heights, the rest of `vm-maps`, catalog) are not
-started. Next: slice 10 (search: `maps/search.rs`, the viewer's dialog).
+started (parked). If resumed: slice 10 (search: `maps/search.rs`, the
+viewer's dialog).
 
 Also done with `feat/maps` (2026-11-16): keyboard layouts (ADR 0017: US default,
 choice in Settings through `set-keymap`); `scripts/hw-report.sh` and
@@ -394,13 +458,15 @@ media and backups (0008), clock (0009), Wi-Fi (0010), default generation
 files and manual pages (0014); Phase 4 guided cryptography (0015).
 See docs/TESTING.md for what has actually been executed and passed.
 
-Git state (2026-11-16): `main` = end of Phase 4; `develop` = `feat/maps`
-merged (PR #1); `feat/maps-overview` = slices 8 and 9, local, from `develop`. Last full `nix flake check -L --max-jobs 1 --keep-going` on
-`feat/maps` (before the keyboard work) passed: 9 VM tests, security
-invariants, ISO evaluation, both map pack checks. Rust: 191 core, 66 TUI,
-134 maps (+1 on demand), 5 library/store tests; clippy clean. The live ISO was rebuilt
-and boot-tested in QEMU (BIOS and UEFI, 512 MiB to 2 GiB) on 2026-11-16 and
-booted once on a ThinkPad L15 Gen 1.
+Git state (2026-11-17): `main` = end of Phase 4; `develop` = `feat/maps`
+and `feat/maps-overview` merged (local, not pushed); `feat/comms` = Phase 6
+work from `develop` (on origin; push new commits only when asked). Last
+full `nix flake check -L --max-jobs 1 --keep-going`: `feat/comms` at
+`ba62020` (with ADR 0019), 2026-11-17, all 18 checks (12 VM tests) passed.
+Rust: 199 core, 72 TUI, 134 maps (+1 on demand), 5 library/store tests;
+clippy clean. The live ISO was rebuilt from `feat/comms` at `9d3ebd2`
+(message store included) and boot-tested in QEMU (BIOS, UEFI, 1-2 GiB) on 2026-11-17;
+the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 
 ## 15. Known bugs and limitations
 
@@ -425,6 +491,14 @@ booted once on a ThinkPad L15 Gen 1.
 - Cryptography: no LUKS sticks, no OpenPGP signing in the TUI (minisign
   signs), no secure deletion of originals (the user is told); contacts'
   keys are only as trustworthy as the user's own check.
+- Local messaging: on in standard, off in minimal; two machines tested, in
+  VMs only (with the minimal profile plus the option; the standard live
+  ISO boots with it running, ~+45 MiB RAM, but has not exchanged messages);
+  store-and-forward needs a third computer that is on (or the
+  recipient's machine on while its account is logged out); stored
+  messages never become "delivered" unless a direct attempt also
+  succeeds; one-line messages; no "read" state; received
+  messages are not announced outside the messages screens.
 - Power profiles not implemented (schedutil governor only). Not measured yet.
 - Keyboard: all consoles share one keymap (kernel); a login prompt starting
   on any console resets it to the system layout, and the TUI reloads its
@@ -439,7 +513,8 @@ booted once on a ThinkPad L15 Gen 1.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Current: Phase 5 (offline maps), see §14.
+See ROADMAP.md. Current: Phase 6 (networking and communications), see §14.
+Phase 5 (maps) is parked.
 
 ## 17. Important decisions (docs/decisions/)
 
@@ -460,6 +535,8 @@ See ROADMAP.md. Current: Phase 5 (offline maps), see §14.
 - 0015 Guided cryptography: resilience-crypto (age, minisign, coreutils, xkcdpass, openssl, GnuPG), secrets only typed into the tools
 - 0016 Offline maps: MBTiles vector packs (profile resilience-1) built reproducibly in Nix, hardened reader, block-character viewer
 - 0017 Keyboard layout: US default, choice in Settings via helper `set-keymap` (allow_active=yes, listed layouts only), reset before every login prompt
+- 0018 Local messaging: Reticulum + LXMF (Reticulum License, not free: opt-in module), one unprivileged instance per machine on the local network only, per-user identities and file-based message store
+- 0019 Store-and-forward: a message store (LXMF propagation node, our own `resilience-messages node`, no delivery address) on every machine with messaging; clients go direct first, a copy to the store after 2 min
 
 ## 18. How to continue safely
 

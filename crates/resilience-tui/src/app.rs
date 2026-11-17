@@ -33,12 +33,16 @@ use resilience_core::wifi::{self, Network, Overview};
 
 use crate::theme::Theme;
 
+#[path = "chat_ui.rs"]
+mod chat_ui;
 #[path = "crypto_ui.rs"]
 mod crypto_ui;
 #[path = "files_ui.rs"]
 mod files_ui;
 #[path = "library.rs"]
 mod library;
+pub use chat_ui::now_secs as chat_now;
+pub use chat_ui::{ChatInput, ChatRow, NearbyRow};
 #[cfg(test)]
 pub use crypto_ui::CRYPTO_LABEL;
 pub use crypto_ui::{Choice, EncryptTarget, KeyRow, Pick, Recipient};
@@ -76,6 +80,9 @@ pub struct Paths {
     pub running_system: PathBuf,
     /// Catalog of resource packs (ADR 0013); absent when packs are disabled.
     pub packs_config: PathBuf,
+    /// Written by the machine's Reticulum service (ADR 0018); absent when
+    /// local messaging is not enabled on this computer.
+    pub comms_client: PathBuf,
 }
 
 impl Default for Paths {
@@ -88,6 +95,7 @@ impl Default for Paths {
             booted_system: "/run/booted-system".into(),
             running_system: "/run/current-system".into(),
             packs_config: resilience_core::packs::PACKS_CONFIG_PATH.into(),
+            comms_client: "/run/resilience-reticulum/client/config".into(),
         }
     }
 }
@@ -159,6 +167,7 @@ pub enum Builtin {
     Packs,
     Map,
     MapFiles,
+    Chat,
     Notes,
     Network,
     Wifi,
@@ -186,7 +195,7 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 31] = [
+    pub const ALL: [Builtin; 32] = [
         Builtin::Handbook,
         Builtin::Files,
         Builtin::Manual,
@@ -194,6 +203,7 @@ impl Builtin {
         Builtin::Packs,
         Builtin::Map,
         Builtin::MapFiles,
+        Builtin::Chat,
         Builtin::Notes,
         Builtin::Network,
         Builtin::Wifi,
@@ -229,6 +239,7 @@ impl Builtin {
             Builtin::Packs => "Resource packs: choose what to get",
             Builtin::Map => "Map",
             Builtin::MapFiles => "Maps on this computer & USB sticks",
+            Builtin::Chat => "Local messages",
             Builtin::Notes => "Notes",
             Builtin::Network => "Network status & diagnostics",
             Builtin::Wifi => "Wi-Fi networks",
@@ -289,6 +300,12 @@ impl Builtin {
                 "See which maps this computer has (built in, installed, or on an open USB \
                  stick), what each one covers and how old its data is, and open the map \
                  on one of them. Map packs are added in Resource packs."
+            }
+            Builtin::Chat => {
+                "Write to people nearby, without the Internet: computers on the same \
+                 local network find each other. Each message shows whether it is still \
+                 waiting, sent, or delivered; a message for someone who is away waits \
+                 and is sent when they are back."
             }
             Builtin::Notes => {
                 "Write and keep personal text notes. Notes are private files in your Notes folder."
@@ -373,6 +390,7 @@ impl Builtin {
                 Category::Knowledge
             }
             Builtin::Map | Builtin::MapFiles => Category::Maps,
+            Builtin::Chat => Category::Communications,
             Builtin::Notes | Builtin::Files => Category::Productivity,
             Builtin::Network | Builtin::Wifi => Category::Networking,
             Builtin::Encrypt
@@ -424,6 +442,10 @@ impl Builtin {
                  geography openstreetmap osm"
             }
             Builtin::MapFiles => "map maps pack packs mbtiles usb stick coverage region",
+            Builtin::Chat => {
+                "message messages chat talk write contact contacts nearby local network \
+                 mesh reticulum lxmf address offline communication"
+            }
             Builtin::Notes => "write text memo journal",
             Builtin::Network => "wifi ethernet internet offline online dns",
             Builtin::Wifi => {
@@ -501,6 +523,7 @@ pub enum HelpTopic {
     Backup,
     Library,
     Maps,
+    Chat,
     Files,
     Crypto,
 }
@@ -603,6 +626,24 @@ pub enum View {
     Library {
         kind: PackKind,
         items: Vec<LibItem>,
+        list: ListState,
+    },
+    /// Local messages: one line per person written to or heard from.
+    Chats {
+        rows: Vec<ChatRow>,
+        status: resilience_core::messages::Status,
+        list: ListState,
+    },
+    /// People heard on the local network.
+    Nearby {
+        rows: Vec<NearbyRow>,
+        list: ListState,
+    },
+    /// The messages exchanged with one address.
+    Chat {
+        peer: String,
+        name: resilience_core::messages::Name,
+        records: Vec<resilience_core::messages::Record>,
         list: ListState,
     },
     /// The catalog of resource packs with the user's ticks.
@@ -708,6 +749,12 @@ pub enum Modal {
     },
     /// Words to search for in one pack.
     PackSearch { item: LibItem, value: String },
+    /// Local messages: an address, a message or a contact's name.
+    ChatInput {
+        kind: ChatInput,
+        value: String,
+        error: Option<String>,
+    },
     /// Who to encrypt for: Space ticks, Enter goes on.
     Recipients {
         target: EncryptTarget,
@@ -898,6 +945,7 @@ impl App {
             self.refresh_slow();
         }
         self.poll_wifi_job();
+        self.chat_tick();
         if let Some((rx, _)) = &self.probe.running {
             match rx.try_recv() {
                 Ok(report) => {
@@ -975,6 +1023,7 @@ impl App {
             .iter()
             .filter(|b| b.category() == cat && mode.allows(b.min_mode()))
             .filter(|b| packs || !b.needs_packs())
+            .filter(|b| *b != &Builtin::Chat || self.paths.comms_client.exists())
             .map(|b| Entry::Builtin(*b))
             .chain(
                 self.catalog
@@ -1028,6 +1077,7 @@ impl App {
                 .iter()
                 .filter(|b| mode.allows(b.min_mode()))
                 .filter(|b| packs || !b.needs_packs())
+                .filter(|b| *b != &Builtin::Chat || self.paths.comms_client.exists())
                 .filter(|b| {
                     [b.name(), b.description(), b.keywords()]
                         .iter()
@@ -1079,6 +1129,7 @@ impl App {
             | View::Status { .. }
             | View::Help { .. } => HelpTopic::Reader,
             View::Notes { .. } => HelpTopic::Notes,
+            View::Chats { .. } | View::Nearby { .. } | View::Chat { .. } => HelpTopic::Chat,
             View::Network { .. } => HelpTopic::Network,
             View::Settings { .. } => HelpTopic::Settings,
             View::Users { .. } | View::ChooseMode { .. } => HelpTopic::Users,
@@ -1172,9 +1223,17 @@ impl App {
     /// stack: returning `Some(view)` keeps it on top, `None` means it was
     /// either closed or already pushed back underneath a newly opened view.
     fn handle_view_key(&mut self, mut view: View, key: KeyEvent) -> (Option<View>, Effect) {
+        if matches!(
+            view,
+            View::Chats { .. } | View::Nearby { .. } | View::Chat { .. }
+        ) {
+            return self.chat_key(view, key);
+        }
         let mut next: Option<View> = None;
         let mut effect = Effect::None;
         match &mut view {
+            // Handled by chat_key above.
+            View::Chats { .. } | View::Nearby { .. } | View::Chat { .. } => {}
             View::Home { list } => {
                 let cats = self.home_categories();
                 if let Some(i) = digit(key) {
@@ -1879,6 +1938,7 @@ impl App {
             Builtin::Files => (Some(self.open_files()), Effect::None),
             Builtin::Packs => (self.open_packs(), Effect::None),
             Builtin::Map => (None, self.open_map_effect(None)),
+            Builtin::Chat => (self.open_chats(), Effect::None),
             Builtin::MapFiles => (self.open_map_files(), Effect::None),
             Builtin::Backup => {
                 let (volumes, error) = self.load_volumes();
@@ -2247,6 +2307,7 @@ impl App {
                 ..
             } => self.recipients_key(target, rows, ticked, sel, key),
             Modal::ExpectedSum { file, value, .. } => self.expected_sum_key(file, value, key),
+            Modal::ChatInput { kind, value, error } => self.chat_input_key(kind, value, error, key),
             Modal::PackSearch { item, mut value } => match key.code {
                 KeyCode::Esc => Effect::None,
                 KeyCode::Enter if !value.trim().is_empty() => {

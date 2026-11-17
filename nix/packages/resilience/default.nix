@@ -50,7 +50,7 @@ rustPlatform.buildRustPackage {
 
   meta = {
     description = "Terminal interface of Resilience OS";
-    license = lib.licenses.bsd0;
+    license = import ../../lib/license.nix;
     mainProgram = "resilience";
     platforms = lib.platforms.linux;
   };

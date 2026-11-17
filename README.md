@@ -73,6 +73,9 @@ See [docs/BUILDING.md](docs/BUILDING.md) and [docs/TESTING.md](docs/TESTING.md).
 
 ## License
 
-Resilience's own code is licensed under the [0BSD license](LICENSE)
-(Zero-Clause BSD). Bundled third-party
-software keeps its own license; see [docs/COMPONENTS.md](docs/COMPONENTS.md).
+Resilience's own code is licensed under the
+[Hippocratic License 2.1](LICENSE), an Ethical Source license: broad
+permission to use, change and share it, on the condition that it is used
+in a manner consistent with human rights. It is not a free software
+license in the FSF/OSI sense. Bundled third-party software keeps its own
+license; see [docs/COMPONENTS.md](docs/COMPONENTS.md).
