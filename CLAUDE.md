@@ -431,11 +431,17 @@ needlessly. Watch `free -h` during VM tests.
 
 **Now: Phase 6's local part is done and in `main` (2026-11-17); next work on a new `feat/<topic>` branch from `develop`.**
 **Current work: Phase 8 text installer (ADR 0022) on `feat/installer`.**
-Slices: 1 ADR (done); 2 generic installed configurations in the flake
-(`installed-<edition>-<uefi|bios>-<plain|luks>`, local accounts in
-resilience-admin, keyboard state file + initrd secret); 3 `resilience-core/
-src/install.rs` + `resilience-install`; 4 TUI Install screens (live ISO
-only); 5 `vm-install` (UEFI and BIOS) + handbook + docs/INSTALLATION.md.
+Slices 1 to 5 done (ADR, installed configurations, `resilience-core/src/
+install.rs` + `crates/resilience-install`, TUI `install_ui.rs`, `vm-install`
+BIOS + LUKS + French layout PASS, handbook `12-installing.md`,
+docs/INSTALLATION.md). Open: a UEFI vm-install (the installer VM must boot
+through UEFI: useBootLoader), ISO build with the installer and a QEMU
+install from the ISO, full flake check, then merge into develop.
+VM-test lessons: `Machine.sleep` waits for the root shell (use time.sleep
+before the installed disk is unlocked); a second machine on the same disk
+needs `target.state_dir = installer.state_dir`; never run the test driver
+by hand with the default XDG_RUNTIME_DIR (it puts the disk images in
+/run/user/1000, a small tmpfs).
 Phase 7 (SDR) is POSTPONED by the owner (2026-11-17) until they buy the
 hardware: do not start it. Power profiles stay open (need hardware).
 Maps (Phase 5) were parked by the owner on 2026-11-16 after slice 9: do

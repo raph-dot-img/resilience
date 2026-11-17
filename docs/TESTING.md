@@ -54,6 +54,8 @@ which corrupts text next to box-drawing characters with our console font.
 | resilience-tui multi-line messages: Ctrl-N, Ctrl-J and Alt-Enter start a new line in the message dialog (Enter still sends), each typed line drawn on its own line with the cursor after the last; Backspace removes a line break; the request file holds the text with `\n`; only line breaks → "the message is empty"; a contact name stays on one line; at most 40 lines, the end being typed stays on screen | 1 | PASS (host and Nix build, 2026-11-17) |
 | resilience-core admin `plan_set_mesh` (ADR 0021): only `on` and `off`, only the configured unit (a `.service` name of safe characters, never starting with `-`), an absolute `systemctl`; without `mesh_unit` the operation is unavailable; the plan is exactly `systemctl start|stop -- UNIT` | 1 | PASS (host and Nix build, 2026-11-17) |
 | resilience-tui Mesh network (ADR 0021): absent (even from search) without `mesh_unit` in admin.toml, present with it and found by search ("mesh", "router"); its confirmation says it is off and that the card cannot join an ordinary network meanwhile, Cancel focused (Enter runs nothing); "Turn on" runs `pkexec HELPER set-mesh on` with `SHELL` = the session shell and reports it on; with `/run/resilience-mesh/devices` written it shows "ON (wlan0)" and "Turn off" runs `set-mesh off` | 1 | PASS (host and Nix build, 2026-11-17) |
+| resilience-core install (ADR 0022): disk list from lsblk (whole disks only; loop, CD, zram, partitions left out; in use when anything below is mounted, read-only, under 16 GiB), partition paths (sda3, nvme0n1p2), the sfdisk script and its labels, request ↔ arguments round trip and refused arguments, the disk must still match size and model, keymap offered, account rules (names, reserved and taken names, duplicates, full names, at most 8), state written for local accounts (overrides of Ultra-Stable), install.toml paths; admin local accounts (base mode Ultra-Stable, overrides, a declared account kept, bad files refused); keyboard state file (`KEYMAP=<offered id>` only) | 14 | PASS (2026-11-17) |
+| resilience-tui Install (ADR 0022): absent without install.toml, present with it; defaults (encryption on, BIOS here, current layout, user Stable + administrator Advanced); Install without a disk refused; the live stick not choosable; disk, encryption, keyboard, account name (bad name refused), mode cycling, full name, add and remove; the summary shows the disk, its partitions and the no-administrator warning; a wrong disk name does nothing; the exact pkexec argv and SHELL | 2 | PASS (2026-11-17) |
 | `cargo clippy --all-targets` | — | PASS (0 warnings) |
 
 ### Nix
@@ -62,7 +64,7 @@ which corrupts text next to box-drawing characters with our console font.
 |---|---|
 | Flake evaluation (`nix flake check --no-build`) | PASS |
 | `eval-live-iso`: live-standard, live-minimal, dev-vm evaluate | PASS |
-| `security-invariants`: 29 invariants × 3 configurations (2026-11-17: new "the mesh comes only with local messaging and starts on request": mesh only with comms, never `autoStart` in the shipped systems, `bat0` unmanaged by NetworkManager; the firewall one now allows exactly UDP 29716 and 42671 where local messaging is on, and nothing else; two earlier ones: the messaging service is unprivileged with nothing of Reticulum in `PATH`, and the minimal edition has no local messaging) | PASS (2026-11-17) |
+| `security-invariants`: 33 invariants × 11 configurations (the 8 installed systems of ADR 0022 added; new: installed systems keep user namespaces and the sandbox, have no autologin and keep root locked, the installer exists on live systems only, the session shell listed in /etc/shells is installed) (2026-11-17: new "the mesh comes only with local messaging and starts on request": mesh only with comms, never `autoStart` in the shipped systems, `bat0` unmanaged by NetworkManager; the firewall one now allows exactly UDP 29716 and 42671 where local messaging is on, and nothing else; two earlier ones: the messaging service is unprivileged with nothing of Reticulum in `PATH`, and the minimal edition has no local messaging) | PASS (2026-11-17) |
 | Invariant checker rejects a live configuration with user namespaces forced on | PASS (manual, once) |
 | Invariant checker rejects a deliberately broken configuration (ssh on, root password) | PASS (manual, once) |
 | Invariant checker rejects a privileged autologin account and an extra polkit admin identity | PASS (manual, once; this found that the autologin invariant had been vacuous) |
@@ -294,6 +296,30 @@ second radio in a network namespace playing the other computer.
 | Wi-Fi (delta): `set-mesh on` with no device configured takes the first card (wlan0): type IBSS, joined cell `02:52:45:53:4d:31`; a BATMAN-adv neighbour (the other radio); ping6 to it over `bat0` | PASS (2026-11-17) |
 | Wi-Fi: `set-mesh off` → no `bat0`, the card back to type managed and to its NetworkManager state | PASS (2026-11-17) |
 | Real Wi-Fi cards (IBSS on iwlwifi and others), radio range, several hops over the air, battery use | NOT TESTED |
+
+### VM: `vm-install` — the text installer (ADR 0022), driven through the TUI
+
+`installer`: a live-like system (autologin, no administrator, installer
+enabled), running from vdb; vda (20 GiB, empty) is the target. `target`:
+the same disk booted with SeaBIOS. The installed system is the real
+`installed-standard-bios-luks` plus the NixOS test instrumentation only.
+
+| Scenario | Result |
+|---|---|
+| Install is offered (live only); the disk list shows vda, and vdb (the running system) "in use", not choosable | PASS (2026-11-17) |
+| French keyboard and encryption chosen on the Install screen, the two proposed accounts kept | PASS (2026-11-17) |
+| The summary names the disk; a wrong name ("vdb") is refused and the disk's first 4 MiB are unchanged; "vda" starts `resilience-install` through pkexec | PASS (2026-11-17) |
+| Passphrase typed twice into `cryptsetup luksFormat` and once into `cryptsetup open`, passwords twice into `passwd` for each account (French layout loaded by the installer); "Resilience is installed"; nothing left mounted or open | PASS (2026-11-17, ~3 min) |
+| The disk boots (GRUB on BIOS); the initrd loads the French layout and keeps it after udev restarts the console setup; the passphrase typed on the keyboard unlocks the disk; `/` on `/dev/mapper/root`; login prompts use the French layout (`dumpkeys`) | PASS (2026-11-17) |
+| Local accounts: shell `/run/current-system/sw/bin/resilience-session`; `user` Stable, `administrator` Advanced (wheel) as overrides of Ultra-Stable in `resilience-admin list`; no autologin; user namespaces on | PASS (2026-11-17) |
+| `user` logs in on tty1 with the password typed during the installation; the interface starts (MODE: STABLE) | PASS (2026-11-17) |
+| UEFI installation (systemd-boot); no encryption; minimal edition | NOT TESTED (the installer VM must itself boot through UEFI) |
+
+Found and fixed by this test: the initrd keymap unit could not start (its
+interpreter is not in the systemd initrd); udev's restart of
+systemd-vconsole-setup then put the US layout back before the prompt;
+`/run/current-system/sw/bin/resilience-session` (in `/etc/shells`) did not
+exist. Each would have left an installed French machine unusable.
 
 ### ISO boot (`tests/iso/smoke.py`, screenshots reviewed by a human/agent)
 
