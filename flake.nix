@@ -150,6 +150,12 @@
         vm-documents = vmTest ./tests/vm/documents.nix;
         vm-crypto = vmTest ./tests/vm/crypto.nix;
         vm-install = vmTest ./tests/vm/install.nix;
+        vm-install-uefi = pkgs.testers.runNixOSTest (
+          import ./tests/vm/install.nix {
+            inherit self;
+            firmware = "uefi";
+          }
+        );
         vm-maps = vmTest ./tests/vm/maps.nix;
         vm-comms = vmTest ./tests/vm/comms.nix;
         vm-mesh = vmTest ./tests/vm/mesh.nix;

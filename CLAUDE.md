@@ -78,7 +78,8 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    ├─ packages: resilience, resilience-session, resilience-handbook, resilience-world-map, iso, iso-minimal, vm
    ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
-              vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-maps, vm-comms, vm-mesh,
+              vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-install,
+              vm-install-uefi, vm-maps, vm-comms, vm-mesh,
               security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world,
               comms-messages (the messaging program with real Reticulum + LXMF, no VM)
 
@@ -434,14 +435,17 @@ needlessly. Watch `free -h` during VM tests.
 Slices 1 to 5 done (ADR, installed configurations, `resilience-core/src/
 install.rs` + `crates/resilience-install`, TUI `install_ui.rs`, `vm-install`
 BIOS + LUKS + French layout PASS, handbook `12-installing.md`,
-docs/INSTALLATION.md). Open: a UEFI vm-install (the installer VM must boot
-through UEFI: useBootLoader), ISO build with the installer and a QEMU
+docs/INSTALLATION.md); `vm-install-uefi` (OVMF, no encryption, systemd-boot
+fallback path) PASS. Open: ISO build with the installer and a QEMU
 install from the ISO, full flake check, then merge into develop.
 VM-test lessons: `Machine.sleep` waits for the root shell (use time.sleep
 before the installed disk is unlocked); a second machine on the same disk
 needs `target.state_dir = installer.state_dir`; never run the test driver
 by hand with the default XDG_RUNTIME_DIR (it puts the disk images in
-/run/user/1000, a small tmpfs).
+/run/user/1000, a small tmpfs). UEFI without a boot loader: `useEFIBoot`
+alone gives OVMF + direct kernel boot (`/sys/firmware/efi` exists); a
+`useBootLoader` machine booting another machine's disk needs
+`efi.keepVariables = false` (otherwise it builds its own disk image).
 Phase 7 (SDR) is POSTPONED by the owner (2026-11-17) until they buy the
 hardware: do not start it. Power profiles stay open (need hardware).
 Maps (Phase 5) were parked by the owner on 2026-11-16 after slice 9: do

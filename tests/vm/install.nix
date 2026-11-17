@@ -1,21 +1,35 @@
 # Installing Resilience on a disk (ADR 0022), through the real TUI.
 #
+# Two variants (flake checks vm-install and vm-install-uefi):
+# - firmware = "bios": SeaBIOS, encryption on (installed-standard-bios-luks);
+# - firmware = "uefi": OVMF, encryption off (installed-standard-uefi-plain),
+#   booted through systemd-boot's fallback path EFI/BOOT/BOOTX64.EFI (the
+#   installer never writes firmware variables; the target starts with an
+#   empty variable store).
+#
 # `installer` is a live system (autologin, no administrator, the installer
 # enabled). Its first disk (vda, 20 GiB, empty) is the target; it runs from
-# vdb. The person chooses vda, the French keyboard, encryption on, the two
-# proposed accounts, confirms by typing "vda", then types the passphrase
-# and passwords into cryptsetup and passwd. `target` then boots that disk
-# with SeaBIOS through GRUB: the passphrase is typed on the keyboard at the
-# initrd's prompt, which only works if the initrd loaded the same French
-# layout as the installer did (q/a, z/w and m sit on other keys).
+# vdb. The person chooses vda, the French keyboard, encryption (on for
+# BIOS, off for UEFI), the two proposed accounts, confirms by typing "vda",
+# then types the passphrase and passwords into cryptsetup and passwd.
+# `target` then boots that disk. BIOS: through GRUB; the passphrase is
+# typed on the keyboard at the initrd's prompt, which only works if the
+# initrd loaded the same French layout as the installer did (q/a, z/w and
+# m sit on other keys).
 #
-# The installed system is the real `installed-standard-bios-luks`
+# The installed system is the real `installed-standard-<variant>`
 # configuration plus the NixOS test instrumentation only (the test
 # driver's root shell); nothing else changes.
-{ self }:
+{
+  self,
+  firmware ? "bios",
+}:
 { lib, ... }:
 let
-  installed = self.nixosConfigurations.installed-standard-bios-luks.extendModules {
+  uefi = firmware == "uefi";
+  encrypt = !uefi;
+  variant = if uefi then "uefi-plain" else "bios-luks";
+  installed = self.nixosConfigurations."installed-standard-${variant}".extendModules {
     modules = [
       (
         { modulesPath, ... }:
@@ -37,7 +51,7 @@ let
   };
 in
 {
-  name = "resilience-install";
+  name = "resilience-install-${firmware}";
 
   nodes.installer =
     { lib, ... }:
@@ -52,6 +66,9 @@ in
       virtualisation.diskSize = 20 * 1024;
       virtualisation.emptyDiskImages = [ 4096 ];
       virtualisation.rootDevice = "/dev/vdb";
+      # UEFI: OVMF starts the kernel directly (no boot loader on the
+      # installer), so /sys/firmware/efi exists as on a UEFI computer.
+      virtualisation.useEFIBoot = uefi;
       virtualisation.fileSystems."/".autoFormat = true;
       virtualisation.qemu.networkingOptions = lib.mkForce [ "-nic none" ];
       # As on the live ISO (nix/systems/live-iso.nix).
@@ -68,7 +85,10 @@ in
   nodes.target = {
     imports = [ disk ];
     virtualisation.useBootLoader = true;
-    virtualisation.useEFIBoot = false;
+    virtualisation.useEFIBoot = uefi;
+    # An empty variable store from the OVMF template (not one from a disk
+    # image of this VM: the disk is the one the installer wrote).
+    virtualisation.efi.keepVariables = false;
     virtualisation.useDefaultFilesystems = false;
     virtualisation.fileSystems."/" = {
       device = "/dev/disk/by-label/unused-the-installed-system-mounts-its-own";
@@ -79,6 +99,9 @@ in
 
   testScript = ''
     import base64, re, time as _time
+
+    UEFI = ${if uefi then "True" else "False"}
+    ENCRYPT = ${if encrypt then "True" else "False"}
 
     # Typed with US key codes: with the French layout loaded they are other
     # characters, the same ones every time the same layout is loaded.
@@ -129,13 +152,20 @@ in
         installer.send_key("ret")
         wait_tty(installer, "INSTALL RESILIENCE ON THIS COMPUTER")
         installer.send_key("ret")
+        if UEFI:
+            installer.succeed("test -d /sys/firmware/efi")
+        else:
+            installer.fail("test -e /sys/firmware/efi")
         text = wait_tty(installer, "CHOOSE THE DISK")
         assert re.search(r"/dev/vdb .*in use", text), text
         installer.send_key("ret")
         wait_tty(installer, r"Disk +/dev/vda")
 
-    with subtest("French keyboard, encryption on, the two proposed accounts"):
+    with subtest("French keyboard, encryption, the two proposed accounts"):
         installer.send_key("down")
+        if not ENCRYPT:
+            installer.send_key("ret")
+            wait_tty(installer, r"Encryption +off")
         installer.send_key("down")
         installer.send_key("ret")
         wait_tty(installer, "KEYBOARD OF THE INSTALLED SYSTEM")
@@ -143,7 +173,8 @@ in
         installer.send_key("down")
         installer.send_key("ret")
         wait_tty(installer, r"Keyboard +French \(AZERTY\)")
-        wait_tty(installer, r"Encryption +ON")
+        wait_tty(installer, r"Encryption +ON" if ENCRYPT else r"Encryption +off")
+        wait_tty(installer, "UEFI" if UEFI else "BIOS")
 
     with subtest("nothing happens until the disk's name is typed"):
         HEAD = "head -c 4M /dev/vda | sha256sum"
@@ -161,10 +192,11 @@ in
         wait_tty(installer, "INSTALLING RESILIENCE on /dev/vda")
 
     with subtest("passphrase and passwords are typed into the tools"):
-        answer(installer, r"Enter passphrase for /dev/vda3: *$", PASSPHRASE)
-        answer(installer, r"Verify passphrase: *$", PASSPHRASE)
-        wait_tty(installer, "to open the disk")
-        answer(installer, r"Enter passphrase for /dev/vda3: *$", PASSPHRASE)
+        if ENCRYPT:
+            answer(installer, r"Enter passphrase for /dev/vda3: *$", PASSPHRASE)
+            answer(installer, r"Verify passphrase: *$", PASSPHRASE)
+            wait_tty(installer, "to open the disk")
+            answer(installer, r"Enter passphrase for /dev/vda3: *$", PASSPHRASE)
         wait_tty(installer, "Choose the password of 'user'", timeout=1800)
         answer(installer, r"New password: *$", PW_USER)
         answer(installer, r"Retype new password: *$", PW_USER)
@@ -177,19 +209,32 @@ in
         installer.fail("test -e /dev/mapper/resilience-install-root")
         installer.shutdown()
 
-    with subtest("the installed system starts: passphrase in the French layout"):
+    with subtest("the installed system starts (BIOS: passphrase in the French layout)"):
         # The same computer started again: same state directory, same disk.
         target.state_dir = installer.state_dir
         target.start()
-        # GRUB waits 5 s, the prompt follows a few seconds later (it is on
-        # the serial log too). Keys must be typed after the initrd has
-        # loaded the layout: they are translated when pressed.
-        # Machine.sleep() would wait for the root shell, which exists only
-        # once the disk is unlocked: wait in the driver instead.
-        _time.sleep(40)
-        target.send_chars(PASSPHRASE + "\n")
+        if ENCRYPT:
+            # GRUB waits 5 s, the prompt follows a few seconds later (it is
+            # on the serial log too). Keys must be typed after the initrd
+            # has loaded the layout: they are translated when pressed.
+            # Machine.sleep() would wait for the root shell, which exists
+            # only once the disk is unlocked: wait in the driver instead.
+            _time.sleep(40)
+            target.send_chars(PASSPHRASE + "\n")
         target.wait_for_unit("multi-user.target", timeout=600)
-        target.succeed("findmnt -no SOURCE / | grep -x /dev/mapper/root")
+        if ENCRYPT:
+            target.succeed("findmnt -no SOURCE / | grep -x /dev/mapper/root")
+        else:
+            target.succeed("findmnt -no SOURCE / | grep -x /dev/vda3")
+            target.fail("test -e /dev/mapper/root")
+        if UEFI:
+            # Started by OVMF from the fallback path, with systemd-boot.
+            target.succeed("test -d /sys/firmware/efi")
+            target.succeed("findmnt -no SOURCE /boot | grep -x /dev/vda2")
+            target.succeed("test -s /boot/EFI/BOOT/BOOTX64.EFI")
+            target.succeed("ls /boot/loader/entries/ | grep -q nixos")
+        else:
+            target.fail("test -e /sys/firmware/efi")
         target.succeed("grep -x KEYMAP=fr /var/lib/resilience/keyboard")
         # The login prompts use the French layout (keycode 16 is a, not q).
         target.wait_for_unit("getty@tty1.service")

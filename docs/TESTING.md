@@ -313,13 +313,29 @@ the same disk booted with SeaBIOS. The installed system is the real
 | The disk boots (GRUB on BIOS); the initrd loads the French layout and keeps it after udev restarts the console setup; the passphrase typed on the keyboard unlocks the disk; `/` on `/dev/mapper/root`; login prompts use the French layout (`dumpkeys`) | PASS (2026-11-17) |
 | Local accounts: shell `/run/current-system/sw/bin/resilience-session`; `user` Stable, `administrator` Advanced (wheel) as overrides of Ultra-Stable in `resilience-admin list`; no autologin; user namespaces on | PASS (2026-11-17) |
 | `user` logs in on tty1 with the password typed during the installation; the interface starts (MODE: STABLE) | PASS (2026-11-17) |
-| UEFI installation (systemd-boot); no encryption; minimal edition | NOT TESTED (the installer VM must itself boot through UEFI) |
+| Minimal edition; installing next to another system (not offered) | NOT TESTED |
 
 Found and fixed by this test: the initrd keymap unit could not start (its
 interpreter is not in the systemd initrd); udev's restart of
 systemd-vconsole-setup then put the US layout back before the prompt;
 `/run/current-system/sw/bin/resilience-session` (in `/etc/shells`) did not
 exist. Each would have left an installed French machine unusable.
+
+### VM: `vm-install-uefi` — the same test with UEFI firmware, no encryption
+
+Same script (`tests/vm/install.nix` with `firmware = "uefi"`). Both
+machines have OVMF firmware: the installer starts its kernel directly
+through OVMF (`/sys/firmware/efi` exists, so the installer chooses UEFI),
+the target boots the disk with an **empty** variable store (the installer
+never writes firmware variables). Installed system:
+`installed-standard-uefi-plain` plus the test instrumentation.
+
+| Scenario | Result |
+|---|---|
+| The live system sees UEFI firmware; the form says UEFI; encryption turned off on the form ("off: anyone with the disk can read it"), French keyboard, the two proposed accounts | PASS (2026-11-18) |
+| Wrong disk name refused, first 4 MiB unchanged; "vda" starts the installer; no passphrase asked; passwords typed into `passwd`; "Resilience is installed"; nothing left mounted | PASS (2026-11-18, ~3 min) |
+| The disk boots through OVMF's fallback path `EFI/BOOT/BOOTX64.EFI` (systemd-boot) with no boot entry in the firmware; `/` on `/dev/vda3` (no mapper device); `/boot` = `/dev/vda2` with NixOS loader entries; login prompts in the French layout | PASS (2026-11-18) |
+| Accounts and modes as in `vm-install`; `user` logs in on tty1, MODE: STABLE | PASS (2026-11-18) |
 
 ### ISO boot (`tests/iso/smoke.py`, screenshots reviewed by a human/agent)
 
