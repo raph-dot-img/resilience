@@ -112,6 +112,12 @@ pub struct AdminConfig {
     /// The only keymap names `set-keymap` accepts.
     #[serde(default)]
     pub keymaps: Vec<String>,
+    /// systemctl, for `set-mesh` (ADR 0021).
+    #[serde(default)]
+    pub systemctl: Option<PathBuf>,
+    /// The mesh unit `set-mesh` starts and stops; absent: no mesh here.
+    #[serde(default)]
+    pub mesh_unit: Option<String>,
 }
 
 impl AdminConfig {
@@ -132,6 +138,7 @@ impl AdminConfig {
         ]
         .into_iter()
         .chain(cfg.loadkeys.as_ref())
+        .chain(cfg.systemctl.as_ref())
         {
             if !p.is_absolute() {
                 return Err(format!("program path must be absolute: {}", p.display()));
@@ -490,6 +497,51 @@ pub fn now_rfc3339() -> String {
     rfc3339_utc(secs)
 }
 
+/// Why `set-mesh` refuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MeshRefusal {
+    /// The system has no mesh (`resilience.mesh.enable` is off).
+    Unavailable,
+    /// Neither `on` nor `off`.
+    BadState,
+}
+
+impl std::fmt::Display for MeshRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            MeshRefusal::Unavailable => "this system has no mesh network",
+            MeshRefusal::BadState => "the mesh can only be turned on or off",
+        })
+    }
+}
+
+/// `set-mesh` (ADR 0021): the systemctl argv that starts (`on`) or stops
+/// (`off`) the system's mesh unit, and nothing else.
+pub fn plan_set_mesh(cfg: &AdminConfig, state: &str) -> Result<Vec<String>, MeshRefusal> {
+    let (Some(systemctl), Some(unit)) = (cfg.systemctl.as_ref(), cfg.mesh_unit.as_ref()) else {
+        return Err(MeshRefusal::Unavailable);
+    };
+    let unit_ok = unit.ends_with(".service")
+        && !unit.starts_with('-')
+        && unit
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_');
+    if !unit_ok {
+        return Err(MeshRefusal::Unavailable);
+    }
+    let verb = match state {
+        "on" => "start",
+        "off" => "stop",
+        _ => return Err(MeshRefusal::BadState),
+    };
+    Ok(vec![
+        systemctl.to_string_lossy().into_owned(),
+        verb.into(),
+        "--".into(),
+        unit.clone(),
+    ])
+}
+
 /// Why `set-keymap` refuses a layout.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeymapRefusal {
@@ -539,6 +591,8 @@ mod tests {
             ultra_stable_only: false,
             loadkeys: None,
             keymaps: Vec::new(),
+            systemctl: None,
+            mesh_unit: None,
             users: users
                 .iter()
                 .map(|(n, m)| {
@@ -615,6 +669,40 @@ mod tests {
                 .is_err()
         );
         assert!(AdminConfig::parse(&format!("{text}\nextra = 1\n")).is_err());
+    }
+
+    #[test]
+    fn set_mesh_only_starts_or_stops_the_mesh_unit() {
+        let mut c = cfg(&[], None);
+        assert_eq!(plan_set_mesh(&c, "on"), Err(MeshRefusal::Unavailable));
+        c.systemctl = Some("/sd/bin/systemctl".into());
+        assert_eq!(plan_set_mesh(&c, "on"), Err(MeshRefusal::Unavailable));
+        c.mesh_unit = Some("resilience-mesh.service".into());
+        assert_eq!(
+            plan_set_mesh(&c, "on"),
+            Ok(vec![
+                "/sd/bin/systemctl".to_string(),
+                "start".into(),
+                "--".into(),
+                "resilience-mesh.service".into()
+            ])
+        );
+        assert_eq!(plan_set_mesh(&c, "off").expect("off")[1], "stop");
+        for bad in ["", "ON", "restart", "on ", "start", "--force"] {
+            assert_eq!(
+                plan_set_mesh(&c, bad),
+                Err(MeshRefusal::BadState),
+                "{bad:?}"
+            );
+        }
+        for unit in ["sshd.socket", "-x.service", "a b.service", "../x.service"] {
+            c.mesh_unit = Some(unit.into());
+            assert_eq!(
+                plan_set_mesh(&c, "on"),
+                Err(MeshRefusal::Unavailable),
+                "{unit}"
+            );
+        }
     }
 
     #[test]

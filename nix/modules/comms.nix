@@ -53,9 +53,9 @@ let
         group_id = ${cfg.group}
         discovery_port = ${toString discoveryPort}
         data_port = ${toString dataPort}
-    ${lib.optionalString (
-      cfg.interfaces != [ ]
-    ) "    devices = ${lib.concatStringsSep "," cfg.interfaces}"}
+    ${lib.optionalString (cfg.interfaces != [ ])
+      "    devices = ${lib.concatStringsSep "," (cfg.interfaces ++ meshInterface)}"
+    }
   '';
   clientConfig = pkgs.writeText "reticulum-client-config" ''
     ${reticulumSection}
@@ -66,6 +66,9 @@ let
   '';
 
   storeAddress = "/run/resilience-messages-node/address";
+
+  # The mesh (ADR 0021) adds bat0 while it is on.
+  meshInterface = lib.optional config.resilience.mesh.enable "bat0";
 
   # Attaching before rnsd's local socket exists fails (exit 75, ADR 0019):
   # wait for it, so that a boot does not go through several restarts.

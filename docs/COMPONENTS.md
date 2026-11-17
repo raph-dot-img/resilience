@@ -36,6 +36,8 @@ activity as known on 2026-11-14; re-check before each release.
 | zstd | 1.5.7 | BSD-3-Clause / GPL-2.0 | https://facebook.github.io/zstd | yes | backup compression |
 | GNU tar | 1.35 | GPL-3.0+ | https://www.gnu.org/software/tar | yes | backup archives |
 | shadow (gpasswd) | 4.19.4 | BSD-3-Clause | https://github.com/shadow-maint/shadow | yes | group changes by `resilience-admin` |
+| batctl | 2026.4 | GPL-2.0-only | https://www.open-mesh.org | yes | BATMAN-adv control (`batctl n`, `batctl o`) on systems with the mesh network (ADR 0021); the `batman_adv` module is the kernel's |
+| iw | 6.17 | ISC | https://wireless.wiki.kernel.org/en/users/documentation/iw | yes | puts the Wi-Fi card in ad hoc mode for the mesh network (ADR 0021) |
 | Terminus console font | (nixpkgs) | OFL-1.1 | https://terminus-font.sourceforge.net | yes | `ter-i16n` |
 | GNU nano | 9.3 | GPL-3.0+ | https://nano-editor.org | yes | editor (Stable+), notes editor (`--restricted` for Ultra-Stable) |
 | Vim | 9.2.1252 | Vim | https://www.vim.org | yes | Stable+ |
@@ -79,9 +81,8 @@ is to be run before each release (cargo-deny is in the dev shell).
 | visidata | 3.3 | GPL-3.0 | CSV/spreadsheet | Python closure: evaluate size |
 | sc-im | 0.8.5 | BSD-4-Clause | spreadsheet | advertising clause: review |
 | glow / mdcat | 2.1.2 / 2.7.1 | MIT / MPL-2.0 | Markdown viewing | |
-| yggdrasil | 0.5.13 | LGPL-3.0 | mesh (Phase 6) | |
+| yggdrasil | 0.5.13 | LGPL-3.0 | mesh (Phase 6) | evaluated, **not adopted** (ADR 0021): an IPv6 overlay with no program here to use it; makes no radio link |
 | rns (Reticulum), lxmf (LXMF) | 1.2.9, 0.9.8 | **Reticulum License** (MIT text plus two conditions: no use in systems able to purposefully harm people, no use for AI training datasets). **Not free software**; nixpkgs marks both unfree | local messaging network (ADR 0018), with `resilience.comms.enable` (**on in the standard edition**, off in minimal): `rnsd` as a system service; LXMF for the messaging program to come | allowed by name in `nix/packages/resilience-reticulum` only; upstream markqvist/Reticulum, markqvist/LXMF; licence read on 2026-11-16 |
-| batctl | 2026.4 | GPL-2.0-only | BATMAN-adv (Phase 6) | |
 | toxic (Tox) | 0.16.1 | GPL-3.0-only | Internet messaging TUI (Phase 6) | |
 | signal-cli | 0.14.7 | GPL-3.0 | **unofficial** Signal client (Phase 6) | Java; unofficial; may break with server changes |
 | rtl-sdr / rtl_433 / soapysdr | 1.3.5 / 25.12 / 0.8.1-unstable | GPL-2.0+ / GPL-2.0+ / BSL-1.0 | receive-only SDR (Phase 7) | |

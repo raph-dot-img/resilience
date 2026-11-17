@@ -52,6 +52,8 @@ which corrupts text next to box-drawing characters with our console font.
 | resilience-tui Local messages (ADR 0018): absent from the menu and from search without the machine's messaging service, present in every mode with it; a program that is not running and a missing address are said plainly, the address shown in groups; writing to an address: not an address and one's own address refused in the dialog, an address typed in groups and upper case accepted, empty message refused, the request file holds the exact text (quotes, `$(...)`) and the notice says "saved", never sent or delivered; a conversation follows the program's records by itself (waiting → sent → delivered), shows a verified and a NOT VERIFIED incoming message, a FAILED one, a hostile text without its escape sequence or direction override, at 160×50, 80×24 and 60×20 with console glyphs only; `c` cancels only a waiting message; naming a person changes the titles and lists; `i` shows the whole address; people nearby with a claimed name quoted, questioned and cleaned; help page | 5 | PASS (host, 2026-11-16) |
 | resilience-tui files in messages (ADR 0020): `f` in a conversation opens the file picker; a 900,001-byte file → "CANNOT SEND THIS FILE" with the 900 KB limit, nothing written; a chosen file → "SEND A FILE" with its name and size, the text typed, then `outbox/ID.file` (exact bytes) before `outbox/ID.json` with `"file"` and the text, the notice says a copy is saved; a received file shown as `[file] NAME (SIZE)  o open, s save` with a hostile name cleaned, one not kept as `not kept`; `o` shows it in the pager; `s` moves it to `~/Received/` under a safe name (`_..` prefix, ` (2)` before the extension) beside the user's own file, which is untouched; then `o` and `s` say it is no longer here; core: copies taken through one descriptor, 0600, folders and oversize files refused, `data` names outside `ID[.ext]` (including `.data`) ignored, `../` and `.ssh` paths never followed | 2 TUI + 2 core | PASS (host and Nix build, 2026-11-17) |
 | resilience-tui multi-line messages: Ctrl-N, Ctrl-J and Alt-Enter start a new line in the message dialog (Enter still sends), each typed line drawn on its own line with the cursor after the last; Backspace removes a line break; the request file holds the text with `\n`; only line breaks → "the message is empty"; a contact name stays on one line; at most 40 lines, the end being typed stays on screen | 1 | PASS (host and Nix build, 2026-11-17) |
+| resilience-core admin `plan_set_mesh` (ADR 0021): only `on` and `off`, only the configured unit (a `.service` name of safe characters, never starting with `-`), an absolute `systemctl`; without `mesh_unit` the operation is unavailable; the plan is exactly `systemctl start|stop -- UNIT` | 1 | PASS (host and Nix build, 2026-11-17) |
+| resilience-tui Mesh network (ADR 0021): absent (even from search) without `mesh_unit` in admin.toml, present with it and found by search ("mesh", "router"); its confirmation says it is off and that the card cannot join an ordinary network meanwhile, Cancel focused (Enter runs nothing); "Turn on" runs `pkexec HELPER set-mesh on` with `SHELL` = the session shell and reports it on; with `/run/resilience-mesh/devices` written it shows "ON (wlan0)" and "Turn off" runs `set-mesh off` | 1 | PASS (host and Nix build, 2026-11-17) |
 | `cargo clippy --all-targets` | — | PASS (0 warnings) |
 
 ### Nix
@@ -60,7 +62,7 @@ which corrupts text next to box-drawing characters with our console font.
 |---|---|
 | Flake evaluation (`nix flake check --no-build`) | PASS |
 | `eval-live-iso`: live-standard, live-minimal, dev-vm evaluate | PASS |
-| `security-invariants`: 28 invariants × 3 configurations (the firewall one now allows exactly UDP 29716 and 42671 where local messaging is on, and nothing else; two new ones: the messaging service is unprivileged with nothing of Reticulum in `PATH`, and the minimal edition has no local messaging) | PASS (2026-11-16) |
+| `security-invariants`: 29 invariants × 3 configurations (2026-11-17: new "the mesh comes only with local messaging and starts on request": mesh only with comms, never `autoStart` in the shipped systems, `bat0` unmanaged by NetworkManager; the firewall one now allows exactly UDP 29716 and 42671 where local messaging is on, and nothing else; two earlier ones: the messaging service is unprivileged with nothing of Reticulum in `PATH`, and the minimal edition has no local messaging) | PASS (2026-11-17) |
 | Invariant checker rejects a live configuration with user namespaces forced on | PASS (manual, once) |
 | Invariant checker rejects a deliberately broken configuration (ssh on, root password) | PASS (manual, once) |
 | Invariant checker rejects a privileged autologin account and an extra polkit admin identity | PASS (manual, once; this found that the autologin invariant had been vacuous) |
@@ -72,6 +74,7 @@ which corrupts text next to box-drawing characters with our console font.
 | `comms-messages` with the reply on two lines: the line break arrives through LXMF unchanged (`"OK, see you there\nwith cans"`) | PASS (2026-11-17) |
 | `comms-messages`, files (ADR 0020): a 300 KB file sent directly arrives byte for byte, kept by the recipient as `files/ID.pdf` (0600, the only file there) with the name that came with it (`../../Liste des besoins.PDF` → `Liste des besoins.PDF`) only in the record, verified; the sender's copy is removed once delivered; a 900,001-byte file and a request whose file is missing are refused with their reason and leave nothing behind; a 400 KB file (above LXMF's default 256 KB store limit) is left in the machine's store and collected intact after the sender is stopped | PASS (2026-11-17) |
 | `comms-messages`, store-and-forward (ADR 0019): `node` refuses a missing `--dir` or a 0 MB limit, `run` refuses node options; without the instance a program exits 75 ("not running yet") instead of becoming the instance; the store starts (identity 0600, address file) and the programs pick it up; Bob's program stopped, Ann's message is `sent` with `stored` true after 2 minutes and the store holds it; Ann stopped; Bob's program starts, collects it once, `verified` (key kept from before) | PASS (2026-11-17) |
+| `comms-messages` with announces again 30 s and 90 s after a program or store starts and 10, 30, 90 s after the instance restarts (client configuration rewritten): every scenario above unchanged | PASS (2026-11-17) |
 | `map-world`: the built-in world overview (`nix build .#resilience-world-map`, Natural Earth 5.1.2: 10 land features, 515 country and 4,616 region border lines, 1,355 lakes, 1,454 rivers, 7,342 places; 11,362 tiles, zooms 0-7, largest tile 50 KB compressed) read by `resilience-maps info --check` (profile, data date, licence, attribution, coverage, zoom 0-7, centre, search available, integrity ok), size between 8 and 16 MB (**11,735,040 bytes**), 7,342 settlements, Luxembourg a city at its position, Rhine and Lake Victoria searchable, prefix search without accents finds Reykjavík, one zoom-0 tile and 8 zooms | PASS (2026-11-16) |
 | World overview in a system image: opened from the TUI in `vm-maps` (minimal system) | PASS (2026-11-16) |
 | ISO rebuilt with the world overview, closure growth measured | NOT TESTED (live-standard and live-minimal evaluate) |
@@ -274,6 +277,24 @@ the last ones from the interface.
 | A system without `resilience.comms.enable` contains no Reticulum code | PASS once, by hand (2026-11-17): the live-minimal toplevel's derivation closure has no `reticulum`/`rns`/`lxmf` path (live-standard and dev-vm, which use the standard profile, have 7); not a flake check |
 | The standard live ISO (comms on by default) | PASS (2026-11-17, see "ISO boot") |
 
+### VM: `vm-mesh` — mesh network (ADR 0021), three machines in a chain and one with simulated Wi-Fi
+
+alpha (vlan 1) ── beta (vlans 1 and 2) ── gamma (vlan 2): alpha and gamma
+share no link. The mesh runs over the cables (`resilience.mesh.devices`);
+then delta joins the Wi-Fi ad hoc cell with a `mac80211_hwsim` radio, a
+second radio in a network namespace playing the other computer.
+
+| Scenario | Result |
+|---|---|
+| Off by default: no `resilience-mesh.service`, no `bat0`; alpha hears beta (announces again after start) but never gamma; a message to gamma stays `queued` | PASS (2026-11-17) |
+| `set-mesh`: polkit allows the TUI's process (active session) without a password, refuses a process of the same account outside the session, still refuses `set-mode`; bad arguments (`maybe`, `restart`, `on --force`) refused; the account itself running the helper is refused and audited; root `set-mesh on` on the three → "The mesh network is on.", audited `result=ok` | PASS (2026-11-17) |
+| `bat0`: up, an IPv6 link-local address only (no global IPv6, no IPv4), `accept_ra` and `autoconf` 0, no default route through it; `bat0` and the member cards unmanaged by NetworkManager; beta has both others as BATMAN-adv neighbours; alpha pings gamma's link-local address through beta | PASS (2026-11-17) |
+| The queued message reaches gamma through beta after the instances restarted: `delivered` on alpha (proof back), received and `verified` on gamma with alpha's address | PASS (2026-11-17, 11.5 s) |
+| beta turns it off: unit inactive, `bat0` and the state file gone, each card's NetworkManager state as before; alpha can no longer ping gamma; a new message is not delivered within 40 s | PASS (2026-11-17) |
+| Wi-Fi (delta): `set-mesh on` with no device configured takes the first card (wlan0): type IBSS, joined cell `02:52:45:53:4d:31`; a BATMAN-adv neighbour (the other radio); ping6 to it over `bat0` | PASS (2026-11-17) |
+| Wi-Fi: `set-mesh off` → no `bat0`, the card back to type managed and to its NetworkManager state | PASS (2026-11-17) |
+| Real Wi-Fi cards (IBSS on iwlwifi and others), radio range, several hops over the air, battery use | NOT TESTED |
+
 ### ISO boot (`tests/iso/smoke.py`, screenshots reviewed by a human/agent)
 
 | Firmware | Result |
@@ -344,7 +365,7 @@ modest machine running the live ISO has little room for files.
 | 10 | Access local files (file manager) | NOT TESTED in VM (mc launch untested) |
 | 11 | Import a resource pack from USB | PASS (vm-packs, QEMU usb-storage) |
 | 12 | Verify an offline update bundle | BLOCKED — Phase 8 |
-| 13 | Communicate across a local network | PASS between two VMs (vm-comms); physical network NOT TESTED |
+| 13 | Communicate across a local network | PASS between two VMs (vm-comms), and across a relay with no shared network (vm-mesh, cables and simulated Wi-Fi); physical network NOT TESTED |
 | — | Installer, rollback to previous generation | BLOCKED — no installer yet |
 | — | Recovery section with real generations; diagnostic report on a real system | NOT TESTED in VM (unit/TUI tests with fake profiles only) |
 | — | Backup / restore with a physical USB stick | NOT TESTED (QEMU usb-storage only) |

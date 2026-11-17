@@ -55,6 +55,16 @@ let
           );
         "the minimal edition has no local messaging" =
           c.resilience.edition != "minimal" || !c.resilience.comms.enable;
+        # ADR 0021: the mesh exists only with local messaging, starts only
+        # when someone at the console asks, and bat0 is never managed by
+        # NetworkManager (no DHCP, no default route through the mesh).
+        "the mesh comes only with local messaging and starts on request" =
+          !c.resilience.mesh.enable
+          || (
+            c.resilience.comms.enable
+            && !c.resilience.mesh.autoStart
+            && lib.elem "interface-name:bat0" c.networking.networkmanager.unmanaged
+          );
         "no NTP in the background" = !c.services.timesyncd.enable;
         "no X server" = !c.services.xserver.enable;
         "nix daemon refuses ultra-stable accounts" =

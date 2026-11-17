@@ -68,12 +68,17 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            into files/ID.EXT (64 MB/account), stores pass ≤ 1000 KB. rns and lxmf
    │                            are UNFREE (Reticulum License): allowed by name only in
    │                            nix/packages/resilience-reticulum (its own nixpkgs import)
+   │            mesh.nix        Wi-Fi mesh (ADR 0021): resilience.mesh.{enable (default = comms.enable),
+   │                            autoStart, name, frequency, cellId, devices} -> resilience-mesh.service
+   │                            (root oneshot: card out of NM, IBSS cell resilience-mesh 2412 MHz fixed
+   │                            BSSID, batman_adv bat0 link-local only, restarts rnsd); started/stopped
+   │                            only by `resilience-admin set-mesh on|off` (allow_active=yes)
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
    ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
    ├─ packages: resilience, resilience-session, resilience-handbook, resilience-world-map, iso, iso-minimal, vm
    ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
-              vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-maps, vm-comms,
+              vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-maps, vm-comms, vm-mesh,
               security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world,
               comms-messages (the messaging program with real Reticulum + LXMF, no VM)
 
@@ -94,7 +99,7 @@ crates/resilience-core  library: status, network (passive + on-demand probe),
                         style, labels: pure, ADR 0016)
 crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR 0007):
                         list | set-mode USER MODE | set-time UTC |
-                        set-default-generation N | set-keymap LAYOUT | apply-state
+                        set-default-generation N | set-keymap LAYOUT | set-mesh on|off | apply-state
 crates/resilience-backup binary `resilience-backup` (UNPRIVILEGED, ADR 0008):
                         create MOUNT | check FILE | restore FILE
 crates/resilience-library binaries (ADR 0013): `resilience-library` (as the user: list |
@@ -216,6 +221,16 @@ then writes `outbox/ID.json` with `"file"`; the program moves it to
 delivered/failed. Incoming: first attachment → `files/ID.EXT` (0600; name
 only in the record, cleaned); `o` views it (files_ui viewers), `s` moves it
 to `~/Received/<safe name>` with RENAME_NOREPLACE.
+
+Mesh flow (ADR 0021): TUI Communications → "Mesh network (Wi-Fi without
+a router)" (`Builtin::Mesh`, shown when admin.toml has `mesh_unit`) →
+Confirm (state from /run/resilience-mesh/devices) → `pkexec <helper>
+set-mesh on|off` (SHELL = session shell; polkit allow_active=yes) → helper:
+`systemctl start|stop -- resilience-mesh.service`, audited → the unit's
+script (ExecStart / ExecStopPost) → `systemctl --no-block try-restart
+resilience-reticulum` (AutoInterface lists interfaces only at start);
+the messaging programs and stores re-announce when the client config's
+mtime changes (instance restarted).
 
 Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
 with `connection.permissions user:U`, no secret → thread: `nmcli connection
@@ -362,8 +377,8 @@ Commit trailers: `Co-Authored-By: Claude …` as instructed by the session.
 - The TUI never builds shell commands; programs run from fixed argv.
 - No privileged command runner. Privileged actions go only through
   `resilience-admin`: one sub-command + one polkit action (auth_admin, never
-  _keep; the single exception is `set-keymap`, allow_active=yes for listed
-  layouts only, ADR 0017) per operation, every argument validated in the helper, absolute tool
+  _keep; the only exceptions are `set-keymap`, allow_active=yes for listed
+  layouts only, ADR 0017, and `set-mesh on|off`, allow_active=yes, ADR 0021) per operation, every argument validated in the helper, absolute tool
   paths from root-owned admin.toml, environment ignored, every outcome
   audited (/var/log/resilience/audit.log + journal). Add new operations the
   same way (pure rule in resilience-core/admin.rs + unit tests + vm-admin).
@@ -414,7 +429,7 @@ needlessly. Watch `free -h` during VM tests.
 
 ## 14. Current implementation status (2026-11-16)
 
-**Now: Phase 6 (networking and communications); `feat/comms-files` merged into `develop`.**
+**Now: Phase 6 (networking and communications), branch `feat/mesh`.**
 Maps (Phase 5) were parked by the owner on 2026-11-16 after slice 9: do
 not continue slices 10 to 13 unless asked. Phase 6 so far: ADR 0018
 (Reticulum + LXMF, opt-in because their licence is not free: owner's
@@ -430,7 +445,9 @@ service `resilience-messages-node`, client fallback to the store, TUI
 markers, vm-comms subtest with alpha switched off). Slice 5 (branch
 `feat/comms-files`) = multi-line messages (Ctrl-N / Ctrl-J / Alt-Enter in
 the dialog, at most 40 lines). Slice 6 = ADR 0020 files in messages
-(`f` send, `o` open, `s` save into ~/Received). Open: Yggdrasil/BATMAN.
+(`f` send, `o` open, `s` save into ~/Received). Slice 7 (branch
+`feat/mesh`) = ADR 0021 mesh network (BATMAN-adv over IBSS; Yggdrasil
+not adopted), `vm-mesh`. Phase 6's local part is then complete.
 Internet messengers (Tox, SimpleX, signal-cli; spec §14A) are DEFERRED by
 the owner (2026-11-17): do not start them unless asked.
 `resilience.comms.enable` is ON by default in the standard edition
@@ -478,7 +495,7 @@ both comms branches are fully merged (new Phase 6 work: a new
 `feat/<topic>` branch from `develop`; push only when asked). Last
 full `nix flake check -L --max-jobs 1 --keep-going`: `feat/comms-files` at
 `73754e8` (multi-line messages, ADR 0020), 2026-11-17, all 18 checks (12 VM
-tests) passed. Rust: 201 core, 75 TUI, 134 maps (+1 on demand), 5 library/store tests;
+tests) passed. Rust: 202 core, 76 TUI, 134 maps (+1 on demand), 5 library/store tests;
 clippy clean. The live ISO was rebuilt from `feat/comms` at `9d3ebd2`
 (message store included) and boot-tested in QEMU (BIOS, UEFI, 1-2 GiB) on 2026-11-17;
 the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
@@ -506,6 +523,11 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 - Cryptography: no LUKS sticks, no OpenPGP signing in the TUI (minisign
   signs), no secure deletion of originals (the user is told); contacts'
   keys are only as trustworthy as the user's own check.
+- Mesh network (ADR 0021): IBSS + BATMAN-adv tested in VMs only (wired
+  vlans and mac80211_hwsim), never on real Wi-Fi cards; open by design;
+  the card cannot join ordinary Wi-Fi while it is on; not remembered across
+  reboots (unless `autoStart`); the TUI blocks while `set-mesh` runs (a few
+  seconds).
 - Local messaging: on in standard, off in minimal; two machines tested, in
   VMs only (with the minimal profile plus the option; the standard live
   ISO boots with it running, ~+45 MiB RAM, but has not exchanged messages);
@@ -553,6 +575,7 @@ Phase 5 (maps) is parked.
 - 0018 Local messaging: Reticulum + LXMF (Reticulum License, not free: opt-in module), one unprivileged instance per machine on the local network only, per-user identities and file-based message store
 - 0019 Store-and-forward: a message store (LXMF propagation node, our own `resilience-messages node`, no delivery address) on every machine with messaging; clients go direct first, a copy to the store after 2 min
 - 0020 Files in local messages: one per message ≤ 900 KB, sent as a copy, received under the message id (64 MB/account), saved on request into ~/Received
+- 0021 Mesh network: BATMAN-adv over Wi-Fi ad hoc (IBSS; 802.11s is missing on Intel cards), off until turned on at the console via helper `set-mesh` (allow_active=yes), bat0 link-local only; Yggdrasil not adopted
 
 ## 18. How to continue safely
 
