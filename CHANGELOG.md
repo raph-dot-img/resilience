@@ -2,8 +2,17 @@
 
 All notable changes are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
+Git tags: `vX.Y.Z` on the commit of each release.
 
 ## [Unreleased]
+
+## [0.2.0] — 2026-11-17 — Phases 2 to 6 (local part)
+
+Accounts and security modes, backups, clock, Wi-Fi, generations, resource
+packs and offline library, files, guided cryptography, keyboard layouts,
+offline maps (Phase 5, parked after its first part), local messaging with
+store-and-forward, files in messages and a Wi-Fi mesh (Phase 6, local
+part). Live system only: there is no installer yet.
 
 ### Changed
 - Console keyboard: US by default; each account chooses its layout in
@@ -16,6 +25,27 @@ versions follow [Semantic Versioning](https://semver.org/).
   software keeps its own license.
 
 ### Added
+- *Maps & navigation* (ADR 0016, Phase 5, first part): MBTiles vector map
+  packs built reproducibly from OpenStreetMap (`nix build .#mapPacks.ID`,
+  `resilience-mapmaker`), a hardened read-only pack reader, and the
+  block-character viewer `resilience-maps view` (pan, zoom, labels). A
+  built-in world overview (Natural Earth, zoom 0 to 7). TUI: *Map* and
+  *Maps on this computer & USB sticks*. No search, nearby or go-to yet.
+- *Local messages* (ADR 0018 to 0020, Phase 6): messaging between nearby
+  computers without the Internet, over Reticulum and LXMF (Reticulum
+  License, not free software: opt-in module `resilience.comms.enable`, on
+  in the standard edition, off in minimal). One unprivileged instance per
+  machine on the local network only; per-account identities; per-message
+  state (waiting, sent, delivered on proof). Store-and-forward: a message
+  store on every machine keeps messages for recipients who are away.
+  Multi-line messages; one file per message up to 900 KB, saved on
+  request into `~/Received`. Handbook page and VM test `vm-comms`; check
+  `comms-messages` with the real libraries.
+- *Mesh network* (ADR 0021): Wi-Fi without a router, BATMAN-adv over Wi-Fi
+  ad hoc, turned on and off at the console (`resilience-admin set-mesh`,
+  no password for the active local session); local messages are relayed
+  across it. VM test `vm-mesh` (wired links and simulated Wi-Fi radios);
+  never tried on real Wi-Fi cards.
 - *Security & cryptography* (ADR 0015, Phase 4), for every account. New
   unprivileged tool `resilience-crypto`, run in the foreground by the TUI:
   encrypt a file (age: passphrase, or own key and contacts' keys) next to
