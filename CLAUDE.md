@@ -424,7 +424,9 @@ messages; Internet messengers (toxic, signal-cli); Yggdrasil/BATMAN.
 (owner, 2026-11-16; `nix/profiles/standard.nix`, mkDefault) and off in
 minimal. After that change: full flake check passed (2026-11-17, after
 fixing vm-crypto's menu number) and the standard ISO was rebuilt and
-booted in QEMU (BIOS, UEFI, 1 GiB) with Local messages running.
+booted in QEMU (BIOS, UEFI, 1 GiB) with Local messages running. After
+slice 4 (ADR 0019): full flake check passed again and the ISO, rebuilt,
+boots with the message store running (2026-11-17).
 
 Phase 5 state when parked:
 
@@ -456,13 +458,14 @@ media and backups (0008), clock (0009), Wi-Fi (0010), default generation
 files and manual pages (0014); Phase 4 guided cryptography (0015).
 See docs/TESTING.md for what has actually been executed and passed.
 
-Git state (2026-11-16): `main` = end of Phase 4; `develop` = `feat/maps`
+Git state (2026-11-17): `main` = end of Phase 4; `develop` = `feat/maps`
 and `feat/maps-overview` merged (local, not pushed); `feat/comms` = Phase 6
 work from `develop` (on origin; push new commits only when asked). Last
-full `nix flake check -L --max-jobs 1 --keep-going`: `feat/comms`,
-2026-11-17, all 18 checks (12 VM tests) passed. Rust: 198 core, 71 TUI,
-134 maps (+1 on demand), 5 library/store tests; clippy clean. The live ISO was rebuilt
-from `feat/comms` and boot-tested in QEMU (BIOS, UEFI, 1-2 GiB) on 2026-11-17;
+full `nix flake check -L --max-jobs 1 --keep-going`: `feat/comms` at
+`ba62020` (with ADR 0019), 2026-11-17, all 18 checks (12 VM tests) passed.
+Rust: 199 core, 72 TUI, 134 maps (+1 on demand), 5 library/store tests;
+clippy clean. The live ISO was rebuilt from `feat/comms` at `9d3ebd2`
+(message store included) and boot-tested in QEMU (BIOS, UEFI, 1-2 GiB) on 2026-11-17;
 the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 
 ## 15. Known bugs and limitations
