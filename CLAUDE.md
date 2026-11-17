@@ -430,6 +430,14 @@ needlessly. Watch `free -h` during VM tests.
 ## 14. Current implementation status (2026-11-16)
 
 **Now: Phase 6's local part is done and in `main` (2026-11-17); next work on a new `feat/<topic>` branch from `develop`.**
+**Current work: Phase 8 text installer (ADR 0022) on `feat/installer`.**
+Slices: 1 ADR (done); 2 generic installed configurations in the flake
+(`installed-<edition>-<uefi|bios>-<plain|luks>`, local accounts in
+resilience-admin, keyboard state file + initrd secret); 3 `resilience-core/
+src/install.rs` + `resilience-install`; 4 TUI Install screens (live ISO
+only); 5 `vm-install` (UEFI and BIOS) + handbook + docs/INSTALLATION.md.
+Phase 7 (SDR) is POSTPONED by the owner (2026-11-17) until they buy the
+hardware: do not start it. Power profiles stay open (need hardware).
 Maps (Phase 5) were parked by the owner on 2026-11-16 after slice 9: do
 not continue slices 10 to 13 unless asked. Phase 6 so far: ADR 0018
 (Reticulum + LXMF, opt-in because their licence is not free: owner's
@@ -579,6 +587,7 @@ Phase 5 (maps) is parked.
 - 0019 Store-and-forward: a message store (LXMF propagation node, our own `resilience-messages node`, no delivery address) on every machine with messaging; clients go direct first, a copy to the store after 2 min
 - 0020 Files in local messages: one per message ≤ 900 KB, sent as a copy, received under the message id (64 MB/account), saved on request into ~/Received
 - 0021 Mesh network: BATMAN-adv over Wi-Fi ad hoc (IBSS; 802.11s is missing on Intel cards), off until turned on at the console via helper `set-mesh` (allow_active=yes), bat0 link-local only; Yggdrasil not adopted
+- 0022 Installer: prebuilt generic installed systems (per edition, UEFI/BIOS, plain/LUKS), accounts as local accounts in modes.toml, keyboard in /var/lib/resilience/keyboard (+ initrd secret), `resilience-install` via polkit allow_active on the live ISO only
 
 ## 18. How to continue safely
 
