@@ -429,7 +429,7 @@ needlessly. Watch `free -h` during VM tests.
 
 ## 14. Current implementation status (2026-11-16)
 
-**Now: Phase 6 (networking and communications), branch `feat/mesh`.**
+**Now: Phase 6's local part is done and in `main` (2026-11-17); next work on a new `feat/<topic>` branch from `develop`.**
 Maps (Phase 5) were parked by the owner on 2026-11-16 after slice 9: do
 not continue slices 10 to 13 unless asked. Phase 6 so far: ADR 0018
 (Reticulum + LXMF, opt-in because their licence is not free: owner's
@@ -488,16 +488,16 @@ media and backups (0008), clock (0009), Wi-Fi (0010), default generation
 files and manual pages (0014); Phase 4 guided cryptography (0015).
 See docs/TESTING.md for what has actually been executed and passed.
 
-Git state (2026-11-17): `main` = end of Phase 4; `develop` = `feat/maps`,
+Git state (2026-11-17): `main` = `develop` at the Phase 6 milestone (local messaging, store-and-forward, files, mesh; maps parked), merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
 `feat/maps-overview`, `feat/comms` (Phase 6 slices 1 to 4, ADR 0018 and
 0019) and `feat/comms-files` (slices 5 and 6, ADR 0020) merged, on origin;
 both comms branches are fully merged (new Phase 6 work: a new
 `feat/<topic>` branch from `develop`; push only when asked). Last
-full `nix flake check -L --max-jobs 1 --keep-going`: `feat/comms-files` at
-`73754e8` (multi-line messages, ADR 0020), 2026-11-17, all 18 checks (12 VM
+full `nix flake check -L --max-jobs 1 --keep-going`: `develop` at
+`af4b661` (mesh network, ADR 0021), 2026-11-17, all 19 checks (13 VM
 tests) passed. Rust: 202 core, 76 TUI, 134 maps (+1 on demand), 5 library/store tests;
-clippy clean. The live ISO was rebuilt from `feat/comms` at `9d3ebd2`
-(message store included) and boot-tested in QEMU (BIOS, UEFI, 1-2 GiB) on 2026-11-17;
+clippy clean. The live ISO was rebuilt from `develop` at `af4b661`
+(mesh included) and boot-tested in QEMU (BIOS, UEFI, 1-2 GiB) on 2026-11-17;
 the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 
 ## 15. Known bugs and limitations
