@@ -42,7 +42,7 @@
 
     def tty_text(tty):
         """Screen text from /dev/vcsuN (UTF-32); see modes.nix."""
-        cols = int(machine.succeed(f"stty -F /dev/tty{tty} size").split()[1])
+        cols = int(machine.wait_until_succeeds(f"stty -F /dev/tty{tty} size", timeout=10).split()[1])
         raw = base64.b64decode(machine.succeed(f"base64 -w0 /dev/vcsu{tty}"))
         text = raw.decode("utf-32-le", errors="replace")
         return "\n".join(text[i:i + cols] for i in range(0, len(text), cols))
