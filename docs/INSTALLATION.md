@@ -1,6 +1,6 @@
 # Installation
 
-## Current status (v0.1.0)
+## Current status (v0.2.0)
 
 **There is no installer yet** (Phase 8). Today you can:
 
@@ -12,7 +12,7 @@ Never test installation procedures on a machine whose data you need.
 
 ## 1. Live system
 
-Build or obtain `resilience-standard-0.1.0-x86_64-linux.iso`, verify its
+Build or obtain `resilience-standard-0.2.0-x86_64-linux.iso`, verify its
 SHA-256 checksum against the one published with it, and either boot it in a
 VM (`scripts/boot-iso.sh --gui`) or write it to a USB stick (docs/BUILDING.md).
 
