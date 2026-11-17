@@ -522,7 +522,10 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
   so ageing catalog entries become USB-only. No comms or SDR yet.
 - Cryptography: no LUKS sticks, no OpenPGP signing in the TUI (minisign
   signs), no secure deletion of originals (the user is told); contacts'
-  keys are only as trustworthy as the user's own check.
+  keys are only as trustworthy as the user's own check. Creating an
+  OpenPGP key may ask the passphrase a third time on a slow machine
+  (gpg-agent max-cache-ttl 0 expires the creation's cache nonce before
+  the self-signature; the tool says so, vm-crypto answers it).
 - Mesh network (ADR 0021): IBSS + BATMAN-adv tested in VMs only (wired
   vlans and mac80211_hwsim), never on real Wi-Fi cards; open by design;
   the card cannot join ordinary Wi-Fi while it is on; not remembered across
