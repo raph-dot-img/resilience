@@ -458,9 +458,10 @@ media and backups (0008), clock (0009), Wi-Fi (0010), default generation
 files and manual pages (0014); Phase 4 guided cryptography (0015).
 See docs/TESTING.md for what has actually been executed and passed.
 
-Git state (2026-11-17): `main` = end of Phase 4; `develop` = `feat/maps`
-and `feat/maps-overview` merged (local, not pushed); `feat/comms` = Phase 6
-work from `develop` (on origin; push new commits only when asked). Last
+Git state (2026-11-17): `main` = end of Phase 4; `develop` = `feat/maps`,
+`feat/maps-overview` and `feat/comms` (Phase 6 slices 1 to 4, ADR 0018 and
+0019) merged, on origin; `feat/comms` is fully merged (new Phase 6 work:
+a new `feat/<topic>` branch from `develop`; push only when asked). Last
 full `nix flake check -L --max-jobs 1 --keep-going`: `feat/comms` at
 `ba62020` (with ADR 0019), 2026-11-17, all 18 checks (12 VM tests) passed.
 Rust: 199 core, 72 TUI, 134 maps (+1 on demand), 5 library/store tests;
