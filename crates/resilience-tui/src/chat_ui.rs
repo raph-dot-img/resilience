@@ -7,11 +7,14 @@
 //!   `p` lists the people heard on the network, `m` shows my address.
 //! - **A conversation**: every message with what is known about it
 //!   (waiting, sent, delivered, FAILED; from them, verified or not).
-//!   `w` writes, `c` gives up on a waiting message, `a` names the person.
+//!   `w` writes, `f` sends a file, `c` gives up on a waiting message, `a`
+//!   names the person; on a message with a received file, `o` views it
+//!   and `s` moves it to ~/Received (ADR 0020).
 //!
 //! Names heard on the network are claims and are shown as `"name"?` until
 //! the user gives the address a name of their own.
 
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -20,7 +23,7 @@ use resilience_core::messages::{
     self, Conversation, MAX_NAME_CHARS, Name, Peer, Record, Status, Store,
 };
 
-use super::{App, Effect, Level, Modal, View, clamp_selection, is_activate, is_back, nav};
+use super::{App, Effect, Level, Modal, Pick, View, clamp_selection, is_activate, is_back, nav};
 
 /// Longest message typed in the dialog, in characters.
 pub const MAX_TYPED_CHARS: usize = 1000;
@@ -58,6 +61,12 @@ pub enum ChatInput {
     Address,
     /// A message for `peer`.
     Text { peer: String },
+    /// The text sent with the file at `path` (`size` bytes) to `peer`.
+    FileText {
+        peer: String,
+        path: PathBuf,
+        size: u64,
+    },
     /// The user's own name for `peer`.
     ContactName { peer: String },
 }
@@ -248,6 +257,7 @@ impl App {
     /// Keys of the three messages screens.
     pub(super) fn chat_key(&mut self, mut view: View, key: KeyEvent) -> (Option<View>, Effect) {
         let mut next: Option<View> = None;
+        let mut effect = Effect::None;
         match &mut view {
             View::Chats { rows, status, list } => match key.code {
                 KeyCode::Char('n') => self.ask(ChatInput::Address, String::new()),
@@ -316,6 +326,38 @@ impl App {
                         let (p, n) = (peer.clone(), name.clone());
                         self.ask_name(&p, &n);
                     }
+                    KeyCode::Char('f') => next = Some(self.open_picker(Pick::SendFile)),
+                    KeyCode::Char('o') => {
+                        if let Some(r) = &selected
+                            && let Some(path) = self.chat_received_file(r)
+                        {
+                            let shown = r.file.as_ref().map(|f| f.shown()).unwrap_or_default();
+                            let (v, e) = self.view_file(&path, &shown);
+                            next = v;
+                            effect = e;
+                        }
+                    }
+                    KeyCode::Char('s') => {
+                        if let Some(r) = &selected
+                            && self.chat_received_file(r).is_some()
+                        {
+                            let dest = self.home.join(messages::RECEIVED_DIR);
+                            match self.chat_store().save_received(r, &dest) {
+                                Ok(p) => {
+                                    let shown = p
+                                        .strip_prefix(&self.home)
+                                        .map_or_else(|_| p.display().to_string(), |q| {
+                                            format!("~/{}", q.display())
+                                        });
+                                    self.notify(Level::Info, format!("Saved as {shown}"));
+                                    self.reload_chats();
+                                }
+                                Err(e) => {
+                                    self.notify(Level::Error, format!("could not save: {e}"))
+                                }
+                            }
+                        }
+                    }
                     KeyCode::Char('i') => {
                         let (p, n) = (peer.clone(), name.clone());
                         self.show_person(&p, &n);
@@ -345,9 +387,56 @@ impl App {
         if let Some(n) = next {
             self.stack.push(view);
             self.stack.push(n);
-            return (None, Effect::None);
+            return (None, effect);
         }
-        (Some(view), Effect::None)
+        (Some(view), effect)
+    }
+
+    /// The received file of a message, saying why there is none.
+    fn chat_received_file(&mut self, r: &Record) -> Option<PathBuf> {
+        let f = r.file.as_ref()?;
+        if r.direction != messages::Direction::In {
+            self.notify(
+                Level::Info,
+                "This is a file you sent; the original is where it was.",
+            );
+            return None;
+        }
+        let found = self.chat_store().received_file(r);
+        if found.is_none() {
+            let why = if f.data.is_some() {
+                "The file is no longer here: it was saved in your Received folder."
+            } else {
+                "This file was not kept (see beside the message)."
+            };
+            self.notify(Level::Info, why);
+        }
+        found
+    }
+
+    /// A file was chosen to send to the person of the conversation below.
+    pub(super) fn chat_file_picked(&mut self, path: &Path) {
+        let Some(View::Chat { peer, .. }) = self.stack.last() else {
+            return;
+        };
+        let peer = peer.clone();
+        match Store::check_file(path) {
+            Ok(size) => self.ask(
+                ChatInput::FileText {
+                    peer,
+                    path: path.to_path_buf(),
+                    size,
+                },
+                String::new(),
+            ),
+            Err(e) => {
+                self.modal = Some(Modal::Message {
+                    title: "CANNOT SEND THIS FILE".into(),
+                    body: e.to_string(),
+                    error: true,
+                })
+            }
+        }
     }
 
     fn ask_name(&mut self, peer: &str, name: &Name) {
@@ -373,7 +462,7 @@ impl App {
     ) -> Effect {
         let max = match kind {
             ChatInput::Address => 48,
-            ChatInput::Text { .. } => MAX_TYPED_CHARS,
+            ChatInput::Text { .. } | ChatInput::FileText { .. } => MAX_TYPED_CHARS,
             ChatInput::ContactName { .. } => MAX_NAME_CHARS,
         };
         let mut error = error;
@@ -381,7 +470,9 @@ impl App {
             KeyCode::Esc => return Effect::None,
             // A new line in a message: Ctrl-N (Ctrl-J and Alt-Enter too;
             // the console cannot tell Shift-Enter or Ctrl-Enter from Enter).
-            _ if matches!(kind, ChatInput::Text { .. }) && is_new_line(key) => {
+            _ if matches!(kind, ChatInput::Text { .. } | ChatInput::FileText { .. })
+                && is_new_line(key) =>
+            {
                 let lines = value.matches('\n').count() + 1;
                 if value.chars().count() < max && lines < MAX_TYPED_LINES {
                     value.push('\n');
@@ -439,6 +530,26 @@ impl App {
                         Level::Warn,
                         "Message saved, but messaging is not running for your account: it \
                          will be sent when it runs again.",
+                    ),
+                }
+                self.reload_chats();
+                Ok(())
+            }
+            ChatInput::FileText { peer, path, .. } => {
+                let status = store.status(now_secs());
+                store
+                    .queue_file(peer, value, path, status.address())
+                    .map_err(|e| e.to_string())?;
+                match status {
+                    Status::Running { .. } => self.notify(
+                        Level::Info,
+                        "A copy of the file is saved to be sent. What happens to it is shown \
+                         beside it.",
+                    ),
+                    Status::Stopped { .. } => self.notify(
+                        Level::Warn,
+                        "A copy of the file is saved, but messaging is not running for your \
+                         account: it will be sent when it runs again.",
                     ),
                 }
                 self.reload_chats();

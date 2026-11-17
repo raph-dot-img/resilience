@@ -33,6 +33,8 @@ pub enum Pick {
     CheckList,
     Inspect,
     AddContact,
+    /// A file to send in a local message (ADR 0020).
+    SendFile,
 }
 
 impl Pick {
@@ -47,6 +49,7 @@ impl Pick {
             Pick::CheckList => "CHOOSE THE CHECKSUM LIST (e.g. SHA256SUMS)",
             Pick::Inspect => "CHOOSE THE FILE TO INSPECT",
             Pick::AddContact => "CHOOSE THE PUBLIC KEY FILE (Resilience or OpenPGP)",
+            Pick::SendFile => "CHOOSE THE FILE TO SEND (at most 900 KB)",
         }
     }
 
@@ -304,6 +307,10 @@ impl App {
             Pick::CheckList => self.crypto_run("Check a list", &["check-list"], file()),
             Pick::Inspect => self.crypto_run("Inspect a file", &["inspect"], file()),
             Pick::AddContact => self.crypto_run("Add a contact", &["add-contact"], file()),
+            Pick::SendFile => {
+                self.chat_file_picked(path);
+                Effect::None
+            }
             Pick::Compare => {
                 self.modal = Some(Modal::ExpectedSum {
                     file: path.to_path_buf(),

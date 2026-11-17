@@ -12,10 +12,17 @@ talks to the interface through files only:
     status.json     written here every second: running, address, time, and
                     "store", the message store (propagation node) in use
     outbox/ID.json  written by the interface: {"to": ADDRESS, "text": TEXT}
+                    and, for a file (ADR 0020), "file": NAME, with the
+                    file's bytes in outbox/ID.file written just before
     cancel/ID       written by the interface: give up on message ID
     messages/ID.json  written here only, one per message:
         {"id", "direction": "out"|"in", "peer", "text", "created",
          "updated", "state", "verified", "detail", "attempts"}
+        and with a file "file": {"name", "size"} (incoming: "data", the
+        file's name in files/)
+    files/          written here: received files, named by message id
+                    (ID.EXT), and the copies of files waiting to be sent
+                    (ID.data, removed once delivered or given up)
     peers.json      written here: addresses heard on the network, with the
                     name each one claims and when it was last heard
 
@@ -42,6 +49,10 @@ regularly.
       itself), a bounded store, and peering only with the stores of the
       local network. Run by the system as an unprivileged user.
 
+Files (ADR 0020): one per message, at most 900 KB, in LXMF's
+FIELD_FILE_ATTACHMENTS. Received files are kept under the message id,
+never under the name that came with them, within 64 MB per account.
+
 Usage: resilience-messages run [--dir DIR] [--client-config FILE] [--local-store FILE]
        resilience-messages node --dir DIR [--client-config FILE] [--address-file FILE] [--limit-mb N]
 """
@@ -51,6 +62,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import sys
 import threading
 import time
@@ -61,6 +73,15 @@ ADDRESS = re.compile(r"[0-9a-f]{32}")
 MESSAGE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 # Limits on what is accepted from the interface and from the network.
 MAX_TEXT_BYTES = 8 * 1024
+# Files (ADR 0020): the whole message stays under LXMF's delivery limit
+# (1000 KB); received files take at most this much room per account.
+MAX_FILE_BYTES = 900 * 1000
+MAX_RECEIVED_BYTES = 64 * 1024 * 1024
+MAX_FILE_NAME_BYTES = 100
+FILE_EXT = re.compile(r"[a-z0-9]{1,8}")
+# A file copied into the outbox without its request (the interface
+# stopped in between) is removed after this long.
+STRAY_FILE_AFTER = 3600
 MAX_OUTBOX_FILE = 64 * 1024
 MAX_NAME_BYTES = 64
 MAX_PEERS = 500
@@ -90,6 +111,10 @@ NODE_STAMP_COST = 13
 # Stores asking more than LXMF's default cost are not used.
 MAX_STORE_COST = 16
 NODE_STORAGE_MB = 32
+# Our stores pass messages up to 1000 KB to each other (files, ADR 0020);
+# LXMF's default is 256 KB, assumed for a store whose limit is not known.
+NODE_TRANSFER_LIMIT_KB = 1000
+DEFAULT_STORE_LIMIT_KB = 256
 SAVE_KEYS_EVERY = 600
 
 
@@ -119,22 +144,82 @@ def read_json(path, limit):
         return None
 
 
-def valid_request(req):
-    """Why an outbox request is refused, or None."""
+def valid_request(req, file_size=None):
+    """Why an outbox request is refused, or None. `file_size` is the size
+    of the file copied with it, None if there is none."""
     if not isinstance(req, dict):
         return "not a message request"
-    to, text = req.get("to"), req.get("text")
+    to, text = req.get("to"), req.get("text", "")
     if not isinstance(to, str) or not ADDRESS.fullmatch(to):
         return "the address is not 32 hexadecimal digits"
-    if not isinstance(text, str) or not text.strip():
+    if not isinstance(text, str):
+        return "the message is empty"
+    if "file" in req:
+        if not isinstance(req["file"], str) or not clean_file_name(req["file"]):
+            return "the file has no name"
+        if file_size is None:
+            return "the file to send was not found"
+        if file_size > MAX_FILE_BYTES:
+            return "the file is too large (at most 900 KB)"
+    elif not text.strip():
         return "the message is empty"
     if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
         return "the message is too long"
     return None
 
 
+def clean_file_name(raw):
+    """A file name that came with a message: its last part, printable, one
+    line, at most MAX_FILE_NAME_BYTES. Only ever shown, never used as a path
+    here (the interface makes its own safe name when the user saves it)."""
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "replace")
+    if not isinstance(raw, str):
+        return ""
+    raw = raw.replace("\\", "/").rsplit("/", 1)[-1]
+    name = "".join(c for c in raw if c.isprintable()).strip()
+    while len(name.encode("utf-8")) > MAX_FILE_NAME_BYTES:
+        name = name[:-1]
+    return name
+
+
+def stored_file_name(mid, name):
+    """files/ name of a received file: the message id, and the name's
+    extension when it is a plain one (so the viewers know the kind)."""
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    # ".data" names the copies of files being sent.
+    return f"{mid}.{ext}" if FILE_EXT.fullmatch(ext) and ext != "data" else mid
+
+
+def attachment(fields, LXMF):
+    """(name, bytes, how many others) of the first file of a message."""
+    if not isinstance(fields, dict):
+        return None
+    files = fields.get(LXMF.FIELD_FILE_ATTACHMENTS)
+    found = []
+    if isinstance(files, list):
+        for f in files:
+            if isinstance(f, (list, tuple)) and len(f) >= 2 and isinstance(f[1], (bytes, bytearray)):
+                found.append((clean_file_name(f[0]) or "file", bytes(f[1])))
+    image = fields.get(LXMF.FIELD_IMAGE)
+    if isinstance(image, (list, tuple)) and len(image) >= 2 and isinstance(image[1], (bytes, bytearray)):
+        kind = image[0].decode("ascii", "replace") if isinstance(image[0], bytes) else str(image[0])
+        kind = kind.lower().rsplit("/", 1)[-1]
+        found.append(("picture." + kind if FILE_EXT.fullmatch(kind) else "picture", bytes(image[1])))
+    if not found:
+        return None
+    return found[0][0], found[0][1], len(found) - 1
+
+
 def retry_delay(attempts):
     return RETRY_DELAYS[min(max(attempts, 1), len(RETRY_DELAYS)) - 1]
+
+
+def waiting_detail(rec, base):
+    """What a waiting message's record says, with why no store keeps it."""
+    if rec.get("too_large_for_store"):
+        return base + "; too large for the message store: it arrives only when both computers are on"
+    return base
 
 
 def clean_name(raw):
@@ -152,7 +237,7 @@ class Store:
 
     def __init__(self, root):
         self.root = root
-        for d in ("", "outbox", "cancel", "messages", "reticulum", "lxmf"):
+        for d in ("", "outbox", "cancel", "messages", "files", "reticulum", "lxmf"):
             os.makedirs(os.path.join(root, d), mode=0o700, exist_ok=True)
         os.chmod(root, 0o700)
 
@@ -177,20 +262,81 @@ class Store:
         return out
 
     def take_outbox(self):
-        """New requests, oldest first: (id, request or None). Files are removed."""
+        """New requests, oldest first: (id, request or None, size of its
+        file or None). Requests are removed; their files are moved to
+        files/ID.data."""
         box = self.path("outbox")
         found = []
         for name in sorted(os.listdir(box)):
             full = os.path.join(box, name)
             if name.endswith(".json") and MESSAGE_ID.fullmatch(name[:-5]):
-                found.append((name[:-5], read_json(full, MAX_OUTBOX_FILE)))
+                req = read_json(full, MAX_OUTBOX_FILE)
+                size = self.take_file(name[:-5]) if isinstance(req, dict) and "file" in req else None
+                found.append((name[:-5], req, size))
             elif name.endswith(".tmp"):
                 continue  # being written
+            elif name.endswith(".file") and MESSAGE_ID.fullmatch(name[:-5]):
+                # Its request comes next (".json" sorts after ".file"), or
+                # is being written; an old one alone is left over.
+                try:
+                    if time.time() - os.lstat(full).st_mtime < STRAY_FILE_AFTER:
+                        continue
+                except OSError:
+                    continue
             try:
                 os.unlink(full)
             except OSError:
                 pass
         return found
+
+    def take_file(self, mid):
+        """Move outbox/ID.file to files/ID.data; its size, or None."""
+        src = self.path("outbox", mid + ".file")
+        try:
+            st = os.lstat(src)
+        except OSError:
+            return None
+        if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_FILE_BYTES:
+            try:
+                os.unlink(src)
+            except OSError:
+                pass
+            return MAX_FILE_BYTES + 1 if stat.S_ISREG(st.st_mode) else None
+        os.replace(src, self.path("files", mid + ".data"))
+        return st.st_size
+
+    def outgoing_data(self, mid):
+        return self.path("files", mid + ".data")
+
+    def drop_outgoing(self, mid):
+        try:
+            os.unlink(self.outgoing_data(mid))
+        except OSError:
+            pass
+
+    def received_bytes(self):
+        total = 0
+        for name in os.listdir(self.path("files")):
+            if name.endswith(".data"):
+                continue
+            try:
+                total += os.lstat(self.path("files", name)).st_size
+            except OSError:
+                pass
+        return total
+
+    def keep_received(self, mid, name, data):
+        """Write a received file as files/ID.EXT; its name there, or None
+        when received files are full."""
+        if self.received_bytes() + len(data) > MAX_RECEIVED_BYTES:
+            return None
+        stored = stored_file_name(mid, name)
+        tmp = self.path("files", f"{stored}.{os.getpid()}.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, self.path("files", stored))
+        return stored
 
     def take_cancels(self):
         box = self.path("cancel")
@@ -287,6 +433,7 @@ class Stores:
         self.LXMF = LXMF
         self.lock = threading.Lock()
         self.heard = {}
+        self.limits = {}
 
     def received_announce(self, destination_hash, announced_identity, app_data):
         try:
@@ -299,12 +446,20 @@ class Stores:
                 return  # a node that says it is not running
             if int(data[5][0]) > MAX_STORE_COST:
                 return  # its stamps would keep this computer busy
+            limit = int(data[3])
         except Exception:
             return
         with self.lock:
             if destination_hash not in self.heard and len(self.heard) >= MAX_STORES:
                 del self.heard[min(self.heard, key=self.heard.get)]
+                self.limits.pop(destination_hash, None)
             self.heard[destination_hash] = time.time()
+            self.limits[destination_hash] = limit
+
+    def limit_bytes(self, destination_hash):
+        """The largest message a store passes on, as it announced it."""
+        with self.lock:
+            return 1000 * self.limits.get(destination_hash, DEFAULT_STORE_LIMIT_KB)
 
     def nearest(self, RNS):
         """The closest store heard in the last hour, the most recent first."""
@@ -352,12 +507,18 @@ class Messenger:
                     rec["state"] = "queued"
                 rec["next_try"] = 0
                 store.save(rec)
+        # Copies of files whose message is finished (stopped in between).
+        for name in os.listdir(store.path("files")):
+            mid = name[:-5] if name.endswith(".data") else None
+            if mid is not None and self.records.get(mid, {}).get("state") not in ("queued", "sent"):
+                store.drop_outgoing(mid)
         self.last_announce = 0.0
         # Store-and-forward (ADR 0019).
         self.local_store_file = local_store
         self.stores = Stores(LXMF)
         RNS.Transport.register_announce_handler(self.stores)
         self.store_in_use = None
+        self.store_is_local = False
         self.to_store = {}
         self.started = time.time()
         self.next_collect = self.started + COLLECT_FIRST
@@ -397,6 +558,10 @@ class Messenger:
             text = ""
         raw = text.encode("utf-8", "replace")[:MAX_TEXT_BYTES]
         mid = "in-" + m.hash.hex()[:40]
+        try:
+            att = attachment(m.fields, self.LXMF)
+        except Exception:
+            att = None
         if not m.signature_validated:
             # The sender's key is not known here yet: ask the network who
             # this is, and check the signature again once it answers.
@@ -418,6 +583,18 @@ class Messenger:
                 "detail": "",
                 "attempts": 0,
             }
+            if att is not None:
+                name, data, others = att
+                rec["file"] = {"name": name, "size": len(data)}
+                stored = self.store.keep_received(mid, name, data)
+                if stored is None:
+                    rec["detail"] = "file not kept: received files are full (64 MB); save or remove some"
+                else:
+                    rec["file"]["data"] = stored
+                if others:
+                    rec["detail"] = (rec["detail"] + "; " if rec["detail"] else "") + (
+                        f"{others} more file(s) in this message were not kept"
+                    )
             self.records[mid] = rec
             self.store.save(rec)
 
@@ -440,11 +617,11 @@ class Messenger:
 
     # --- outgoing --------------------------------------------------------
     def accept_outbox(self):
-        for mid, req in self.store.take_outbox():
+        for mid, req, file_size in self.store.take_outbox():
             with self.lock:
                 if mid in self.records:
                     continue
-                problem = valid_request(req)
+                problem = valid_request(req, file_size)
                 rec = {
                     "id": mid,
                     "direction": "out",
@@ -462,6 +639,10 @@ class Messenger:
                 }
                 if not isinstance(rec["peer"], str) or not ADDRESS.fullmatch(rec["peer"]):
                     rec["peer"] = ""
+                if isinstance(req, dict) and isinstance(req.get("file"), str):
+                    rec["file"] = {"name": clean_file_name(req["file"]), "size": file_size or 0}
+                if problem is not None:
+                    self.store.drop_outgoing(mid)
                 self.records[mid] = rec
                 self.store.save(rec)
 
@@ -472,6 +653,7 @@ class Messenger:
                 if rec and rec.get("direction") == "out" and rec.get("state") in ("queued", "sent"):
                     rec["state"] = "failed"
                     rec["detail"] = "cancelled"
+                    self.store.drop_outgoing(mid)
                     if rec.get("stored"):
                         rec["detail"] = "cancelled; the copy left in a message store may still arrive"
                     self.in_flight.pop(mid, None)
@@ -492,6 +674,7 @@ class Messenger:
             rec["detail"] = "not delivered after 7 days"
             if rec.get("stored"):
                 rec["detail"] += "; the copy left in a message store may still arrive"
+            self.store.drop_outgoing(rec["id"])
             self.store.save(rec)
             return
         recipient = RNS.Identity.recall(peer)
@@ -501,7 +684,7 @@ class Messenger:
             rec["attempts"] += 1
             rec["next_try"] = now + retry_delay(rec["attempts"])
             if not rec.get("stored"):
-                rec["detail"] = "the recipient has not been heard on the network"
+                rec["detail"] = waiting_detail(rec, "the recipient has not been heard on the network")
             self.store.save(rec)
             return
         if now - self.last_announce > ANNOUNCE_BEFORE_SENDING:
@@ -512,9 +695,11 @@ class Messenger:
             rec["next_try"] = now + 2
             return
         m = self.lxmessage(rec, recipient, LXMF.LXMessage.DIRECT)
+        if m is None:
+            return
         rec["attempts"] += 1
         if not rec.get("stored"):
-            rec["detail"] = "trying to reach the recipient"
+            rec["detail"] = waiting_detail(rec, "trying to reach the recipient")
         self.in_flight[rec["id"]] = m
         self.store.save(rec)
         self.router.handle_outbound(m)
@@ -522,7 +707,20 @@ class Messenger:
     def lxmessage(self, rec, recipient, method):
         RNS, LXMF = self.RNS, self.LXMF
         out = RNS.Destination(recipient, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
-        m = LXMF.LXMessage(out, self.dest, rec["text"], desired_method=method)
+        fields = None
+        if isinstance(rec.get("file"), dict):
+            try:
+                with open(self.store.outgoing_data(rec["id"]), "rb") as f:
+                    data = f.read(MAX_FILE_BYTES + 1)
+            except OSError:
+                data = None
+            if data is None or len(data) > MAX_FILE_BYTES:
+                rec["state"], rec["detail"] = "failed", "the copy of the file to send is missing"
+                self.store.drop_outgoing(rec["id"])
+                self.store.save(rec)
+                return None
+            fields = {LXMF.FIELD_FILE_ATTACHMENTS: [[rec["file"]["name"], data]]}
+        m = LXMF.LXMessage(out, self.dest, rec["text"], fields=fields, desired_method=method)
         # The same timestamp, so the same hash, for every copy (older
         # records have none: their creation time).
         ts = rec.get("ts")
@@ -534,6 +732,8 @@ class Messenger:
         """The machine's own store when it runs one, else the nearest heard."""
         local = read_address(self.local_store_file)
         choice = bytes.fromhex(local) if local else self.stores.nearest(self.RNS)
+        # The machine's own store is ours: its limit is known.
+        self.store_is_local = bool(local)
         if choice != self.store_in_use:
             self.store_in_use = choice
             if choice is not None:
@@ -552,8 +752,23 @@ class Messenger:
         if recipient is None:
             # The store cannot encrypt for a key nobody here has heard.
             return
+        size = len(rec.get("text", "").encode("utf-8"))
+        if isinstance(rec.get("file"), dict):
+            size += int(rec["file"].get("size", 0))
+        # Room for LXMF's own fields, signature and encryption.
+        limit = NODE_TRANSFER_LIMIT_KB * 1000 if self.store_is_local else self.stores.limit_bytes(self.store_in_use)
+        too_large = size + 2048 > limit
+        if too_large != bool(rec.get("too_large_for_store")):
+            rec["too_large_for_store"] = too_large
+            if rec["state"] == "queued":
+                rec["detail"] = waiting_detail(rec, "waiting for the recipient")
+            self.store.save(rec)
+        if too_large:
+            return
         rec["next_store_try"] = now + STORE_RETRY
         m = self.lxmessage(rec, recipient, self.LXMF.LXMessage.PROPAGATED)
+        if m is None:
+            return
         self.to_store[rec["id"]] = m
         self.router.handle_outbound(m)
 
@@ -590,6 +805,7 @@ class Messenger:
             rec["state"], rec["detail"] = "delivered", ""
             del self.in_flight[rec["id"]]
             self.to_store.pop(rec["id"], None)
+            self.store.drop_outgoing(rec["id"])
         elif m.state == LXMF.LXMessage.SENT and rec["state"] != "sent":
             rec["state"], rec["detail"] = "sent", "no proof of delivery yet"
         elif m.state in (LXMF.LXMessage.FAILED, getattr(LXMF.LXMessage, "REJECTED", -1)):
@@ -599,7 +815,7 @@ class Messenger:
                 rec["state"] = "sent"
             else:
                 rec["state"] = "queued"
-                rec["detail"] = "the recipient could not be reached; it will be tried again"
+                rec["detail"] = waiting_detail(rec, "the recipient could not be reached; it will be tried again")
         else:
             return
         self.store.save(rec)
@@ -659,6 +875,15 @@ class Messenger:
         )
         for rec in done[: len(self.records) - MAX_STORED]:
             del self.records[rec["id"]]
+            self.store.drop_outgoing(rec["id"])
+            f = rec.get("file")
+            if isinstance(f, dict) and isinstance(f.get("data"), str):
+                name = os.path.basename(f["data"])
+                if name.split(".", 1)[0] == rec["id"]:
+                    try:
+                        os.unlink(self.store.path("files", name))
+                    except OSError:
+                        pass
             try:
                 os.unlink(self.store.message_path(rec["id"]))
             except OSError:
@@ -699,6 +924,7 @@ class Node:
             autopeer_maxdepth=1,
             propagation_cost=NODE_STAMP_COST,
             propagation_cost_flexibility=0,
+            propagation_limit=NODE_TRANSFER_LIMIT_KB,
         )
         self.router.set_message_storage_limit(megabytes=limit_mb)
         self.router.enable_propagation()

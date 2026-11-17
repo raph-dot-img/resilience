@@ -9,7 +9,8 @@
 # user service): a request file in the outbox is delivered to the other
 # machine with its proof; with the other program stopped it waits and
 # arrives later. Last, through the interface on both consoles: people
-# nearby, writing, "delivered" on one screen and the text on the other.
+# nearby, writing, "delivered" on one screen and the text on the other,
+# and a file sent from one screen and saved from the other (ADR 0020).
 #
 # Store-and-forward (ADR 0019): each machine runs a message store; a
 # message for an account that is logged out is left in it, copied to the
@@ -245,6 +246,30 @@ in
         beta.send_chars("On my way\n")
         wait_tty(beta, r"You \[delivered\][^\n]*\n[^\n]*On my way", timeout=120)
         wait_tty(alpha, r"Them \[from them\][^\n]*\n[^\n]*On my way", timeout=60)
+        # A file (ADR 0020): chosen in the picker on alpha, sent as a copy
+        # over the network, saved from beta's screen into ~/Received.
+        alpha.succeed(AS_ALICE + "sh -c 'head -c 200000 /dev/urandom | base64 > ~/water-list.txt'")
+        sent_sum = alpha.succeed("sha256sum < /home/alice/water-list.txt")
+        alpha.send_chars("f")
+        wait_tty(alpha, "CHOOSE THE FILE TO SEND")
+        alpha.send_chars("water-list")
+        wait_tty(alpha, "water-list.txt")
+        alpha.send_key("ret")
+        wait_tty(alpha, "SEND A FILE")
+        alpha.send_chars("List of water points\n")
+        text = wait_tty(
+            alpha,
+            r"You \[delivered\][^\n]*\n[^\n]*List of water points[^\n]*\n[^\n]*\[file\] water-list\.txt",
+            timeout=180,
+        )
+        alpha.fail("find /home/alice/.local/share/resilience/messages/files -type f | grep .")
+        text = wait_tty(beta, r"\[file\] water-list\.txt \(2\d\d KB\)  o open, s save", timeout=60)
+        assert "from them, NOT VERIFIED]" not in text, text
+        beta.send_chars("s")
+        wait_tty(beta, re.escape("Saved as ~/Received/water-list.txt"))
+        assert beta.succeed("sha256sum < /home/alice/Received/water-list.txt") == sent_sum
+        assert beta.succeed("stat -c '%U %a' /home/alice/Received/water-list.txt").strip() == "alice 600"
+        beta.fail("find /home/alice/.local/share/resilience/messages/files -type f | grep .")
         for m in (alpha, beta):
             for _ in range(4):
                 m.send_key("esc")

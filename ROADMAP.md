@@ -92,7 +92,7 @@ Slices 1 to 9 are in `develop`.
 - ✅ Local messaging on by default in the standard edition (off in minimal); live ISO rebuilt and boot-tested with it (2026-11-17)
 - ✅ Store-and-forward for recipients that are away: a message store on every machine with messaging, stores exchange messages on the local network (ADR 0019), tested between two VMs with the sender switched off
 - ✅ Multi-line messages (Ctrl-N for a new line while writing)
-- ⬜ File exchange
+- ✅ File exchange in local messages: one file per message up to 900 KB, received files kept apart and saved on request into ~/Received (ADR 0020)
 - ⬜ Yggdrasil / BATMAN-adv profiles; Tox, signal-cli (documented as unofficial)
 
 ## Phase 7 — Radio and additional applications 🟡

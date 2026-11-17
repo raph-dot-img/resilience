@@ -8,14 +8,18 @@
 //!   messages/ID.json one record per message, written by the program only
 //!   peers.json       addresses heard on the network, with claimed names
 //!   outbox/ID.json   written HERE: a message to send
+//!   outbox/ID.file   written HERE, just before: the copy of a file to send
+//!   files/           received files (ID.EXT), copies being sent (ID.data)
 //!   cancel/ID        written HERE: give up on a waiting message
 //!   contacts.json    written HERE: names the user gave to addresses
 //! ```
 //!
 //! Everything read comes from the network in the end (texts, names):
 //! sizes and counts are bounded, what does not parse is skipped, and
-//! [`clean_line`] / [`clean_text`] make text safe to draw. Nothing here
-//! touches the network or starts a program.
+//! [`clean_line`] / [`clean_text`] make text safe to draw. Received files
+//! are named by message id; the name that came with one is only shown,
+//! and made safe ([`safe_file_name`]) when the user saves it (ADR 0020).
+//! Nothing here touches the network or starts a program.
 
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
@@ -28,6 +32,13 @@ use serde::Deserialize;
 
 /// Longest message text, in bytes (the program refuses more).
 pub const MAX_TEXT_BYTES: usize = 8 * 1024;
+/// Largest file sent in a message (ADR 0020): the whole message stays
+/// under LXMF's 1000 KB delivery limit.
+pub const MAX_SEND_BYTES: u64 = 900 * 1000;
+/// Folder of the home where received files are saved.
+pub const RECEIVED_DIR: &str = "Received";
+/// Longest file name kept, in characters.
+pub const MAX_FILE_NAME_CHARS: usize = 100;
 /// Largest record or list file read.
 pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
 /// Most records read (the program keeps at most 5,000 finished ones).
@@ -163,6 +174,84 @@ impl State {
     }
 }
 
+/// The file of a message (ADR 0020).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct FileInfo {
+    /// The name it came (or was sent) with: only shown, never a path.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub size: u64,
+    /// Incoming: its name in `files/`, absent if it was not kept.
+    #[serde(default)]
+    pub data: Option<String>,
+}
+
+impl FileInfo {
+    /// The name to show: cleaned, never empty.
+    pub fn shown(&self) -> String {
+        let n = clean_line(&self.name, MAX_FILE_NAME_CHARS);
+        if n.is_empty() { "file".into() } else { n }
+    }
+}
+
+/// "300 KB", "12 bytes", "1.2 MB": decimal units, as LXMF and the 900 KB
+/// limit count them.
+pub fn size_text(n: u64) -> String {
+    match n {
+        0..1000 => format!("{n} bytes"),
+        1000..1_000_000 => format!("{} KB", n.div_ceil(1000)),
+        _ => format!("{:.1} MB", n as f64 / 1e6),
+    }
+}
+
+/// A name that is safe to create in a folder: one line, no `/`, not
+/// hidden, not taken for an option, at most [`MAX_FILE_NAME_CHARS`].
+pub fn safe_file_name(name: &str) -> String {
+    let n = clean_line(name, MAX_FILE_NAME_CHARS).replace(['/', '\\'], "_");
+    let n = n.trim().to_string();
+    if n.is_empty() || n == "." || n == ".." {
+        return "file".into();
+    }
+    if n.starts_with('.') || n.starts_with('-') || n.starts_with('~') {
+        return format!("_{n}");
+    }
+    n
+}
+
+/// `name`, then `stem (2).ext`, `stem (3).ext`...
+fn numbered(name: &str, n: usize) -> String {
+    if n < 2 {
+        return name.to_string();
+    }
+    // Before a plain extension: `list (2).pdf`.
+    match name.rfind('.') {
+        Some(i)
+            if i > 0
+                && (2..=9).contains(&(name.len() - i))
+                && name[i + 1..].bytes().all(|b| b.is_ascii_alphanumeric()) =>
+        {
+            format!("{} ({n}){}", &name[..i], &name[i..])
+        }
+        _ => format!("{name} ({n})"),
+    }
+}
+
+fn valid_data_name(id: &str, data: &str) -> bool {
+    match data.strip_prefix(id) {
+        Some("") => true,
+        // `.data` is a copy being sent, never a received file.
+        Some(rest) => rest.strip_prefix('.').is_some_and(|ext| {
+            ext != "data"
+                && (1..=8).contains(&ext.len())
+                && ext
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        }),
+        None => false,
+    }
+}
+
 /// One message, as the program recorded it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Record {
@@ -185,6 +274,9 @@ pub struct Record {
     /// network for the recipient to collect (ADR 0019).
     #[serde(default)]
     pub stored: bool,
+    /// A file sent or received with it (ADR 0020).
+    #[serde(default)]
+    pub file: Option<FileInfo>,
 }
 
 impl Record {
@@ -238,6 +330,10 @@ pub enum SendError {
     Empty,
     #[error("the message is too long ({0} bytes; at most {MAX_TEXT_BYTES})")]
     TooLong(usize),
+    #[error("the file is too large ({}; at most 900 KB): use a USB stick", size_text(*.0))]
+    FileTooLarge(u64),
+    #[error("this is not a file that can be sent (a folder, a device or a link?)")]
+    NotAFile,
     #[error("this is your own address")]
     Own,
     #[error("could not save the message: {0}")]
@@ -257,6 +353,14 @@ fn read_bounded(path: &Path) -> Option<Vec<u8>> {
     let mut buf = Vec::new();
     f.take(MAX_FILE_BYTES + 1).read_to_end(&mut buf).ok()?;
     (buf.len() as u64 <= MAX_FILE_BYTES).then_some(buf)
+}
+
+/// A new message id: time, nanoseconds, process.
+fn new_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    format!("m{}-{:09}-{}", now_secs(), nanos, std::process::id())
 }
 
 fn now_secs() -> u64 {
@@ -348,6 +452,14 @@ impl Store {
             };
             let peer_ok = rec.peer.is_empty() || valid_address(&rec.peer);
             if rec.id == id && peer_ok && rec.text.len() <= 4 * MAX_TEXT_BYTES {
+                let mut rec = rec;
+                if let Some(f) = &mut rec.file
+                    && f.data
+                        .as_deref()
+                        .is_some_and(|d| !valid_data_name(&rec.id, d))
+                {
+                    f.data = None;
+                }
                 out.push(rec);
             }
             if out.len() >= MAX_RECORDS {
@@ -433,14 +545,128 @@ impl Store {
         }
         let io = |e: io::Error| SendError::Io(e.to_string());
         let dir = self.dir("outbox").map_err(io)?;
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.subsec_nanos());
-        let id = format!("m{}-{:09}-{}", now_secs(), nanos, std::process::id());
+        let id = new_id();
         let body = serde_json::json!({ "to": to, "text": text });
         let data = serde_json::to_vec(&body).map_err(|e| SendError::Io(e.to_string()))?;
         write_new(&dir.join(format!("{id}.json")), &data).map_err(io)?;
         Ok(id)
+    }
+
+    /// Whether `path` can be sent: a regular file of at most
+    /// [`MAX_SEND_BYTES`]. Its size.
+    pub fn check_file(path: &Path) -> Result<u64, SendError> {
+        let meta = fs::metadata(path).map_err(|e| SendError::Io(e.to_string()))?;
+        if !meta.is_file() {
+            return Err(SendError::NotAFile);
+        }
+        if meta.len() > MAX_SEND_BYTES {
+            return Err(SendError::FileTooLarge(meta.len()));
+        }
+        Ok(meta.len())
+    }
+
+    /// Ask the program to send the file at `path` (a copy of it, taken
+    /// now) with an optional `text`. Returns the message's id.
+    pub fn queue_file(
+        &self,
+        to: &str,
+        text: &str,
+        path: &Path,
+        own: Option<&str>,
+    ) -> Result<String, SendError> {
+        if !valid_address(to) {
+            return Err(SendError::BadAddress);
+        }
+        if own == Some(to) {
+            return Err(SendError::Own);
+        }
+        let text = text.trim_end();
+        if text.len() > MAX_TEXT_BYTES {
+            return Err(SendError::TooLong(text.len()));
+        }
+        Store::check_file(path)?;
+        let io = |e: io::Error| SendError::Io(e.to_string());
+        // Read through one descriptor, bounded: the file may change.
+        let mut data = Vec::new();
+        let f = fs::File::open(path).map_err(io)?;
+        if !f.metadata().map_err(io)?.is_file() {
+            return Err(SendError::NotAFile);
+        }
+        f.take(MAX_SEND_BYTES + 1)
+            .read_to_end(&mut data)
+            .map_err(io)?;
+        if data.len() as u64 > MAX_SEND_BYTES {
+            return Err(SendError::FileTooLarge(data.len() as u64));
+        }
+        let name = path
+            .file_name()
+            .map(|n| clean_line(&n.to_string_lossy(), MAX_FILE_NAME_CHARS))
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "file".into());
+        let dir = self.dir("outbox").map_err(io)?;
+        let id = new_id();
+        // The file first: the program takes it with its request.
+        let copy = dir.join(format!("{id}.file"));
+        let written = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&copy)
+            .and_then(|mut f| {
+                f.write_all(&data)?;
+                f.sync_all()
+            });
+        if let Err(e) = written {
+            let _ = fs::remove_file(&copy);
+            return Err(io(e));
+        }
+        let body = serde_json::json!({ "to": to, "text": text, "file": name });
+        let json = serde_json::to_vec(&body).map_err(|e| SendError::Io(e.to_string()))?;
+        if let Err(e) = write_new(&dir.join(format!("{id}.json")), &json) {
+            let _ = fs::remove_file(&copy);
+            return Err(io(e));
+        }
+        Ok(id)
+    }
+
+    /// The received file of `rec`, if it is (still) here.
+    pub fn received_file(&self, rec: &Record) -> Option<PathBuf> {
+        let data = rec.file.as_ref()?.data.as_deref()?;
+        if rec.direction != Direction::In || !valid_data_name(&rec.id, data) {
+            return None;
+        }
+        let p = self.root.join("files").join(data);
+        fs::symlink_metadata(&p)
+            .ok()
+            .filter(|m| m.is_file())
+            .map(|_| p)
+    }
+
+    /// Move the received file of `rec` into `dest` (created if needed)
+    /// under its own name made safe, never replacing a file: `NAME (2)`
+    /// and so on. Where it went.
+    pub fn save_received(&self, rec: &Record, dest: &Path) -> io::Result<PathBuf> {
+        let from = self
+            .received_file(rec)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "the file is no longer here"))?;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dest)?;
+        let name = safe_file_name(&rec.file.as_ref().map(FileInfo::shown).unwrap_or_default());
+        for n in 1..=100 {
+            let to = dest.join(numbered(&name, n));
+            match crate::crypto::rename_noreplace(&from, &to) {
+                Ok(()) => return Ok(to),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "too many files with this name",
+        ))
     }
 
     /// Ask the program to give up on a waiting message.
@@ -835,6 +1061,124 @@ mod tests {
             assert!(s.cancel(bad).is_err(), "{bad}");
         }
         let _ = fs::remove_dir_all(&s.root);
+    }
+
+    #[test]
+    fn files_are_sent_as_copies_and_saved_under_safe_names() {
+        let s = temp("files");
+        let src = s.root.join("Liste des besoins.pdf");
+        fs::write(&src, b"%PDF-1.4 list").expect("w");
+        // Refused: a folder, too large, a bad address; nothing written.
+        assert_eq!(s.queue_file(B, "", &s.root, None), Err(SendError::NotAFile));
+        let big = s.root.join("big");
+        fs::write(&big, vec![0u8; MAX_SEND_BYTES as usize + 1]).expect("w");
+        assert_eq!(
+            s.queue_file(B, "", &big, None),
+            Err(SendError::FileTooLarge(MAX_SEND_BYTES + 1))
+        );
+        assert!(
+            SendError::FileTooLarge(MAX_SEND_BYTES + 1)
+                .to_string()
+                .contains("900 KB")
+        );
+        assert_eq!(
+            s.queue_file("x", "", &src, None),
+            Err(SendError::BadAddress)
+        );
+        assert!(!s.root.join("outbox").exists());
+
+        let id = s.queue_file(B, "The list\n", &src, Some(A)).expect("queue");
+        let out = s.root.join("outbox");
+        assert_eq!(
+            fs::read(out.join(format!("{id}.file"))).expect("copy"),
+            b"%PDF-1.4 list"
+        );
+        let v: serde_json::Value =
+            serde_json::from_slice(&fs::read(out.join(format!("{id}.json"))).expect("r"))
+                .expect("json");
+        assert_eq!(v["file"], "Liste des besoins.pdf");
+        assert_eq!(v["text"], "The list");
+        assert_eq!(
+            fs::metadata(out.join(format!("{id}.file")))
+                .expect("m")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        // Received: kept under the message id; the name is only shown.
+        fs::create_dir_all(s.root.join("files")).expect("mkdir");
+        fs::write(s.root.join("files/in-1.pdf"), b"data").expect("w");
+        record(
+            &s,
+            "in-1",
+            &format!(
+                r#"{{"id":"in-1","direction":"in","peer":"{B}","text":"","state":"received","file":{{"name":".bashrc\u001b[2J","size":4,"data":"in-1.pdf"}}}}"#
+            ),
+        );
+        record(
+            &s,
+            "in-2",
+            &format!(
+                r#"{{"id":"in-2","direction":"in","peer":"{B}","state":"received","file":{{"name":"x","size":4,"data":"../../.ssh/id"}}}}"#
+            ),
+        );
+        let recs = s.records();
+        let r1 = recs.iter().find(|r| r.id == "in-1").expect("in-1");
+        let r2 = recs.iter().find(|r| r.id == "in-2").expect("in-2");
+        assert_eq!(r2.file.as_ref().and_then(|f| f.data.clone()), None);
+        assert!(s.received_file(r2).is_none());
+        assert_eq!(
+            r1.file.as_ref().map(FileInfo::shown).as_deref(),
+            Some(".bashrc [2J")
+        );
+        assert_eq!(s.received_file(r1), Some(s.root.join("files/in-1.pdf")));
+
+        let dest = s.root.join("Received");
+        fs::create_dir_all(&dest).expect("mkdir");
+        fs::write(dest.join("_.bashrc [2J"), b"mine").expect("w");
+        let saved = s.save_received(r1, &dest).expect("save");
+        assert_eq!(saved, dest.join("_.bashrc [2J (2)"));
+        assert_eq!(fs::read(&saved).expect("r"), b"data");
+        assert_eq!(fs::read(dest.join("_.bashrc [2J")).expect("r"), b"mine");
+        // Moved: the space is freed, and it cannot be saved twice.
+        assert!(s.received_file(r1).is_none());
+        assert!(s.save_received(r1, &dest).is_err());
+        let _ = fs::remove_dir_all(&s.root);
+    }
+
+    #[test]
+    fn file_names_and_sizes() {
+        assert_eq!(safe_file_name("report.pdf"), "report.pdf");
+        assert_eq!(safe_file_name("../../etc/passwd"), "_.._.._etc_passwd");
+        assert_eq!(safe_file_name("-rf"), "_-rf");
+        assert_eq!(safe_file_name("~x"), "_~x");
+        assert_eq!(safe_file_name(""), "file");
+        assert_eq!(safe_file_name(".."), "file");
+        assert_eq!(safe_file_name("a\u{202E}b\x07"), "ab");
+        assert_eq!(safe_file_name(&"x".repeat(300)).len(), MAX_FILE_NAME_CHARS);
+        assert_eq!(numbered("a.pdf", 1), "a.pdf");
+        assert_eq!(numbered("a.tar.gz", 2), "a.tar (2).gz");
+        assert_eq!(numbered(".x", 3), ".x (3)");
+        assert_eq!(numbered("noext", 2), "noext (2)");
+        assert_eq!(numbered("_.bashrc x", 2), "_.bashrc x (2)");
+        assert!(valid_data_name("in-1", "in-1"));
+        assert!(valid_data_name("in-1", "in-1.pdf"));
+        for bad in [
+            "in-1.data",
+            "in-1.PDF",
+            "in-1.",
+            "in-1.toolongext",
+            "in-12",
+            "x/in-1",
+            "in-1.p/f",
+        ] {
+            assert!(!valid_data_name("in-1", bad), "{bad}");
+        }
+        assert_eq!(size_text(12), "12 bytes");
+        assert_eq!(size_text(300_000), "300 KB");
+        assert_eq!(size_text(1_200_000), "1.2 MB");
     }
 
     #[test]
