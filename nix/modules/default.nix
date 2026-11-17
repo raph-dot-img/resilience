@@ -13,6 +13,7 @@
     ./networking.nix
     ./comms.nix
     ./mesh.nix
+    ./installer.nix
     ./boot.nix
     ./power.nix
     ./applications

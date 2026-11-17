@@ -136,6 +136,10 @@ Constraints that shape the design:
   the minimal one).
 - `resilience-admin` gains local accounts; vm-admin keeps testing
   declared ones, vm-install tests local ones.
+- ADR 0012 counts local accounts: an installed system is never
+  "Ultra-Stable only" (its accounts are unknown at build time and may be
+  raised), so user namespaces and the Nix sandbox stay on there
+  (`security-invariants` checks it).
 - Host name, time zone and file system choices are fixed for now.
 - The live system gains a polkit action with allow_active = yes for a
   destructive operation. It is limited to the live ISO, to the person at

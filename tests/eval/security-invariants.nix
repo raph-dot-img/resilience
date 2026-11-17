@@ -108,12 +108,23 @@ let
           !(
             lib.all (u: u.mode == "ultra-stable") (lib.attrValues c.resilience.users)
             && lib.all (n: c.resilience.users ? ${n}) (lib.attrNames humans)
+            && !c.resilience.localAccounts
           )
           || (
             (c.boot.kernel.sysctl."user.max_user_namespaces" or null) == 0
             # Read by admin.nix as `ultra_stable_only` in admin.toml.
             && !c.resilience.security.userNamespaces
           );
+        # ADR 0022: installed systems have no declared accounts; theirs are
+        # created by the installer, may be raised, and need the sandbox.
+        "installed systems keep user namespaces and the Nix sandbox" =
+          !c.resilience.localAccounts
+          || (c.resilience.security.userNamespaces && c.nix.settings.sandbox != false);
+        "installed systems have no autologin and keep root locked" =
+          !c.resilience.localAccounts
+          || (autologin == null && c.resilience.users == { } && root.hashedPassword == "!");
+        "the installer exists on live systems only" =
+          !(c.resilience.installer.enable && c.resilience.localAccounts);
         # ADR 0013: packs are written by an unprivileged system account only.
         # ADR 0015: like age and minisign, GnuPG asks every time; no setuid
         # crypto helper exists.

@@ -17,6 +17,7 @@ pub mod config;
 pub mod crypto;
 pub mod files;
 pub mod handbook;
+pub mod install;
 pub mod keyboard;
 pub mod launch;
 pub mod manpage;

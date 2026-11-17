@@ -28,6 +28,55 @@
           ++ modules;
         };
 
+      # The systems resilience-install copies (ADR 0022), prebuilt and
+      # carried by the live ISO of the same edition.
+      installedSystems = lib.listToAttrs (
+        lib.concatMap
+          (
+            edition:
+            lib.concatMap
+              (
+                boot:
+                map
+                  (
+                    disk:
+                    lib.nameValuePair "installed-${edition}-${boot}-${disk}" (mkSystem [
+                      ./nix/profiles/${edition}.nix
+                      (import ./nix/systems/installed.nix {
+                        inherit boot;
+                        encrypted = disk == "luks";
+                      })
+                    ])
+                  )
+                  [
+                    "plain"
+                    "luks"
+                  ]
+              )
+              [
+                "uefi"
+                "bios"
+              ]
+          )
+          [
+            "standard"
+            "minimal"
+          ]
+      );
+
+      # The live ISO of an edition carries that edition's installed systems.
+      installerFor = edition: {
+        resilience.installer = {
+          enable = true;
+          systems = lib.genAttrs [ "uefi_plain" "uefi_luks" "bios_plain" "bios_luks" ] (
+            n:
+            installedSystems."installed-${edition}-${
+              lib.replaceStrings [ "_" ] [ "-" ] n
+            }".config.system.build.toplevel
+          );
+        };
+      };
+
       vmTest = file: pkgs.testers.runNixOSTest (import file { inherit self; });
 
       # Map packs (ADR 0016 §2), for build machines: not in any system.
@@ -49,16 +98,20 @@
         live-standard = mkSystem [
           ./nix/profiles/standard.nix
           ./nix/systems/live-iso.nix
+          (installerFor "standard")
         ];
         live-minimal = mkSystem [
           ./nix/profiles/minimal.nix
           ./nix/systems/live-iso.nix
+          (installerFor "minimal")
         ];
         dev-vm = mkSystem [
           ./nix/profiles/standard.nix
           ./nix/systems/dev-vm.nix
         ];
-      };
+      }
+      # Installed systems (ADR 0022): installed-<edition>-<uefi|bios>-<plain|luks>.
+      // installedSystems;
 
       packages.${system} = {
         inherit (pkgs)
@@ -109,7 +162,8 @@
         security-invariants = pkgs.callPackage ./tests/eval/security-invariants.nix {
           configurations = {
             inherit (self.nixosConfigurations) live-standard live-minimal dev-vm;
-          };
+          }
+          // installedSystems;
         };
         # Evaluates the ISO configurations without building the images.
         # (Context is discarded on purpose: this check must not build them.)

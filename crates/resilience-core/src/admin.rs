@@ -118,6 +118,10 @@ pub struct AdminConfig {
     /// The mesh unit `set-mesh` starts and stops; absent: no mesh here.
     #[serde(default)]
     pub mesh_unit: Option<String>,
+    /// Accounts created on this machine rather than declared in Nix (the
+    /// installer's, ADR 0022): root-owned, world-readable, names only.
+    #[serde(default)]
+    pub local_accounts_file: Option<PathBuf>,
 }
 
 impl AdminConfig {
@@ -139,6 +143,7 @@ impl AdminConfig {
         .into_iter()
         .chain(cfg.loadkeys.as_ref())
         .chain(cfg.systemctl.as_ref())
+        .chain(cfg.local_accounts_file.as_ref())
         {
             if !p.is_absolute() {
                 return Err(format!("program path must be absolute: {}", p.display()));
@@ -148,9 +153,81 @@ impl AdminConfig {
     }
 
     pub fn load() -> Result<AdminConfig, String> {
-        let text = std::fs::read_to_string(ADMIN_CONFIG_PATH)
-            .map_err(|e| format!("{ADMIN_CONFIG_PATH}: {e}"))?;
-        AdminConfig::parse(&text)
+        Self::read(std::path::Path::new(ADMIN_CONFIG_PATH))
+    }
+
+    /// Parse the configuration at `path` and add the local accounts.
+    pub fn read(path: &std::path::Path) -> Result<AdminConfig, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut cfg = AdminConfig::parse(&text)?;
+        if let Some(file) = cfg.local_accounts_file.clone() {
+            match std::fs::read_to_string(&file) {
+                Ok(t) => cfg
+                    .add_local_accounts(&t)
+                    .map_err(|e| format!("{} is damaged: {e}", file.display()))?,
+                // No account was ever created on this machine.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{}: {e}", file.display())),
+            }
+        }
+        Ok(cfg)
+    }
+
+    /// Add the accounts of a local accounts file (ADR 0022). Their base
+    /// ("declared") mode is Ultra-Stable: any other mode is an override in
+    /// the state file, changed with `set-mode` like any other. An account
+    /// declared in Nix keeps its declaration.
+    pub fn add_local_accounts(&mut self, text: &str) -> Result<(), String> {
+        let local = LocalAccounts::parse(text)?;
+        for (name, a) in local.users {
+            self.users.entry(name).or_insert(ManagedUser {
+                declared_mode: Mode::UltraStable,
+                description: a.description,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// One account created on this machine (by the installer).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalAccount {
+    #[serde(default)]
+    pub description: String,
+}
+
+/// `/var/lib/resilience/accounts.toml`: accounts not declared in Nix.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalAccounts {
+    #[serde(default)]
+    pub users: BTreeMap<String, LocalAccount>,
+}
+
+impl LocalAccounts {
+    pub fn parse(text: &str) -> Result<LocalAccounts, String> {
+        let a: LocalAccounts = toml::from_str(text).map_err(|e| e.to_string())?;
+        if let Some(bad) = a.users.keys().find(|n| !valid_user_name(n)) {
+            return Err(format!("invalid user name: {bad:?}"));
+        }
+        if let Some((n, _)) = a
+            .users
+            .iter()
+            .find(|(_, u)| u.description.chars().any(|c| c.is_control() || c == ':'))
+        {
+            return Err(format!("invalid description for {n:?}"));
+        }
+        Ok(a)
+    }
+
+    pub fn to_toml(&self) -> String {
+        let mut s = String::from(
+            "# Accounts created on this computer (ADR 0022). Their security modes are\n\
+             # in modes.toml and change with resilience-admin set-mode.\n",
+        );
+        s.push_str(&toml::to_string(self).unwrap_or_default());
+        s
     }
 }
 
@@ -593,6 +670,7 @@ mod tests {
             keymaps: Vec::new(),
             systemctl: None,
             mesh_unit: None,
+            local_accounts_file: None,
             users: users
                 .iter()
                 .map(|(n, m)| {
@@ -606,6 +684,62 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn local_accounts_start_ultra_stable_and_take_overrides() {
+        let mut c = cfg(&[("carol", Mode::Advanced)], None);
+        let mut local = LocalAccounts::default();
+        local.users.insert(
+            "raph".into(),
+            LocalAccount {
+                description: "Raph".into(),
+            },
+        );
+        // A local file cannot change a declared account.
+        local.users.insert("carol".into(), LocalAccount::default());
+        let text = local.to_toml();
+        assert_eq!(LocalAccounts::parse(&text).expect("round trip"), local);
+        c.add_local_accounts(&text).expect("valid");
+        assert_eq!(c.users["raph"].declared_mode, Mode::UltraStable);
+        assert_eq!(c.users["carol"].declared_mode, Mode::Advanced);
+        assert_eq!(c.users["raph"].description, "Raph");
+
+        // The installer records raph's mode as an override.
+        let mut s = ModeState::default();
+        let ch = plan_set_mode(&c, &s, "raph", Mode::Advanced).expect("allowed");
+        record(
+            &mut s,
+            &c,
+            &ch,
+            "resilience-install",
+            "2026-11-17T00:00:00Z",
+        );
+        assert_eq!(
+            effective_mode(&c, &s, "raph"),
+            Some((Mode::Advanced, Source::Override))
+        );
+        assert!(stale_overrides(&c, &s).is_empty());
+        // carol can now be demoted: raph administers too.
+        assert!(plan_set_mode(&c, &s, "carol", Mode::Stable).is_ok());
+    }
+
+    #[test]
+    fn local_accounts_reject_bad_input() {
+        for bad in [
+            "[users.Root]\n",
+            "[users.\"a b\"]\n",
+            "[users.x]\ndescription = \"a:b\"\n",
+            "[users.x]\ndescription = \"a\\nb\"\n",
+            "[users.x]\nmode = \"advanced\"\n",
+            "users = 3\n",
+        ] {
+            assert!(LocalAccounts::parse(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(
+            LocalAccounts::parse("").expect("empty"),
+            LocalAccounts::default()
+        );
     }
 
     #[test]

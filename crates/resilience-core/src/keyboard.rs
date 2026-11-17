@@ -33,6 +33,9 @@ pub struct KeyboardConfig {
     pub default: String,
     /// The layouts offered in the interface (the default among them).
     pub layouts: Vec<Layout>,
+    /// Installed systems (ADR 0022): a root-owned file holding the layout
+    /// chosen when installing, which then replaces `default`.
+    pub state_file: Option<std::path::PathBuf>,
 }
 
 impl Default for KeyboardConfig {
@@ -43,6 +46,7 @@ impl Default for KeyboardConfig {
                 id: "us".into(),
                 label: "English (US, QWERTY)".into(),
             }],
+            state_file: None,
         }
     }
 }
@@ -59,6 +63,34 @@ pub fn is_valid_id(id: &str) -> bool {
 }
 
 impl KeyboardConfig {
+    /// Apply the content of the state file (`KEYMAP=<id>`, the syntax of
+    /// vconsole.conf, which the initrd reads as an environment file): the
+    /// system layout becomes that one if it is offered and valid. Returns
+    /// whether it did.
+    pub fn apply_state(&mut self, text: &str) -> bool {
+        let Some(id) = parse_state(text) else {
+            return false;
+        };
+        if self.find(id).is_some() {
+            self.default = id.to_string();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Read the state file, if this system has one (missing or unusable:
+    /// the built-in layout stays, as at the login prompts).
+    pub fn read_state(&mut self) {
+        if let Some(text) = self
+            .state_file
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+        {
+            self.apply_state(&text);
+        }
+    }
+
     /// The listed layout with this name.
     pub fn find(&self, id: &str) -> Option<&Layout> {
         self.layouts.iter().find(|l| l.id == id)
@@ -77,6 +109,18 @@ impl KeyboardConfig {
     pub fn label<'a>(&'a self, id: &'a str) -> &'a str {
         self.find(id).map_or(id, |l| l.label.as_str())
     }
+}
+
+/// The layout named by a state file: exactly one line `KEYMAP=<valid id>`.
+pub fn parse_state(text: &str) -> Option<&str> {
+    let line = text.strip_suffix('\n').unwrap_or(text);
+    let id = line.strip_prefix("KEYMAP=")?;
+    is_valid_id(id).then_some(id)
+}
+
+/// The content of a state file naming `id`.
+pub fn state_text(id: &str) -> String {
+    format!("KEYMAP={id}\n")
 }
 
 /// `loadkeys` arguments for a valid keymap name; `None` otherwise. Which
@@ -113,6 +157,28 @@ mod tests {
                     label: "listed but invalid".into(),
                 },
             ],
+            state_file: None,
+        }
+    }
+
+    #[test]
+    fn state_replaces_the_default_only_with_an_offered_layout() {
+        let mut c = cfg();
+        assert!(c.apply_state(&state_text("fr")));
+        assert_eq!(c.default, "fr");
+        for bad in [
+            "KEYMAP=de",
+            "KEYMAP=-x",
+            "",
+            "fr",
+            "KEYMAP=fr us",
+            "KEYMAP=../fr",
+            "KEYMAP=fr\nKEYMAP=us\n",
+            " KEYMAP=fr",
+        ] {
+            let mut c = cfg();
+            assert!(!c.apply_state(bad), "{bad:?}");
+            assert_eq!(c.default, "us");
         }
     }
 

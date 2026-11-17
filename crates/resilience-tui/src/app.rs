@@ -39,6 +39,8 @@ mod chat_ui;
 mod crypto_ui;
 #[path = "files_ui.rs"]
 mod files_ui;
+#[path = "install_ui.rs"]
+mod install_ui;
 #[path = "library.rs"]
 mod library;
 pub use chat_ui::now_secs as chat_now;
@@ -47,6 +49,9 @@ pub use chat_ui::{ChatInput, ChatRow, NearbyRow};
 pub use crypto_ui::CRYPTO_LABEL;
 pub use crypto_ui::{Choice, EncryptTarget, KeyRow, Pick, Recipient};
 pub use files_ui::Table;
+#[cfg(test)]
+pub use install_ui::INSTALL_LABEL;
+pub use install_ui::{InstallForm, InstallInput, InstallRow};
 #[cfg(test)]
 pub use library::{ItemPlace, stick_items};
 pub use library::{LibItem, PackRow, PacksScreen};
@@ -85,6 +90,10 @@ pub struct Paths {
     pub comms_client: PathBuf,
     /// Written by the mesh service while the mesh is on (ADR 0021).
     pub mesh_devices: PathBuf,
+    /// The installer's configuration: only on live systems (ADR 0022).
+    pub install_config: PathBuf,
+    /// Present when the computer started with UEFI.
+    pub efi: PathBuf,
 }
 
 impl Default for Paths {
@@ -99,6 +108,8 @@ impl Default for Paths {
             packs_config: resilience_core::packs::PACKS_CONFIG_PATH.into(),
             comms_client: "/run/resilience-reticulum/client/config".into(),
             mesh_devices: "/run/resilience-mesh/devices".into(),
+            install_config: resilience_core::install::INSTALL_CONFIG_PATH.into(),
+            efi: "/sys/firmware/efi".into(),
         }
     }
 }
@@ -192,6 +203,8 @@ pub enum Builtin {
     Users,
     Recovery,
     Backup,
+    /// Install Resilience on this computer (live system only, ADR 0022).
+    Install,
     Help,
     Shell,
     Logout,
@@ -200,7 +213,7 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 33] = [
+    pub const ALL: [Builtin; 34] = [
         Builtin::Handbook,
         Builtin::Files,
         Builtin::Manual,
@@ -229,6 +242,7 @@ impl Builtin {
         Builtin::Settings,
         Builtin::Clock,
         Builtin::Users,
+        Builtin::Install,
         Builtin::Help,
         Builtin::Shell,
         Builtin::Logout,
@@ -266,6 +280,7 @@ impl Builtin {
             Builtin::Users => "Users & security modes",
             Builtin::Recovery => "Recovery & diagnostics",
             Builtin::Backup => "Backups & USB sticks",
+            Builtin::Install => "Install Resilience on this computer",
             Builtin::Help => "Help & keyboard shortcuts",
             Builtin::Shell => "Terminal shell",
             Builtin::Logout => "Log out",
@@ -389,6 +404,12 @@ impl Builtin {
                 "Save your files, encrypted with a passphrase, to a USB stick; check a backup; \
                  restore one into a new folder. Also ejects sticks safely."
             }
+            Builtin::Install => {
+                "Copy Resilience onto this computer's disk, so that your files, messages \
+                 and settings are kept. Choose the disk, encryption, keyboard and accounts; \
+                 nothing is changed before you confirm by typing the disk's name. The \
+                 whole disk is erased."
+            }
             Builtin::Help => "How to move around the interface and what each key does.",
             Builtin::Shell => "An unprivileged command-line shell. Type 'exit' to return here.",
             Builtin::Logout => "End this session.",
@@ -498,6 +519,9 @@ impl Builtin {
             Builtin::Backup => {
                 "backup backups restore usb stick key removable media drive disk eject copy save sd card"
             }
+            Builtin::Install => {
+                "install installer installation disk hard drive ssd setup keep permanent"
+            }
             Builtin::Shell => "terminal command bash console",
             Builtin::PowerOff => "shutdown halt",
             Builtin::Reboot => "reboot",
@@ -543,6 +567,7 @@ pub enum HelpTopic {
     Chat,
     Files,
     Crypto,
+    Install,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -555,6 +580,21 @@ pub enum SearchHit {
 #[derive(Debug)]
 pub enum View {
     Home {
+        list: ListState,
+    },
+    /// The installer's answers (ADR 0022).
+    Install {
+        form: Box<InstallForm>,
+        list: ListState,
+    },
+    /// Whole disks to install on.
+    InstallDisks {
+        disks: Vec<resilience_core::install::Disk>,
+        error: Option<String>,
+        list: ListState,
+    },
+    /// Keyboard layouts the installed system may use.
+    InstallLayouts {
         list: ListState,
     },
     Category {
@@ -794,6 +834,12 @@ pub enum Modal {
     SetTime {
         value: String,
         zone: String,
+        error: Option<String>,
+    },
+    /// The installer: an account name, a full name, or the disk's name.
+    InstallText {
+        field: InstallInput,
+        value: String,
         error: Option<String>,
     },
 }
@@ -1154,6 +1200,9 @@ impl App {
             View::Network { .. } => HelpTopic::Network,
             View::Settings { .. } => HelpTopic::Settings,
             View::Users { .. } | View::ChooseMode { .. } => HelpTopic::Users,
+            View::Install { .. } | View::InstallDisks { .. } | View::InstallLayouts { .. } => {
+                HelpTopic::Install
+            }
             View::Recovery { .. } | View::Generations { .. } => HelpTopic::Recovery,
             View::Media {
                 purpose: MediaPurpose::ExportKeys,
@@ -1250,11 +1299,18 @@ impl App {
         ) {
             return self.chat_key(view, key);
         }
+        if matches!(
+            view,
+            View::Install { .. } | View::InstallDisks { .. } | View::InstallLayouts { .. }
+        ) {
+            return self.install_key(view, key);
+        }
         let mut next: Option<View> = None;
         let mut effect = Effect::None;
         match &mut view {
-            // Handled by chat_key above.
+            // Handled by chat_key and install_key above.
             View::Chats { .. } | View::Nearby { .. } | View::Chat { .. } => {}
+            View::Install { .. } | View::InstallDisks { .. } | View::InstallLayouts { .. } => {}
             View::Home { list } => {
                 let cats = self.home_categories();
                 if let Some(i) = digit(key) {
@@ -1964,6 +2020,7 @@ impl App {
                 self.open_mesh();
                 (None, Effect::None)
             }
+            Builtin::Install => (self.open_install(), Effect::None),
             Builtin::MapFiles => (self.open_map_files(), Effect::None),
             Builtin::Backup => {
                 let (volumes, error) = self.load_volumes();
@@ -2334,6 +2391,11 @@ impl App {
             } => self.recipients_key(target, rows, ticked, sel, key),
             Modal::ExpectedSum { file, value, .. } => self.expected_sum_key(file, value, key),
             Modal::ChatInput { kind, value, error } => self.chat_input_key(kind, value, error, key),
+            Modal::InstallText {
+                field,
+                value,
+                error,
+            } => self.install_text_key(field, value, error, key),
             Modal::PackSearch { item, mut value } => match key.code {
                 KeyCode::Esc => Effect::None,
                 KeyCode::Enter if !value.trim().is_empty() => {
@@ -2538,10 +2600,7 @@ impl App {
     /// Managed accounts, from the root-owned helper configuration, the
     /// recorded mode changes and the live group database. Read-only.
     pub fn load_accounts(&self) -> (Vec<AccountRow>, Option<String>) {
-        let cfg = match std::fs::read_to_string(&self.paths.admin_config)
-            .map_err(|e| format!("{}: {e}", self.paths.admin_config.display()))
-            .and_then(|t| AdminConfig::parse(&t))
-        {
+        let cfg = match AdminConfig::read(&self.paths.admin_config) {
             Ok(c) => c,
             Err(e) => return (Vec::new(), Some(e)),
         };
@@ -2611,9 +2670,7 @@ impl App {
     /// Explain the consequences before anything happens. The checks here
     /// are for clear messages only; the helper repeats all of them.
     fn confirm_set_mode(&mut self, row: &AccountRow, to: Mode) {
-        let cfg = std::fs::read_to_string(&self.paths.admin_config)
-            .ok()
-            .and_then(|t| AdminConfig::parse(&t).ok());
+        let cfg = AdminConfig::read(&self.paths.admin_config).ok();
         let state = cfg
             .as_ref()
             .and_then(|c| std::fs::read_to_string(&c.state_file).ok())
