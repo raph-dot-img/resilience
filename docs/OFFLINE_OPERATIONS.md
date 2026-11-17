@@ -31,7 +31,8 @@ the stores of the other machines on the local network (about every half
 minute while there is something to exchange). Each logged-in account's
 messaging program asks its store for waiting messages every 5 minutes.
 This traffic goes through the same Reticulum instance and stays on the
-local network.
+local network. Files sent in messages (ADR 0020, at most 900 KB each)
+travel the same way.
 
 ## Network states shown by the interface
 

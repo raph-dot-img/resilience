@@ -11,8 +11,26 @@ WRITING TO SOMEONE
     n            write to an address someone gave you
     m            your own address, to give to others
     Enter        open a conversation;  w  write a message
+  While writing, Enter sends and Ctrl-N starts a new line (Alt-Enter
+  works too). Esc closes the dialog without sending.
   A message is kept on this computer and tried again until it arrives,
   for up to 7 days.
+
+FILES
+  In a conversation, press f and choose a file (at most 900 KB: a list,
+  a document, a map extract, an encrypted file). A copy is taken at that
+  moment and sent like a message; you can add a text with it. Bigger
+  files go on a USB stick.
+  A file someone sends you is shown under their message as [file] with
+  its name and size. Nothing opens by itself:
+    o            look at it inside Resilience (text, tables, PDF text,
+                 the list of an archive); nothing is run
+    s            move it into your Received folder; a file already
+                 there is never replaced ("name (2)" instead)
+  Received files wait in your messages folder, up to 64 MB in all.
+  When that is full, new files are not kept (their text is): save the
+  ones you want. The name of a file is only what the sender chose; it
+  says nothing about what is inside.
 
 WHEN THE OTHER PERSON IS AWAY
   If it has not arrived after two minutes, a copy is also left in a

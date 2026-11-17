@@ -46,6 +46,12 @@ runCommand "resilience-messages-check"
       jq -n --arg to "$3" --arg text "$4" '{to: $to, text: $text}' > "$1/outbox/$2.json.tmp"
       mv "$1/outbox/$2.json.tmp" "$1/outbox/$2.json"
     }
+    send_file() { # dir id to text name source
+      cp "$6" "$1/outbox/$2.file"
+      jq -n --arg to "$3" --arg text "$4" --arg file "$5" '{to: $to, text: $text, file: $file}' \
+        > "$1/outbox/$2.json.tmp"
+      mv "$1/outbox/$2.json.tmp" "$1/outbox/$2.json"
+    }
     start() { USER=$1 ${messages}/bin/resilience-messages run --dir $PWD/$1 --client-config $PWD/client-config --local-store $PWD/store-address >> $1.log 2>&1 & }
 
     # Refused without doing anything.
@@ -117,13 +123,40 @@ runCommand "resilience-messages-check"
     test "$(ls ann/messages | wc -l)" = 4
     test -z "$(find ann/outbox ann/cancel -type f)"
 
-    # A reply, and the cancelled message never arrived.
-    send bob r1 "$ann" "OK, see you there"
+    # A reply on two lines, and the cancelled message never arrived.
+    send bob r1 "$ann" "$(printf 'OK, see you there\nwith cans')"
     wait_state bob r1 delivered
     for _ in $(seq 20); do [ "$(ls ann/messages | wc -l)" = 5 ] && break; sleep 1; done
     jq -e -s 'map(select(.direction == "in")) | length == 1 and .[0].verified == true
-              and .[0].text == "OK, see you there"' ann/messages/*.json
+              and .[0].text == "OK, see you there\nwith cans"' ann/messages/*.json
     test "$(ls bob/messages | wc -l)" = 2
+
+    # Files (ADR 0020): sent directly, kept by Bob under the message id
+    # (never under the name that came with it), the sender's copy removed
+    # once delivered.
+    head -c 300000 /dev/urandom > payload
+    send_file ann f1 "$bob" "The list" "../../Liste des besoins.PDF" payload
+    wait_state ann f1 delivered
+    test ! -e ann/files/f1.data
+    jq -e '.file.name == "Liste des besoins.PDF" and .file.size == 300000' ann/messages/f1.json
+    for _ in $(seq 20); do grep -l '"The list"' bob/messages/in-*.json > /dev/null 2>&1 && break; sleep 1; done
+    got=$(grep -l '"The list"' bob/messages/in-*.json)
+    id=$(jq -r .id "$got")
+    jq -e --arg d "$id.pdf" '.file.name == "Liste des besoins.PDF" and .file.size == 300000
+                             and .file.data == $d and .verified' "$got"
+    cmp payload "bob/files/$id.pdf"
+    test "$(stat -c %a "bob/files/$id.pdf")" = 600
+    test "$(ls bob/files)" = "$id.pdf"
+    # Refused: too large (and not kept), a request whose file is missing.
+    head -c 900001 /dev/zero > big
+    send_file ann f2 "$bob" "" big.bin big
+    jq -n --arg to "$bob" '{to: $to, text: "", file: "gone.txt"}' > ann/outbox/f3.json.tmp
+    mv ann/outbox/f3.json.tmp ann/outbox/f3.json
+    wait_state ann f2 failed
+    wait_state ann f3 failed
+    jq -e '.detail == "the file is too large (at most 900 KB)"' ann/messages/f2.json
+    jq -e '.detail == "the file to send was not found"' ann/messages/f3.json
+    test -z "$(find ann/files ann/outbox -type f)"
 
     # Store-and-forward (ADR 0019): the machine's message store runs; Bob
     # is away when Ann writes; a copy waits in the store; Ann goes too;
@@ -143,9 +176,14 @@ runCommand "resilience-messages-check"
     kill "$bob_pid"
     for _ in $(seq 30); do test ! -e bob/status.json && break; sleep 1; done
     send ann m3 "$bob" "Left with the store"
+    head -c 400000 /dev/urandom > map
+    send_file ann m4 "$bob" "" "map.txt" map
     wait_state ann m3 queued
     for _ in $(seq 240); do jq -e .stored ann/messages/m3.json > /dev/null 2>&1 && break; sleep 1; done
     jq -e '.state == "sent" and .stored == true' ann/messages/m3.json
+    # Above LXMF's default store limit (256 KB), within ours (1000 KB).
+    for _ in $(seq 60); do jq -e .stored ann/messages/m4.json > /dev/null 2>&1 && break; sleep 1; done
+    jq -e '.state == "sent" and .stored == true and (.too_large_for_store | not)' ann/messages/m4.json
     test -n "$(ls node/lxmf/lxmf/messagestore)"
     ann_pid=$(cat ann/status.json | jq -r .pid)
     kill "$ann_pid"
@@ -159,6 +197,10 @@ runCommand "resilience-messages-check"
     jq -e .verified "$got"
     # Collected once: the store hands it over and Bob keeps one copy.
     test "$(grep -l "Left with the store" bob/messages/in-*.json | wc -l)" = 1
+    for _ in $(seq 60); do grep -l '"map.txt"' bob/messages/in-*.json > /dev/null 2>&1 && break; sleep 1; done
+    got=$(grep -l '"map.txt"' bob/messages/in-*.json)
+    id=$(jq -r .id "$got")
+    cmp map "bob/files/$id.txt"
 
     kill $(jobs -p) 2>/dev/null || true
     mkdir $out

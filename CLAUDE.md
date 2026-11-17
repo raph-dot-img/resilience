@@ -63,7 +63,9 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            resilience-messages-node.service (ADR 0019: message store = LXMF
    │                            propagation node, `resilience-messages node`, DynamicUser, AF_UNIX
    │                            only, no delivery address, cost 13, peers 1 hop, 32 MB;
-   │                            resilience.comms.store.{enable (default on),limitMB}). rns and lxmf
+   │                            resilience.comms.store.{enable (default on),limitMB}). Files
+   │                            (ADR 0020): outbox/ID.file + "file" in the request, ≤ 900 KB, received
+   │                            into files/ID.EXT (64 MB/account), stores pass ≤ 1000 KB. rns and lxmf
    │                            are UNFREE (Reticulum License): allowed by name only in
    │                            nix/packages/resilience-reticulum (its own nixpkgs import)
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
@@ -207,6 +209,13 @@ the same LXMF hash (record `ts`) goes to the machine's store
 Stores peer on the local network; programs collect every 5 min. Programs
 attach with `require_shared_instance` (exit 75 if rnsd is not up) and save
 heard keys (`known_destinations`) every 10 min and at exit.
+Files (ADR 0020): Chat `f` → Find & view files as picker (`Pick::SendFile`)
+→ `ChatInput::FileText` → `Store::queue_file` copies it to `outbox/ID.file`
+then writes `outbox/ID.json` with `"file"`; the program moves it to
+`files/ID.data`, sends it in `FIELD_FILE_ATTACHMENTS`, deletes it once
+delivered/failed. Incoming: first attachment → `files/ID.EXT` (0600; name
+only in the record, cleaned); `o` views it (files_ui viewers), `s` moves it
+to `~/Received/<safe name>` with RENAME_NOREPLACE.
 
 Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
 with `connection.permissions user:U`, no secret → thread: `nmcli connection
@@ -405,7 +414,7 @@ needlessly. Watch `free -h` during VM tests.
 
 ## 14. Current implementation status (2026-11-16)
 
-**Now: Phase 6 (networking and communications), branch `feat/comms`.**
+**Now: Phase 6 (networking and communications), branch `feat/comms-files`.**
 Maps (Phase 5) were parked by the owner on 2026-11-16 after slice 9: do
 not continue slices 10 to 13 unless asked. Phase 6 so far: ADR 0018
 (Reticulum + LXMF, opt-in because their licence is not free: owner's
@@ -418,8 +427,11 @@ messages" under Communications, views Chats / Nearby / Chat, dialog
 `Modal::ChatInput`), handbook `60-local-messages.md`, vm-comms through
 the TUI. Slice 4 = ADR 0019 store-and-forward (`resilience-messages node`,
 service `resilience-messages-node`, client fallback to the store, TUI
-markers, vm-comms subtest with alpha switched off). Open: file exchange; multi-line
-messages; Internet messengers (toxic, signal-cli); Yggdrasil/BATMAN.
+markers, vm-comms subtest with alpha switched off). Slice 5 (branch
+`feat/comms-files`) = multi-line messages (Ctrl-N / Ctrl-J / Alt-Enter in
+the dialog, at most 40 lines). Slice 6 = ADR 0020 files in messages
+(`f` send, `o` open, `s` save into ~/Received). Open: Internet messengers
+(toxic, signal-cli); Yggdrasil/BATMAN.
 `resilience.comms.enable` is ON by default in the standard edition
 (owner, 2026-11-16; `nix/profiles/standard.nix`, mkDefault) and off in
 minimal. After that change: full flake check passed (2026-11-17, after
@@ -462,9 +474,9 @@ Git state (2026-11-17): `main` = end of Phase 4; `develop` = `feat/maps`,
 `feat/maps-overview` and `feat/comms` (Phase 6 slices 1 to 4, ADR 0018 and
 0019) merged, on origin; `feat/comms` is fully merged (new Phase 6 work:
 a new `feat/<topic>` branch from `develop`; push only when asked). Last
-full `nix flake check -L --max-jobs 1 --keep-going`: `feat/comms` at
-`ba62020` (with ADR 0019), 2026-11-17, all 18 checks (12 VM tests) passed.
-Rust: 199 core, 72 TUI, 134 maps (+1 on demand), 5 library/store tests;
+full `nix flake check -L --max-jobs 1 --keep-going`: `feat/comms-files` at
+`73754e8` (multi-line messages, ADR 0020), 2026-11-17, all 18 checks (12 VM
+tests) passed. Rust: 201 core, 75 TUI, 134 maps (+1 on demand), 5 library/store tests;
 clippy clean. The live ISO was rebuilt from `feat/comms` at `9d3ebd2`
 (message store included) and boot-tested in QEMU (BIOS, UEFI, 1-2 GiB) on 2026-11-17;
 the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
@@ -498,7 +510,7 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
   store-and-forward needs a third computer that is on (or the
   recipient's machine on while its account is logged out); stored
   messages never become "delivered" unless a direct attempt also
-  succeeds; one-line messages; no "read" state; received
+  succeeds; one file per message, at most 900 KB; no "read" state; received
   messages are not announced outside the messages screens.
 - Power profiles not implemented (schedutil governor only). Not measured yet.
 - Keyboard: all consoles share one keymap (kernel); a login prompt starting
@@ -538,6 +550,7 @@ Phase 5 (maps) is parked.
 - 0017 Keyboard layout: US default, choice in Settings via helper `set-keymap` (allow_active=yes, listed layouts only), reset before every login prompt
 - 0018 Local messaging: Reticulum + LXMF (Reticulum License, not free: opt-in module), one unprivileged instance per machine on the local network only, per-user identities and file-based message store
 - 0019 Store-and-forward: a message store (LXMF propagation node, our own `resilience-messages node`, no delivery address) on every machine with messaging; clients go direct first, a copy to the store after 2 min
+- 0020 Files in local messages: one per message ≤ 900 KB, sent as a copy, received under the message id (64 MB/account), saved on request into ~/Received
 
 ## 18. How to continue safely
 

@@ -177,7 +177,9 @@ fn footer_hints(view: &View) -> &'static str {
             "Enter Open  n Write to an address  p People nearby  m My address  Esc"
         }
         View::Nearby { .. } => "Enter Write  a Name this person  i Address  r Refresh  Esc Back",
-        View::Chat { .. } => "w Write  c Cancel waiting  a Name  i Address  Esc Back",
+        View::Chat { .. } => {
+            "w Write  f File  o Open  s Save  c Cancel  a Name  i Address  Esc Back"
+        }
         View::Network { .. } => "p Probe Internet  r Refresh  Esc Back",
         View::Settings { .. } => "Enter Apply  Esc Back",
         View::Search { .. } => "Type to search  Up/Down Select  Enter Open  Esc Back",
@@ -2196,7 +2198,23 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
                 ChatInput::Text { peer } => (
                     "WRITE A MESSAGE",
                     format!("Message for {}:", messages::short_address(peer)),
-                    "Enter send, Esc cancel | It is kept and retried until delivered",
+                    "Enter send, Ctrl-N new line, Esc cancel | Kept and retried until delivered",
+                ),
+                ChatInput::FileText { peer, path, size } => (
+                    "SEND A FILE",
+                    format!(
+                        "File '{}' ({}) for {}. A message with it (optional):",
+                        messages::clean_line(
+                            &path
+                                .file_name()
+                                .map(|n| n.to_string_lossy())
+                                .unwrap_or_default(),
+                            60
+                        ),
+                        messages::size_text(*size),
+                        messages::short_address(peer)
+                    ),
+                    "Enter send, Ctrl-N new line, Esc cancel | A copy is sent; it is retried until delivered",
                 ),
                 ChatInput::ContactName { .. } => (
                     "NAME THIS PERSON",
@@ -2204,14 +2222,20 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
                     "Only you see it | Enter save, Esc cancel",
                 ),
             };
-            let mut l = vec![
-                Line::from(ask),
-                Line::from(vec![
-                    Span::styled(format!("> {value}"), t.accent),
-                    Span::styled("█", t.base),
-                ]),
-                Line::from(""),
-            ];
+            let mut l = vec![Line::from(ask)];
+            // One screen line per typed line; the cursor after the last.
+            let typed: Vec<&str> = value.split('\n').collect();
+            for (i, part) in typed.iter().enumerate() {
+                let mut spans = vec![Span::styled(
+                    format!("{}{part}", if i == 0 { "> " } else { "  " }),
+                    t.accent,
+                )];
+                if i + 1 == typed.len() {
+                    spans.push(Span::styled("█", t.base));
+                }
+                l.push(Line::from(spans));
+            }
+            l.push(Line::from(""));
             match error {
                 Some(e) => l.push(Line::from(Span::styled(format!("[!!] {e}"), t.error))),
                 None => l.push(Line::from(Span::styled(hint, t.dim))),
@@ -2451,6 +2475,21 @@ fn message_item(r: &Record, t: &Theme, now: u64, width: usize) -> ListItem<'stat
         .map(|l| Line::from(format!("  {l}")))
         .collect();
     lines.extend(wrap(body, width.max(20)));
+    if let Some(file) = &r.file {
+        let mut l = format!(
+            "  [file] {} ({})",
+            file.shown(),
+            messages::size_text(file.size)
+        );
+        if r.direction == Direction::In {
+            l.push_str(if file.data.is_some() {
+                "  o open, s save"
+            } else {
+                "  not kept"
+            });
+        }
+        lines.push(Line::from(Span::styled(l, t.accent)));
+    }
     ListItem::new(Text::from(wrap(lines, width.max(20))))
 }
 
