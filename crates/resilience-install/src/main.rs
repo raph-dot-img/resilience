@@ -238,7 +238,7 @@ fn run(args: &[String]) -> Result<()> {
         disk.describe()
     );
     let mut inst = Installer {
-        steps: 9 + usize::from(req.encrypt) + usize::from(req.firmware == Firmware::Bios),
+        steps: 10 + usize::from(req.encrypt) + usize::from(req.firmware == Firmware::Bios),
         cfg,
         req,
         step: 0,
@@ -428,7 +428,15 @@ impl Installer {
         .map_err(fail)?;
 
         self.begin("Writing this computer's settings")?;
-        self.write_state(&target).map_err(fail)?;
+        let (local, modes) = install::account_state(&self.req.accounts, &now_rfc3339());
+        write_state(
+            &target,
+            &[
+                ("keyboard", state_text(&self.req.keymap)),
+                ("accounts.toml", local.to_toml()),
+            ],
+        )
+        .map_err(fail)?;
 
         self.begin("Copying the system (this takes a while)")?;
         let system = self.cfg.system(self.req.firmware, self.req.encrypt).clone();
@@ -450,6 +458,11 @@ impl Installer {
 
         self.begin("Creating the accounts")?;
         self.create_accounts(&target)?;
+        // Only now: the activation run by nixos-install applies modes.toml
+        // and would complain about accounts that do not exist yet. useradd
+        // already gave each account its groups; the first start applies
+        // the file again.
+        write_state(&target, &[("modes.toml", modes.to_toml())]).map_err(fail)?;
 
         if self.req.firmware == Firmware::Bios {
             self.begin("Installing the BIOS boot loader")?;
@@ -468,33 +481,8 @@ impl Installer {
         }
 
         self.begin("Finishing")?;
+        debug_assert_eq!(self.step, self.steps);
         quiet(&[arg(&self.cfg.sync)], Duration::from_secs(600)).map_err(fail)?;
-        Ok(())
-    }
-
-    /// Keyboard layout, accounts and their modes (ADR 0022 §2), before the
-    /// system is copied: the boot loader puts the layout into the initrd.
-    fn write_state(&self, target: &Path) -> std::result::Result<(), String> {
-        let dir = target.join("var/lib/resilience");
-        fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
-        let (local, modes) = install::account_state(&self.req.accounts, &now_rfc3339());
-        for (name, text) in [
-            ("keyboard", state_text(&self.req.keymap)),
-            ("accounts.toml", local.to_toml()),
-            ("modes.toml", modes.to_toml()),
-        ] {
-            let p = dir.join(name);
-            let mut f = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o644)
-                .open(&p)
-                .map_err(|e| format!("{}: {e}", p.display()))?;
-            f.write_all(text.as_bytes())
-                .and_then(|()| f.sync_all())
-                .map_err(|e| format!("{}: {e}", p.display()))?;
-        }
         Ok(())
     }
 
@@ -565,4 +553,26 @@ impl Installer {
             self.opened = false;
         }
     }
+}
+
+/// State files of ADR 0022 §2 in the new system's /var/lib/resilience.
+/// The keyboard layout is written before the system is copied: the boot
+/// loader puts it into the initrd.
+fn write_state(target: &Path, files: &[(&str, String)]) -> std::result::Result<(), String> {
+    let dir = target.join("var/lib/resilience");
+    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+    for (name, text) in files {
+        let p = dir.join(name);
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o644)
+            .open(&p)
+            .map_err(|e| format!("{}: {e}", p.display()))?;
+        f.write_all(text.as_bytes())
+            .and_then(|()| f.sync_all())
+            .map_err(|e| format!("{}: {e}", p.display()))?;
+    }
+    Ok(())
 }
