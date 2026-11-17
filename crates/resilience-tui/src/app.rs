@@ -83,6 +83,8 @@ pub struct Paths {
     /// Written by the machine's Reticulum service (ADR 0018); absent when
     /// local messaging is not enabled on this computer.
     pub comms_client: PathBuf,
+    /// Written by the mesh service while the mesh is on (ADR 0021).
+    pub mesh_devices: PathBuf,
 }
 
 impl Default for Paths {
@@ -96,6 +98,7 @@ impl Default for Paths {
             running_system: "/run/current-system".into(),
             packs_config: resilience_core::packs::PACKS_CONFIG_PATH.into(),
             comms_client: "/run/resilience-reticulum/client/config".into(),
+            mesh_devices: "/run/resilience-mesh/devices".into(),
         }
     }
 }
@@ -168,6 +171,8 @@ pub enum Builtin {
     Map,
     MapFiles,
     Chat,
+    /// The Wi-Fi mesh network (ADR 0021).
+    Mesh,
     Notes,
     Network,
     Wifi,
@@ -195,7 +200,7 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 32] = [
+    pub const ALL: [Builtin; 33] = [
         Builtin::Handbook,
         Builtin::Files,
         Builtin::Manual,
@@ -204,6 +209,7 @@ impl Builtin {
         Builtin::Map,
         Builtin::MapFiles,
         Builtin::Chat,
+        Builtin::Mesh,
         Builtin::Notes,
         Builtin::Network,
         Builtin::Wifi,
@@ -240,6 +246,7 @@ impl Builtin {
             Builtin::Map => "Map",
             Builtin::MapFiles => "Maps on this computer & USB sticks",
             Builtin::Chat => "Local messages",
+            Builtin::Mesh => "Mesh network (Wi-Fi without a router)",
             Builtin::Notes => "Notes",
             Builtin::Network => "Network status & diagnostics",
             Builtin::Wifi => "Wi-Fi networks",
@@ -306,6 +313,12 @@ impl Builtin {
                  local network find each other. Each message shows whether it is still \
                  waiting, sent, or delivered; a message for someone who is away waits \
                  and is sent when they are back."
+            }
+            Builtin::Mesh => {
+                "When there is no Wi-Fi router, computers can reach each other directly \
+                 by Wi-Fi, each one relaying for the others, so that local messages \
+                 still get through. Turn it on here; turn it off to use ordinary Wi-Fi \
+                 again."
             }
             Builtin::Notes => {
                 "Write and keep personal text notes. Notes are private files in your Notes folder."
@@ -390,7 +403,7 @@ impl Builtin {
                 Category::Knowledge
             }
             Builtin::Map | Builtin::MapFiles => Category::Maps,
-            Builtin::Chat => Category::Communications,
+            Builtin::Chat | Builtin::Mesh => Category::Communications,
             Builtin::Notes | Builtin::Files => Category::Productivity,
             Builtin::Network | Builtin::Wifi => Category::Networking,
             Builtin::Encrypt
@@ -445,6 +458,10 @@ impl Builtin {
             Builtin::Chat => {
                 "message messages chat talk write contact contacts nearby local network \
                  mesh reticulum lxmf address offline communication"
+            }
+            Builtin::Mesh => {
+                "mesh batman ad hoc adhoc wifi wi-fi router relay neighbourhood neighborhood \
+                 network without router disaster"
             }
             Builtin::Notes => "write text memo journal",
             Builtin::Network => "wifi ethernet internet offline online dns",
@@ -675,6 +692,10 @@ pub enum Pending {
     Logout,
     Reboot,
     PowerOff,
+    /// Turn the mesh network on or off (ADR 0021).
+    SetMesh {
+        on: bool,
+    },
     SetMode {
         user: String,
         to: Mode,
@@ -1023,7 +1044,7 @@ impl App {
             .iter()
             .filter(|b| b.category() == cat && mode.allows(b.min_mode()))
             .filter(|b| packs || !b.needs_packs())
-            .filter(|b| *b != &Builtin::Chat || self.paths.comms_client.exists())
+            .filter(|b| self.builtin_present(**b))
             .map(|b| Entry::Builtin(*b))
             .chain(
                 self.catalog
@@ -1077,7 +1098,7 @@ impl App {
                 .iter()
                 .filter(|b| mode.allows(b.min_mode()))
                 .filter(|b| packs || !b.needs_packs())
-                .filter(|b| *b != &Builtin::Chat || self.paths.comms_client.exists())
+                .filter(|b| self.builtin_present(**b))
                 .filter(|b| {
                     [b.name(), b.description(), b.keywords()]
                         .iter()
@@ -1939,6 +1960,10 @@ impl App {
             Builtin::Packs => (self.open_packs(), Effect::None),
             Builtin::Map => (None, self.open_map_effect(None)),
             Builtin::Chat => (self.open_chats(), Effect::None),
+            Builtin::Mesh => {
+                self.open_mesh();
+                (None, Effect::None)
+            }
             Builtin::MapFiles => (self.open_map_files(), Effect::None),
             Builtin::Backup => {
                 let (volumes, error) = self.load_volumes();
@@ -2134,7 +2159,8 @@ impl App {
             | Pending::Restore { .. }
             | Pending::ChangePacks { .. }
             | Pending::RemoveContact { .. }
-            | Pending::RemovePgpKey { .. } => return,
+            | Pending::RemovePgpKey { .. }
+            | Pending::SetMesh { .. } => return,
             Pending::Logout => (
                 "LOG OUT",
                 "End this session? Programs you started from here will be closed.",
@@ -2381,6 +2407,10 @@ impl App {
             }
             Pending::JoinWifi { net } => {
                 self.create_and_join(&net, None);
+                return Effect::None;
+            }
+            Pending::SetMesh { on } => {
+                self.set_mesh(on);
                 return Effect::None;
             }
             Pending::ForgetWifi { name, uuid } => {

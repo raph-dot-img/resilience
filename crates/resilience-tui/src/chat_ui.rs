@@ -15,7 +15,7 @@
 //! the user gives the address a name of their own.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
@@ -23,7 +23,13 @@ use resilience_core::messages::{
     self, Conversation, MAX_NAME_CHARS, Name, Peer, Record, Status, Store,
 };
 
-use super::{App, Effect, Level, Modal, Pick, View, clamp_selection, is_activate, is_back, nav};
+use resilience_core::admin::AdminConfig;
+use resilience_core::proc::run_full_env;
+
+use super::{
+    App, Builtin, Effect, Level, Modal, Pending, Pick, View, clamp_selection, is_activate, is_back,
+    nav,
+};
 
 /// Longest message typed in the dialog, in characters.
 pub const MAX_TYPED_CHARS: usize = 1000;
@@ -560,6 +566,116 @@ impl App {
                 self.reload_chats();
                 Ok(())
             }
+        }
+    }
+
+    /// Whether an entry is shown on this computer: Local messages only
+    /// with the messaging service, the mesh only where the system offers it.
+    pub(crate) fn builtin_present(&self, b: Builtin) -> bool {
+        match b {
+            Builtin::Chat => self.paths.comms_client.exists(),
+            Builtin::Mesh => self.mesh_config().is_some(),
+            _ => true,
+        }
+    }
+
+    /// The helper's configuration, if the system has a mesh (ADR 0021).
+    fn mesh_config(&self) -> Option<AdminConfig> {
+        std::fs::read_to_string(&self.paths.admin_config)
+            .ok()
+            .and_then(|t| AdminConfig::parse(&t).ok())
+            .filter(|c| c.mesh_unit.is_some())
+    }
+
+    /// The cards in the mesh, if it is on.
+    fn mesh_devices(&self) -> Option<String> {
+        std::fs::read_to_string(&self.paths.mesh_devices)
+            .ok()
+            .map(|t| messages::clean_line(&t, 80))
+            .filter(|t| !t.is_empty())
+    }
+
+    /// What the mesh is and what turning it on or off does; Enter does it.
+    pub(super) fn open_mesh(&mut self) {
+        let (body, confirm, on) = match self.mesh_devices() {
+            Some(devs) => (
+                format!(
+                    "The mesh network is ON ({devs}).\n\nThis computer reaches the \
+                     computers in Wi-Fi range that have the mesh on, and relays for them. \
+                     Local messages use it by themselves.\n\nTurn it off to join an \
+                     ordinary Wi-Fi network again."
+                ),
+                "Turn off",
+                false,
+            ),
+            None => (
+                "The mesh network is off.\n\nWhen there is no Wi-Fi router, turn it on \
+                 on every computer that should take part: they reach each other directly \
+                 by Wi-Fi, each one relaying for the others, and local messages get \
+                 through.\n\nWhile it is on:\n- this computer's Wi-Fi cannot join an \
+                 ordinary Wi-Fi network (a cable still works);\n- anyone in range with \
+                 a mesh can join it and see that this computer is there; messages \
+                 stay encrypted;\n- it uses more battery.\n\nIt stays on until you \
+                 turn it off or the computer restarts."
+                    .to_string(),
+                "Turn on",
+                true,
+            ),
+        };
+        self.modal = Some(Modal::Confirm {
+            title: "MESH NETWORK".into(),
+            body,
+            confirm: confirm.into(),
+            action: Pending::SetMesh { on },
+            yes_focused: false,
+        });
+    }
+
+    /// `pkexec <helper> set-mesh on|off`: allowed to the person at the
+    /// console without a password (ADR 0021).
+    pub(super) fn set_mesh(&mut self, on: bool) {
+        let Some(cfg) = self.mesh_config() else {
+            self.notify(Level::Error, "This computer has no mesh network.");
+            return;
+        };
+        let pkexec = cfg.pkexec.to_string_lossy();
+        let helper = cfg.helper.to_string_lossy();
+        let shell = cfg.session_shell.to_string_lossy();
+        let state = if on { "on" } else { "off" };
+        match run_full_env(
+            &[pkexec.as_ref(), helper.as_ref(), "set-mesh", state],
+            &[("SHELL", shell.as_ref())],
+            Duration::from_secs(90),
+        ) {
+            Some(o) if o.success() => self.notify(
+                Level::Info,
+                if on {
+                    "The mesh network is on. People with the mesh on appear in Local \
+                     messages within a minute."
+                } else {
+                    "The mesh network is off; Wi-Fi works as before."
+                },
+            ),
+            Some(o) => {
+                let why: String = o
+                    .stderr
+                    .lines()
+                    .rev()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("refused")
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(200)
+                    .collect();
+                self.notify(
+                    Level::Error,
+                    format!("The mesh network could not be turned {state}: {why}"),
+                );
+            }
+            None => self.notify(
+                Level::Error,
+                "The system helper did not run or took too long.",
+            ),
         }
     }
 }

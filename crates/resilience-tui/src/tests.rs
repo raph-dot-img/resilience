@@ -133,6 +133,8 @@ description = "Carol the admin"
         packs_config: sys.join("packs.toml"),
         // Absent: local messaging is off unless a test creates the file.
         comms_client: sys.join("comms-client-config"),
+        // Absent: the mesh is off.
+        mesh_devices: sys.join("mesh-devices"),
     }
 }
 
@@ -3409,6 +3411,72 @@ fn keyboard_layout_is_loaded_saved_and_restored_at_login() {
             .iter()
             .any(|n| n.text.contains("no longer offered"))
     );
+}
+
+#[test]
+fn the_mesh_is_offered_explained_and_turned_on_and_off() {
+    let mut a = app(Mode::UltraStable, "mesh");
+    // Without a mesh on this system: no entry, not even in search.
+    assert!(!a.builtin_present(Builtin::Mesh));
+    let log = fake_keymap_helper(&mut a);
+    let admin = std::fs::read_to_string(&a.paths.admin_config).expect("admin.toml");
+    std::fs::write(
+        &a.paths.admin_config,
+        format!("mesh_unit = \"resilience-mesh.service\"\n{admin}"),
+    )
+    .expect("admin.toml");
+    assert!(a.builtin_present(Builtin::Mesh));
+    assert!(
+        a.search("mesh")
+            .contains(&SearchHit::Entry(Entry::Builtin(Builtin::Mesh)))
+    );
+    assert!(
+        a.search("router")
+            .contains(&SearchHit::Entry(Entry::Builtin(Builtin::Mesh)))
+    );
+
+    // Off: what turning it on means, Cancel first.
+    a.activate(Entry::Builtin(Builtin::Mesh));
+    let screen = render(&mut a, 100, 40);
+    assert!(screen.contains("MESH NETWORK"), "{screen}");
+    assert!(screen.contains("The mesh network is off."), "{screen}");
+    assert!(screen.contains("cannot join an"), "{screen}");
+    assert!(screen.contains("Turn on"), "{screen}");
+    assert_console_glyphs(&screen);
+    press(&mut a, KeyCode::Enter);
+    assert!(!log.exists(), "turned on without confirming");
+    a.activate(Entry::Builtin(Builtin::Mesh));
+    press(&mut a, KeyCode::Left);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        std::fs::read_to_string(&log).expect("log"),
+        "/store/bin/resilience-admin set-mesh on\nSHELL=/run/current-system/sw/bin/resilience-session\n"
+    );
+    assert!(
+        a.notices
+            .last()
+            .expect("notice")
+            .text
+            .contains("The mesh network is on")
+    );
+
+    // On (the service wrote its cards): turning it off.
+    std::fs::write(&a.paths.mesh_devices, "wlan0\n").expect("w");
+    a.activate(Entry::Builtin(Builtin::Mesh));
+    let screen = render(&mut a, 100, 40);
+    assert!(
+        screen.contains("The mesh network is ON (wlan0)"),
+        "{screen}"
+    );
+    assert!(screen.contains("Turn off"), "{screen}");
+    press(&mut a, KeyCode::Left);
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        std::fs::read_to_string(&log)
+            .expect("log")
+            .contains("set-mesh off")
+    );
+    assert!(a.notices.last().expect("n").text.contains("is off"));
 }
 
 // ----- local messages (ADR 0018) ---------------------------------------------

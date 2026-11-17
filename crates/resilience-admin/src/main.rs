@@ -16,6 +16,7 @@
 //! resilience-admin set-time UTC-TIME     root (pkexec / sudo), ADR 0009
 //! resilience-admin set-default-generation N   root (pkexec / sudo), ADR 0011
 //! resilience-admin set-keymap LAYOUT     root (pkexec, no password), ADR 0017
+//! resilience-admin set-mesh on|off       root (pkexec, no password), ADR 0021
 //! resilience-admin apply-state           root (system activation)
 //! ```
 
@@ -48,6 +49,7 @@ Usage:
   resilience-admin set-default-generation N
                                          Start system generation N at every boot
   resilience-admin set-keymap LAYOUT     Load a console keyboard layout of this system
+  resilience-admin set-mesh on|off       Turn the Wi-Fi mesh on or off (ADR 0021)
   resilience-admin apply-state           Re-apply recorded modes (system use)
 MODE is one of: ultra-stable, stable, advanced";
 
@@ -60,6 +62,7 @@ fn main() -> ExitCode {
         ["set-time", time] => set_time(time),
         ["set-default-generation", n] => set_default_generation(n),
         ["set-keymap", id] => set_keymap(id),
+        ["set-mesh", state] => set_mesh(state),
         ["apply-state"] => apply_state(),
         ["--version"] => {
             println!("resilience-admin {}", resilience_core::VERSION);
@@ -409,6 +412,60 @@ fn set_keymap(requested: &str) -> Result<()> {
         None => {
             outcome(&[("result", "error"), ("reason", "loadkeys did not finish")]);
             Err(Failure::Error("loadkeys did not finish".into()))
+        }
+    }
+}
+
+/// Turn the system's mesh network on or off (ADR 0021): start or stop its
+/// unit, nothing else. Allowed to the person at the console without a
+/// password (polkit), like joining a Wi-Fi network.
+fn set_mesh(requested: &str) -> Result<()> {
+    if !is_root() {
+        return Err(Failure::Permission);
+    }
+    let cfg = AdminConfig::load().map_err(err)?;
+    let (uid, by) = caller();
+    let uid_s = uid.to_string();
+    let _lock = lock(&cfg)?;
+    let base = [
+        ("op", "set-mesh"),
+        ("caller", by.as_str()),
+        ("caller_uid", uid_s.as_str()),
+        ("to", requested),
+    ];
+    let outcome = |extra: &[(&str, &str)]| {
+        let mut f = base.to_vec();
+        f.extend_from_slice(extra);
+        audit(&cfg, &f);
+    };
+    let argv = match admin::plan_set_mesh(&cfg, requested) {
+        Ok(a) => a,
+        Err(r) => {
+            let reason = r.to_string();
+            outcome(&[("result", "refused"), ("reason", &reason)]);
+            return Err(Failure::Refused(reason));
+        }
+    };
+    let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+    match run_full(&args, Duration::from_secs(90)) {
+        Some(o) if o.success() => {
+            outcome(&[("result", "ok")]);
+            println!(
+                "The mesh network is {}.",
+                if requested == "on" { "on" } else { "off" }
+            );
+            Ok(())
+        }
+        Some(o) => {
+            let reason = o.stderr.trim().to_string();
+            outcome(&[("result", "error"), ("reason", &reason)]);
+            Err(Failure::Error(format!(
+                "the mesh could not be changed: {reason}"
+            )))
+        }
+        None => {
+            outcome(&[("result", "error"), ("reason", "systemctl did not finish")]);
+            Err(Failure::Error("systemctl did not finish".into()))
         }
     }
 }

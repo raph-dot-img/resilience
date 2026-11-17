@@ -3,9 +3,10 @@
 # * One typed operation per polkit action; no generic command runner.
 #   `set-mode`, `set-time` (ADR 0009) and `set-default-generation` (ADR 0011)
 #   require an administrator's password every time (auth_admin, never
-#   auth_admin_keep), whoever asks. The one exception is `set-keymap`
-#   (ADR 0017): loading one of the listed console keyboard layouts is
-#   allowed without a password to the active local session only.
+#   auth_admin_keep), whoever asks. The exceptions are `set-keymap`
+#   (ADR 0017: one of the listed console keyboard layouts) and `set-mesh`
+#   (ADR 0021: the Wi-Fi mesh on or off), allowed without a password to the
+#   active local session only.
 # * Configuration the helper trusts is generated here and root-owned
 #   (/etc/resilience/admin.toml); it never reads the caller's environment.
 # * Mode changes persist in /var/lib/resilience/modes.toml and are
@@ -43,10 +44,15 @@ let
       # ADR 0017: the only layouts `set-keymap` loads.
       loadkeys = "${pkgs.kbd}/bin/loadkeys";
       keymaps = lib.unique ([ cfg.keyboard.layout ] ++ map (l: l.id) cfg.keyboard.layouts);
+      # ADR 0021: `set-mesh` starts and stops this unit only.
+      systemctl = "${config.systemd.package}/bin/systemctl";
       users = lib.mapAttrs (_: u: {
         declared_mode = u.mode;
         inherit (u) description;
       }) cfg.users;
+    }
+    // lib.optionalAttrs cfg.mesh.enable {
+      mesh_unit = "resilience-mesh.service";
     }
     // lib.optionalAttrs (cfg.interface.autologinUser != null) {
       autologin_user = cfg.interface.autologinUser;
@@ -104,6 +110,17 @@ let
         </defaults>
         <annotate key="org.freedesktop.policykit.exec.path">${helper}</annotate>
         <annotate key="org.freedesktop.policykit.exec.argv1">set-keymap</annotate>
+      </action>
+      <action id="org.resilience.admin.set-mesh">
+        <description>Turn the Wi-Fi mesh network on or off</description>
+        <message>Turning the mesh network on or off is allowed to the person at the console</message>
+        <defaults>
+          <allow_any>no</allow_any>
+          <allow_inactive>no</allow_inactive>
+          <allow_active>yes</allow_active>
+        </defaults>
+        <annotate key="org.freedesktop.policykit.exec.path">${helper}</annotate>
+        <annotate key="org.freedesktop.policykit.exec.argv1">set-mesh</annotate>
       </action>
     </policyconfig>
   '';

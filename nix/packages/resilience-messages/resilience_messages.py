@@ -116,6 +116,13 @@ NODE_STORAGE_MB = 32
 NODE_TRANSFER_LIMIT_KB = 1000
 DEFAULT_STORE_LIMIT_KB = 256
 SAVE_KEYS_EVERY = 600
+# An announce sent before the local network has found its neighbours
+# reaches no one, and the next is 10 minutes later: announce again this
+# long after starting, and after the instance restarts (it rewrites the
+# client configuration whenever it starts, for example when the mesh
+# network comes or goes, ADR 0021), so that the others hear us at once.
+ANNOUNCE_AFTER_START = (30, 90)
+REANNOUNCE_AFTER_RESTART = (10, 30, 90)
 
 
 def write_json(path, value, mode=0o600):
@@ -401,6 +408,14 @@ def load_identity(RNS, path):
     return identity
 
 
+def config_stamp(path):
+    """When the instance last (re)started, from its client configuration."""
+    try:
+        return os.stat(path).st_mtime_ns
+    except OSError:
+        return None
+
+
 def save_keys(RNS):
     """Keep the public keys heard so far (Reticulum's clients never do it
     themselves): a message collected from a store while its sender is away
@@ -482,6 +497,9 @@ class Messenger:
         self.lock = threading.RLock()
         self.stop = threading.Event()
         attach(RNS, store.path("reticulum"), client_config)
+        self.client_config = client_config
+        self.instance_stamp = config_stamp(client_config)
+        self.reannounce = [time.time() + d for d in ANNOUNCE_AFTER_START]
         self.identity = load_identity(RNS, store.path("identity"))
         self.router = LXMF.LXMRouter(identity=self.identity, storagepath=store.path("lxmf"))
         self.name = store.display_name(os.environ.get("USER", "user"))
@@ -848,6 +866,20 @@ class Messenger:
                 self.peers_dirty = False
             self.prune()
         self.collect(now)
+        stamp = config_stamp(self.client_config)
+        if stamp is not None and stamp != self.instance_stamp:
+            self.instance_stamp = stamp
+            self.reannounce = [now + d for d in REANNOUNCE_AFTER_RESTART]
+        if self.reannounce and now >= self.reannounce[0]:
+            # New neighbours may be reachable: be heard, and try again what
+            # waits (its recipients may be reachable now).
+            self.reannounce.pop(0)
+            self.last_announce = 0.0
+            with self.lock:
+                for rec in self.records.values():
+                    if rec.get("state") == "queued":
+                        rec["next_try"] = 0
+            self.next_collect = min(self.next_collect, now + 2)
         if now - self.last_announce > ANNOUNCE_EVERY:
             self.router.announce(self.dest.hash)
             self.last_announce = now
@@ -915,6 +947,7 @@ class Node:
         self.stop = threading.Event()
         os.makedirs(root, mode=0o700, exist_ok=True)
         attach(RNS, os.path.join(root, "reticulum"), client_config)
+        self.client_config = client_config
         identity = load_identity(RNS, os.path.join(root, "identity"))
         self.router = LXMF.LXMRouter(
             identity=identity,
@@ -939,8 +972,17 @@ class Node:
 
     def run(self):
         last_announce = last_saved = time.time()
-        while not self.stop.wait(10):
+        reannounce = [last_announce + d for d in ANNOUNCE_AFTER_START]
+        stamp = config_stamp(self.client_config)
+        while not self.stop.wait(5):
             now = time.time()
+            if config_stamp(self.client_config) != stamp:
+                # The instance restarted: be heard by the new neighbours.
+                stamp = config_stamp(self.client_config)
+                reannounce = [now + d for d in REANNOUNCE_AFTER_RESTART]
+            if reannounce and now >= reannounce[0]:
+                reannounce.pop(0)
+                last_announce = 0
             if now - last_announce > NODE_ANNOUNCE_EVERY:
                 self.router.announce_propagation_node()
                 last_announce = now

@@ -210,6 +210,9 @@ done
 if have iw; then
   bands=$(iw list 2>/dev/null | grep -E '^\s+Band [0-9]+:' | sed -E 's/^\s*Band 1:/2.4 GHz/; s/^\s*Band 2:/5 GHz/; s/^\s*Band 3:/60 GHz/; s/^\s*Band 4:/6 GHz/' | paste -sd, -)
   [ -n "$bands" ] && row "Wi-Fi bands" "$bands"
+  # The mesh network (ADR 0021) needs ad hoc (IBSS); 802.11s is noted too.
+  modes=$(iw list 2>/dev/null | sed -n '/Supported interface modes:/,/^\s*Band/p' | grep -oE '\* (IBSS|mesh point)' | sed 's/\* //' | sort -u | paste -sd, -)
+  row "Wi-Fi mesh modes" "${modes:-none (the mesh network will not work with this card)}"
 fi
 gnss=""
 for g in /sys/class/gnss/* /dev/ttyACM* /dev/ttyUSB*; do [ -e "$g" ] && gnss="$gnss ${g}"; done

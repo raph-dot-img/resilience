@@ -34,6 +34,13 @@ This traffic goes through the same Reticulum instance and stays on the
 local network. Files sent in messages (ADR 0020, at most 900 KB each)
 travel the same way.
 
+Where local messaging is on, a **mesh network** can be turned on from the
+console (ADR 0021, off by default): the Wi-Fi card leaves NetworkManager
+and joins the ad hoc cell `resilience-mesh` on channel 1, and BATMAN-adv
+relays between the computers that have it on (its own messages about
+every second while it is on). It carries only link-local IPv6: no
+addresses from the network, no default route.
+
 ## Network states shown by the interface
 
 | State | Meaning | How it is determined |

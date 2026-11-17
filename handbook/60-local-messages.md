@@ -41,6 +41,22 @@ WHEN THE OTHER PERSON IS AWAY
   The details panel says whether a store is in use. A copy in a store is
   encrypted for its recipient: the computers keeping it cannot read it.
 
+WITHOUT A WI-FI ROUTER: THE MESH NETWORK
+  When there is no router or access point, open COMMUNICATIONS > Mesh
+  network and turn it on, on every computer that should take part. The
+  computers then reach each other directly by Wi-Fi, and each one relays
+  for the others: two computers out of each other's range can still
+  exchange messages through a third one between them. People appear
+  under p (people nearby) within a minute or so.
+  While it is on:
+    - the Wi-Fi card cannot join an ordinary Wi-Fi network (a network
+      cable still works); turn the mesh off to use Wi-Fi again;
+    - anyone in range whose computer has the mesh on can join it and
+      see that your computer is there; messages stay encrypted;
+    - it uses more battery: the card is busy relaying.
+  It stays on until you turn it off or the computer restarts. Some Wi-Fi
+  cards cannot do it; the error then says so.
+
 WHAT IS SHOWN BESIDE EACH MESSAGE
     waiting      kept here, not yet arrived; it will be tried again
     sent         handed to the network; no proof that it arrived yet
