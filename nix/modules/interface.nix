@@ -28,12 +28,6 @@ let
     fi
     exec ${pkgs.kbd}/bin/loadkeys -q -- "$id"
   '';
-  # In the systemd initrd (bash and the kbd data are there with earlySetup).
-  initrdKeymap = pkgs.writeShellScript "resilience-initrd-keymap" ''
-    case "''${KEYMAP-}" in
-      ${lib.concatStringsSep "|" offered}) exec loadkeys -q -- "$KEYMAP" ;;
-    esac
-  '';
 in
 {
   options.resilience.keyboard = {
@@ -253,10 +247,17 @@ in
         Type = "oneshot";
         # vconsole.conf syntax; only an offered layout is loaded.
         EnvironmentFile = "/etc/resilience-keyboard";
-        ExecStart = "${initrdKeymap}";
       };
+      # `script`: run by the initrd's own shell (a script with another
+      # interpreter would not start there). loadkeys and the keymaps are in
+      # the initrd with console.earlySetup (nixos/modules/config/console.nix).
+      script = ''
+        case "''${KEYMAP-}" in
+          ${lib.concatStringsSep "|" offered})
+            exec ${config.boot.initrd.systemd.package.kbd}/bin/loadkeys -q -- "$KEYMAP" ;;
+        esac
+      '';
     };
-    boot.initrd.systemd.storePaths = lib.mkIf (kb.stateFile != null) [ initrdKeymap ];
 
     # No graphical stack, ever.
     services.xserver.enable = false;
