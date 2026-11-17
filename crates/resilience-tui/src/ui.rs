@@ -2288,7 +2288,7 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
 
 fn chat_status_line(t: &Theme, status: &Status) -> Line<'static> {
     match status {
-        Status::Running { address } => Line::from(vec![
+        Status::Running { address, .. } => Line::from(vec![
             Span::styled("[OK] ", t.ok),
             Span::raw(format!(
                 "Messaging is running. My address: {} (m shows all of it)",
@@ -2349,6 +2349,20 @@ fn draw_chats(
          to an address someone gave you. Press m for your own address.",
     );
     let mut lines = vec![chat_status_line(&t, status)];
+    // Store-and-forward (ADR 0019): whether people who are away can be
+    // written to, a property of the network rather than of a conversation.
+    if let Status::Running { store, .. } = status {
+        lines.push(Line::from(Span::styled(
+            if *store {
+                "Messages for people who are away wait in a message store on this network \
+                 until their computer collects them."
+            } else {
+                "No message store on this network: a message arrives only when both \
+                 computers are on at the same time."
+            },
+            t.dim,
+        )));
+    }
     match list.selected().and_then(|i| rows.get(i)) {
         Some(r) => {
             let c = &r.conv;
@@ -2462,7 +2476,7 @@ fn draw_chat(
         name.display(peer),
         messages::short_address(peer)
     );
-    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(4)]).areas(area);
+    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(5)]).areas(area);
     draw_list(
         f,
         &t,
@@ -2480,6 +2494,10 @@ fn draw_chat(
             Line::from(
                 "waiting: kept here and tried again | sent: no proof yet | delivered: their \
                  computer confirmed it has the message | FAILED: given up.",
+            ),
+            Line::from(
+                "kept on the network: a copy waits in a message store for them | stopped, may \
+                 still arrive: given up here, but a stored copy may still reach them.",
             ),
             Line::from(Span::styled(
                 "NOT VERIFIED: the message could not be checked against this address's key.",

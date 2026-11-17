@@ -181,6 +181,10 @@ pub struct Record {
     pub verified: bool,
     #[serde(default)]
     pub detail: String,
+    /// Outgoing only: a copy was left in a message store on the local
+    /// network for the recipient to collect (ADR 0019).
+    #[serde(default)]
+    pub stored: bool,
 }
 
 impl Record {
@@ -189,6 +193,8 @@ impl Record {
         match (self.direction, self.state) {
             (Direction::In, _) if self.verified => "from them".into(),
             (Direction::In, _) => "from them, NOT VERIFIED".into(),
+            (Direction::Out, State::Sent) if self.stored => "sent, kept on the network".into(),
+            (Direction::Out, State::Failed) if self.stored => "stopped, may still arrive".into(),
             (_, s) => s.label().into(),
         }
     }
@@ -207,17 +213,18 @@ pub struct Peer {
 pub enum Status {
     Running {
         address: String,
+        /// A message store (ADR 0019) is in use: messages for people who
+        /// are away can wait on the network.
+        store: bool,
     },
     /// Not running, or not answering; the address is known if it ever ran.
-    Stopped {
-        address: Option<String>,
-    },
+    Stopped { address: Option<String> },
 }
 
 impl Status {
     pub fn address(&self) -> Option<&str> {
         match self {
-            Status::Running { address } => Some(address),
+            Status::Running { address, .. } => Some(address),
             Status::Stopped { address } => address.as_deref(),
         }
     }
@@ -301,6 +308,8 @@ impl Store {
         struct Raw {
             address: String,
             time: u64,
+            #[serde(default)]
+            store: Option<String>,
         }
         let known = fs::read_to_string(self.root.join("address"))
             .ok()
@@ -310,9 +319,10 @@ impl Store {
             .and_then(|b| serde_json::from_slice::<Raw>(&b).ok())
             .filter(|r| valid_address(&r.address));
         match raw {
-            Some(r) if now.saturating_sub(r.time) <= STATUS_FRESH_SECS => {
-                Status::Running { address: r.address }
-            }
+            Some(r) if now.saturating_sub(r.time) <= STATUS_FRESH_SECS => Status::Running {
+                store: r.store.as_deref().is_some_and(valid_address),
+                address: r.address,
+            },
             Some(r) => Status::Stopped {
                 address: Some(r.address),
             },
@@ -676,6 +686,23 @@ mod tests {
     }
 
     #[test]
+    fn a_copy_left_in_a_store_says_so() {
+        let rec = |state: &str, stored: bool| -> Record {
+            serde_json::from_str(&format!(
+                r#"{{"id":"m","direction":"out","peer":"{B}","text":"x","state":"{state}","stored":{stored}}}"#
+            ))
+            .expect("record")
+        };
+        assert_eq!(rec("sent", false).marker(), "sent");
+        assert_eq!(rec("sent", true).marker(), "sent, kept on the network");
+        assert_eq!(rec("failed", false).marker(), "FAILED");
+        assert_eq!(rec("failed", true).marker(), "stopped, may still arrive");
+        assert_eq!(rec("delivered", true).marker(), "delivered");
+        // Records written before ADR 0019 have no "stored".
+        assert!(!rec("queued", false).stored);
+    }
+
+    #[test]
     fn status_peers_and_names() {
         let s = temp("status");
         assert_eq!(s.status(100), Status::Stopped { address: None });
@@ -691,13 +718,39 @@ mod tests {
             format!(r#"{{"address":"{A}","name":"n","pid":1,"time":90}}"#),
         )
         .expect("w");
-        assert_eq!(s.status(100), Status::Running { address: A.into() });
+        assert_eq!(
+            s.status(100),
+            Status::Running {
+                address: A.into(),
+                store: false
+            }
+        );
         assert_eq!(
             s.status(90 + STATUS_FRESH_SECS + 1),
             Status::Stopped {
                 address: Some(A.into())
             }
         );
+        // A message store in use (ADR 0019); a malformed one is none.
+        for (store, expected) in [
+            (format!(r#""{B}""#), true),
+            ("null".into(), false),
+            (r#""zz""#.into(), false),
+        ] {
+            fs::write(
+                s.root.join("status.json"),
+                format!(r#"{{"address":"{A}","time":90,"store":{store}}}"#),
+            )
+            .expect("w");
+            assert_eq!(
+                s.status(100),
+                Status::Running {
+                    address: A.into(),
+                    store: expected
+                },
+                "{store}"
+            );
+        }
         fs::write(s.root.join("status.json"), r#"{"address":"zz","time":99}"#).expect("w");
         assert_eq!(s.status(100).address(), Some(A));
 

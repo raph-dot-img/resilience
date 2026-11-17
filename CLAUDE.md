@@ -59,7 +59,11 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            systemd USER service resilience-messages (nix/packages/
    │                            resilience-messages: Python around LXMF.LXMRouter; per-account
    │                            identity + messages in ~/.local/share/resilience/messages;
-   │                            outbox/ID.json + cancel/ID in, messages/ID.json out). rns and lxmf
+   │                            outbox/ID.json + cancel/ID in, messages/ID.json out), and
+   │                            resilience-messages-node.service (ADR 0019: message store = LXMF
+   │                            propagation node, `resilience-messages node`, DynamicUser, AF_UNIX
+   │                            only, no delivery address, cost 13, peers 1 hop, 32 MB;
+   │                            resilience.comms.store.{enable (default on),limitMB}). rns and lxmf
    │                            are UNFREE (Reticulum License): allowed by name only in
    │                            nix/packages/resilience-reticulum (its own nixpkgs import)
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
@@ -196,6 +200,13 @@ user service `resilience-messages` takes the request, sends through the
 machine's Reticulum instance and rewrites `messages/ID.json` (queued →
 sent → delivered only on LXMF's proof; failed). The TUI never touches the
 network; names from the network are shown as claims (`"name"?`).
+Store-and-forward (ADR 0019): still undelivered after 2 min → a copy with
+the same LXMF hash (record `ts`) goes to the machine's store
+(`/run/resilience-messages-node/address`) or the nearest heard; `sent` +
+`"stored": true` ("sent, kept on the network"); direct attempts go on.
+Stores peer on the local network; programs collect every 5 min. Programs
+attach with `require_shared_instance` (exit 75 if rnsd is not up) and save
+heard keys (`known_destinations`) every 10 min and at exit.
 
 Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
 with `connection.permissions user:U`, no secret → thread: `nmcli connection
@@ -405,7 +416,9 @@ Slice 3 = `resilience-core/src/messages.rs` and the TUI screens
 (`crates/resilience-tui/src/chat_ui.rs`: `Builtin::Chat` "Local
 messages" under Communications, views Chats / Nearby / Chat, dialog
 `Modal::ChatInput`), handbook `60-local-messages.md`, vm-comms through
-the TUI. Open: a propagation node (store-and-forward); file exchange; multi-line
+the TUI. Slice 4 = ADR 0019 store-and-forward (`resilience-messages node`,
+service `resilience-messages-node`, client fallback to the store, TUI
+markers, vm-comms subtest with alpha switched off). Open: file exchange; multi-line
 messages; Internet messengers (toxic, signal-cli); Yggdrasil/BATMAN.
 `resilience.comms.enable` is ON by default in the standard edition
 (owner, 2026-11-16; `nix/profiles/standard.nix`, mkDefault) and off in
@@ -478,8 +491,10 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 - Local messaging: on in standard, off in minimal; two machines tested, in
   VMs only (with the minimal profile plus the option; the standard live
   ISO boots with it running, ~+45 MiB RAM, but has not exchanged messages);
-  no store-and-forward node (both computers must be on at the same time at
-  some point within 7 days); one-line messages; no "read" state; received
+  store-and-forward needs a third computer that is on (or the
+  recipient's machine on while its account is logged out); stored
+  messages never become "delivered" unless a direct attempt also
+  succeeds; one-line messages; no "read" state; received
   messages are not announced outside the messages screens.
 - Power profiles not implemented (schedutil governor only). Not measured yet.
 - Keyboard: all consoles share one keymap (kernel); a login prompt starting
@@ -517,7 +532,8 @@ Phase 5 (maps) is parked.
 - 0015 Guided cryptography: resilience-crypto (age, minisign, coreutils, xkcdpass, openssl, GnuPG), secrets only typed into the tools
 - 0016 Offline maps: MBTiles vector packs (profile resilience-1) built reproducibly in Nix, hardened reader, block-character viewer
 - 0017 Keyboard layout: US default, choice in Settings via helper `set-keymap` (allow_active=yes, listed layouts only), reset before every login prompt
-- 0018 Local messaging: Reticulum + LXMF (Reticulum License, not free: opt-in module), one unprivileged instance per machine on the local network only, per-user identities and file-based message store (program not written yet)
+- 0018 Local messaging: Reticulum + LXMF (Reticulum License, not free: opt-in module), one unprivileged instance per machine on the local network only, per-user identities and file-based message store
+- 0019 Store-and-forward: a message store (LXMF propagation node, our own `resilience-messages node`, no delivery address) on every machine with messaging; clients go direct first, a copy to the store after 2 min
 
 ## 18. How to continue safely
 

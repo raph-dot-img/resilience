@@ -24,6 +24,15 @@ beyond the local network: there is no Internet hub, no TCP and no routing
 for others. This is the one exception to "nothing in the background", and
 it exists only on machines where the option is set.
 
+With it, by default, the machine also runs a **message store**
+(`resilience.comms.store.enable`, ADR 0019): it keeps messages, encrypted
+for their recipients, for people who are away, and exchanges them with
+the stores of the other machines on the local network (about every half
+minute while there is something to exchange). Each logged-in account's
+messaging program asks its store for waiting messages every 5 minutes.
+This traffic goes through the same Reticulum instance and stays on the
+local network.
+
 ## Network states shown by the interface
 
 | State | Meaning | How it is determined |

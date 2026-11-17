@@ -10,6 +10,10 @@
 # machine with its proof; with the other program stopped it waits and
 # arrives later. Last, through the interface on both consoles: people
 # nearby, writing, "delivered" on one screen and the text on the other.
+#
+# Store-and-forward (ADR 0019): each machine runs a message store; a
+# message for an account that is logged out is left in it, copied to the
+# other machine's store, and collected after the sender's machine is off.
 { self }:
 { ... }:
 let
@@ -104,6 +108,24 @@ in
         a = alpha.succeed(f"grep rpc_key {CLIENT}")
         b = beta.succeed(f"grep rpc_key {CLIENT}")
         assert a != b, "each machine has its own key"
+
+    STORE = "/run/resilience-messages-node/address"
+    STORE_DIR = "/var/lib/private/resilience-messages-node"
+
+    with subtest("the message store is unprivileged and talks only to the instance"):
+        for m in (alpha, beta):
+            m.wait_for_unit("resilience-messages-node.service")
+            m.wait_for_file(STORE)
+            m.succeed(f"grep -Eqx '[0-9a-f]{{32}}' {STORE}")
+            assert m.succeed(f"stat -c %a {STORE}").strip() == "644"
+            assert m.succeed(f"stat -c %a {STORE_DIR}").strip() == "700"
+            assert m.succeed(f"stat -c %a {STORE_DIR}/identity").strip() == "600"
+            pid = m.succeed("pgrep -f 'resilience_messages.p[y] node'").strip()
+            user = m.succeed(f"ps -o user= -p {pid}").strip()
+            assert user and user != "root", user
+            # No network socket of its own: only the instance's local one.
+            m.fail(f"ss -H -tuanp | grep 'pid={pid},'")
+        assert alpha.succeed(f"cat {STORE}") != beta.succeed(f"cat {STORE}")
 
     with subtest("the two machines find each other on the local network"):
         for m in (alpha, beta):
@@ -241,6 +263,55 @@ in
         alpha.succeed("systemctl restart resilience-reticulum.service")
         alpha.wait_for_unit("resilience-reticulum.service")
         assert alpha.succeed(f"grep rpc_key {CLIENT}") == before
+        # The store follows the instance.
+        alpha.wait_for_unit("resilience-messages-node.service")
         alpha.succeed("systemctl is-system-running --wait | grep -qx running")
+
+    with subtest("store-and-forward: written while away, collected after the sender is off"):
+        # Beta's instance comes back (stopped above) and its store with it;
+        # beta's account is logged out of messaging (its program stopped).
+        beta.succeed("systemctl start resilience-reticulum.service")
+        beta.wait_for_unit("resilience-messages-node.service")
+        beta.succeed("systemctl --user -M alice@ stop resilience-messages.service")
+        alpha.succeed("systemctl --user -M alice@ restart resilience-messages.service")
+        b_store = beta.succeed(f"cat {STORE}").strip()
+        a_store = alpha.succeed(f"cat {STORE}").strip()
+        # Alpha's program uses its own machine's store.
+        alpha.wait_until_succeeds(f"grep -q '\"store\": \"{a_store}\"' {BOX}/status.json", timeout=60)
+
+        send(alpha, "m3", b_addr, "Left for later")
+        # Not delivered (nobody there); after two minutes a copy goes to
+        # the store, and the message says so, never "delivered".
+        alpha.wait_until_succeeds(f"grep -q '\"stored\": true' {BOX}/messages/m3.json", timeout=300)
+        rec = record(alpha, "m3")
+        assert rec["state"] == "sent" and rec["stored"] is True, rec
+        # The two stores found each other and beta's has the copy.
+        beta.wait_until_succeeds(f"ls {STORE_DIR}/lxmf/lxmf/messagestore | grep .", timeout=240)
+        alpha.succeed(f"ls {STORE_DIR}/lxmf/lxmf/messagestore | grep .")
+        # Encrypted for the recipient: the text is not in either store.
+        for m in (alpha, beta):
+            m.fail(f"grep -r -F 'Left for later' {STORE_DIR}")
+
+        open_messages(alpha)
+        wait_tty(alpha, "wait in a message store")
+        wait_tty(alpha, re.escape('"alice"?'))
+        alpha.send_key("ret")
+        wait_tty(alpha, r"You \[sent, kept on the network\][^\n]*\n[^\n]*Left for later")
+
+        # The sender's computer is switched off; the recipient comes back.
+        alpha.shutdown()
+        beta.succeed("systemctl --user -M alice@ start resilience-messages.service")
+        beta.wait_until_succeeds(f"grep -l 'Left for later' {BOX}/messages/in-*.json", timeout=180)
+        got = json.loads(beta.succeed(f"grep -l 'Left for later' {BOX}/messages/in-*.json | head -1 | xargs cat"))
+        assert got["state"] == "received" and got["peer"] == a_addr, got
+        # Checked with the key beta's account kept from earlier messages.
+        beta.wait_until_succeeds(f"grep -l 'Left for later' {BOX}/messages/in-*.json | xargs grep -q '\"verified\": true'", timeout=60)
+        assert beta.succeed(f"grep -l 'Left for later' {BOX}/messages/in-*.json | wc -l").strip() == "1"
+        open_messages(beta)
+        wait_tty(beta, re.escape('"alice"?'))
+        beta.send_key("ret")
+        text = wait_tty(beta, r"Them \[from them\][^\n]*\n[^\n]*Left for later", timeout=60)
+        assert "from them, NOT VERIFIED]" not in text, text
+        beta.succeed("systemctl is-system-running --wait | grep -qx running")
   '';
 }

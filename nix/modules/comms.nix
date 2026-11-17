@@ -6,6 +6,10 @@
 #       network), no transport, no remote management.
 #   resilience-messages (systemd user service)  each account's messaging
 #       program, with its identity and messages in its own home.
+#   resilience-messages-node.service  the machine's message store (ADR
+#       0019): an LXMF propagation node that keeps messages, encrypted for
+#       their recipients, for people who are away; unprivileged, bounded,
+#       peering only with the stores of the local network.
 #   /run/resilience-reticulum/client/config  what programs of users need
 #       to attach to the instance (instance name and RPC key). Readable by
 #       every local account on purpose (ADR 0018 §4); never in the store.
@@ -60,6 +64,42 @@ let
 
     [interfaces]
   '';
+
+  storeAddress = "/run/resilience-messages-node/address";
+
+  # Attaching before rnsd's local socket exists fails (exit 75, ADR 0019):
+  # wait for it, so that a boot does not go through several restarts.
+  waitForInstance = pkgs.writeShellScript "resilience-wait-for-reticulum" ''
+    for _ in $(${pkgs.coreutils}/bin/seq 60); do
+      ${pkgs.gnugrep}/bin/grep -q '@rns/${instance}$' /proc/net/unix && exit 0
+      ${pkgs.coreutils}/bin/sleep 0.5
+    done
+    exit 0
+  '';
+
+  hardening = {
+    NoNewPrivileges = true;
+    CapabilityBoundingSet = "";
+    ProtectSystem = "strict";
+    ProtectHome = true;
+    PrivateTmp = true;
+    PrivateDevices = true;
+    ProtectKernelTunables = true;
+    ProtectKernelModules = true;
+    ProtectKernelLogs = true;
+    ProtectControlGroups = true;
+    ProtectClock = true;
+    ProtectHostname = true;
+    RestrictNamespaces = true;
+    RestrictRealtime = true;
+    RestrictSUIDSGID = true;
+    LockPersonality = true;
+    SystemCallArchitectures = "native";
+    SystemCallFilter = [
+      "@system-service"
+      "~@privileged"
+    ];
+  };
 
   prepare = pkgs.writeShellScript "resilience-reticulum-prepare" ''
     set -eu
@@ -126,6 +166,25 @@ in
       example = [ "wlan0" ];
       description = "Network interfaces to use. Empty: every local network interface.";
     };
+    store = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Run a message store on this machine (ADR 0019): an LXMF
+          propagation node that keeps messages for people whose computer
+          is off or who are logged out, and exchanges them with the stores
+          of other machines on the local network. Messages in it are
+          encrypted for their recipients; the store cannot read them. It
+          uses about 40 MB of memory and at most `limitMB` of disk.
+        '';
+      };
+      limitMB = mkOption {
+        type = types.ints.between 1 100000;
+        default = 32;
+        description = "Disk space for the messages the store keeps for others, in megabytes (1 MB holds hundreds of short messages).";
+      };
+    };
     clientConfig = mkOption {
       type = types.path;
       readOnly = true;
@@ -147,7 +206,7 @@ in
       wantedBy = [ "default.target" ];
       unitConfig.ConditionUser = "!root";
       serviceConfig = {
-        ExecStart = "${cfg.messagesPackage}/bin/resilience-messages run --client-config ${cfg.clientConfig}";
+        ExecStart = "${cfg.messagesPackage}/bin/resilience-messages run --client-config ${cfg.clientConfig} --local-store ${storeAddress}";
         Restart = "on-failure";
         RestartSec = 10;
         NoNewPrivileges = true;
@@ -155,11 +214,45 @@ in
       };
     };
 
+    systemd.services.resilience-messages-node = lib.mkIf cfg.store.enable {
+      description = "Message store of Resilience (local messaging, store-and-forward)";
+      # Started, stopped and restarted with the instance (and if the
+      # instance crashes, Reticulum reattaches the store by itself).
+      wantedBy = [
+        "multi-user.target"
+        "resilience-reticulum.service"
+      ];
+      partOf = [ "resilience-reticulum.service" ];
+      after = [ "resilience-reticulum.service" ];
+      serviceConfig = hardening // {
+        ExecStartPre = waitForInstance;
+        ExecStart = lib.concatStringsSep " " [
+          "${cfg.messagesPackage}/bin/resilience-messages node"
+          "--dir /var/lib/resilience-messages-node"
+          "--client-config ${cfg.clientConfig}"
+          "--address-file ${storeAddress}"
+          "--limit-mb ${toString cfg.store.limitMB}"
+        ];
+        Restart = "on-failure";
+        RestartSec = 5;
+        DynamicUser = true;
+        StateDirectory = "resilience-messages-node";
+        StateDirectoryMode = "0700";
+        RuntimeDirectory = "resilience-messages-node";
+        RuntimeDirectoryMode = "0755";
+        UMask = "0077";
+        # It only talks to the machine's instance, over its local socket.
+        RestrictAddressFamilies = [ "AF_UNIX" ];
+        MemoryMax = "192M";
+      };
+    };
+
     systemd.services.resilience-reticulum = {
       description = "Reticulum network instance of Resilience (local messaging)";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
-      serviceConfig = {
+      # Unprivileged, and nothing to hold on to.
+      serviceConfig = hardening // {
         ExecStartPre = prepare;
         ExecStart = "${cfg.package}/bin/rnsd --config /var/lib/resilience-reticulum";
         Restart = "on-failure";
@@ -169,33 +262,11 @@ in
         StateDirectoryMode = "0700";
         RuntimeDirectory = "resilience-reticulum";
         RuntimeDirectoryMode = "0755";
-        # Unprivileged, and nothing to hold on to.
-        NoNewPrivileges = true;
-        CapabilityBoundingSet = "";
-        ProtectSystem = "strict";
-        ProtectHome = true;
-        PrivateTmp = true;
-        PrivateDevices = true;
-        ProtectKernelTunables = true;
-        ProtectKernelModules = true;
-        ProtectKernelLogs = true;
-        ProtectControlGroups = true;
-        ProtectClock = true;
-        ProtectHostname = true;
         RestrictAddressFamilies = [
           "AF_UNIX"
           "AF_INET"
           "AF_INET6"
           "AF_NETLINK"
-        ];
-        RestrictNamespaces = true;
-        RestrictRealtime = true;
-        RestrictSUIDSGID = true;
-        LockPersonality = true;
-        SystemCallArchitectures = "native";
-        SystemCallFilter = [
-          "@system-service"
-          "~@privileged"
         ];
         MemoryMax = "256M";
       };

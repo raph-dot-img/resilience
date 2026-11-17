@@ -36,3 +36,4 @@ secrets/
 .vscode/
 resilience-dev.qcow2
 .claude/worktrees/
+__pycache__/

@@ -90,7 +90,8 @@ Slices 1 to 9 are in `develop`.
 - ✅ Per-user messaging program `resilience-messages` (identity, queue with retries, delivery states, signature check), tested with the real libraries (`comms-messages`) and between two VMs
 - ✅ TUI "Communications" > Local messages (conversations, people nearby with claimed names, writing, per-message state, "not verified", own names for addresses, my address), handbook page; shown only where the module is on
 - ✅ Local messaging on by default in the standard edition (off in minimal); live ISO rebuilt and boot-tested with it (2026-11-17)
-- ⬜ Store-and-forward for recipients that are off (LXMF propagation node), file exchange
+- ✅ Store-and-forward for recipients that are away: a message store on every machine with messaging, stores exchange messages on the local network (ADR 0019), tested between two VMs with the sender switched off
+- ⬜ File exchange; multi-line messages
 - ⬜ Yggdrasil / BATMAN-adv profiles; Tox, signal-cli (documented as unofficial)
 
 ## Phase 7 — Radio and additional applications 🟡
@@ -102,16 +103,31 @@ Slices 1 to 9 are in `develop`.
 Text installer, offline update bundles (`nix copy` + minisign manifest),
 signed pack verification, rollback tests, installation docs.
 
-### Planned for the final product: `build_resilience.sh` (requested 2026-11-14)
+### Planned for the final product: `resilience_builder.sh` (requested 2026-11-14, extended 2026-11-17)
 A self-contained script that builds a custom ISO from answers to plain
 questions, for people who do not write Nix. Sketch:
 
 - Questions, each with a sensible default and an explanation:
   - edition (minimal or standard);
+  - **live ISO or installer** ("Do you want an installer or a live
+    ISO?"; the installer needs the Phase 8 installer below);
   - accounts, and the security mode of each;
   - which account logs in automatically, if any;
   - language and keyboard layout, time zone;
+  - default theme of the interface (green, amber, cyan, monochrome: the
+    four themes that exist today);
   - Wi-Fi on or off;
+  - local messaging ("Do you want to install Reticulum? (Y/n)"), showing
+    the Reticulum License's conditions first, since saying yes accepts
+    them (ADR 0018), and whether this machine keeps a message store
+    (ADR 0019);
+  - **map regions from OpenStreetMap**, as Geofabrik paths separated by
+    commas (`europe/france, north-america/us/california`): the script
+    checks each path against Geofabrik's index, shows the download size,
+    and builds the packs with `nix/maps` (osmium needs about 2 GB of RAM
+    per region and big regions take a long time: say so before
+    starting). The downloaded extract is pinned by its hash in the
+    generated file, so a rebuild is the same;
   - which resource packs, or suggested sets, to **put on the image**
     ("Would you like to download Wikipedia?"), with sizes and the free
     space needed;
@@ -131,6 +147,32 @@ questions, for people who do not write Nix. Sketch:
 - Passwords are never asked by the script or stored in the Nix files.
   First-boot setup asks for them, or hashed passwords come from a file
   outside the repository.
+
+### Planned: Resilience Netinstall, `resilience_netinst.iso` (requested 2026-11-17)
+A small bootable installer that installs Resilience on a disk by
+downloading it from the Internet, for machines that have a connection
+at install time. The full offline ISO stays the main way to install:
+the netinstall is an addition, never a requirement.
+
+- Three modes: **Simplified** (a few questions, safe defaults: whole
+  disk, standard edition, one account), **Basic** (the questions of
+  `resilience_builder.sh`: accounts and modes, keyboard, theme,
+  messaging, partitions from a short list) and **Expert** (manual
+  partitioning, LUKS options, the generated Nix configuration shown and
+  editable before installing).
+- Choosing the offline resources to install or turn on: resource packs
+  and suggested sets, map regions, messaging, with sizes and the free
+  space left on the target disk.
+- Complete tools on the image for repairs: partitioning, file system
+  and LUKS tools, `nixos-enter`, network diagnostics, the handbook.
+- Downloads are verified, never trusted: packs by their pinned SHA-256
+  (as today), the system from signed binary caches. Open question for
+  when it is built: Resilience's own packages are not in
+  cache.nixos.org, so they must be built on the target (slow on small
+  machines) or come from a cache of our own signed with a published key.
+- The network connection uses the existing Wi-Fi flow (nmcli, password
+  on stdin), and nothing is downloaded before the user confirms the
+  summary with the total size.
 
 ## Phase 9 — Audit and release ⬜
 Independent architecture and security reviews, `cargo deny`, license audit,

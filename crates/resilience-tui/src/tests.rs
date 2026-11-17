@@ -3531,6 +3531,48 @@ fn my_address_and_a_stopped_program_are_said_plainly() {
 }
 
 #[test]
+fn a_message_store_and_a_copy_left_in_it_are_shown() {
+    // No store heard: said plainly on the conversations screen.
+    let mut a = chat_app("chat-nostore");
+    open(&mut a, Builtin::Chat);
+    let screen = render(&mut a, 120, 30);
+    assert!(
+        screen.contains("No message store on this network"),
+        "{screen}"
+    );
+
+    // A store in use (ADR 0019) and a message whose copy waits in it.
+    let mut a = chat_app("chat-store");
+    let box_ = resilience_core::messages::store_dir(&a.home);
+    std::fs::write(
+        box_.join("status.json"),
+        format!(
+            r#"{{"address":"{ME}","name":"demo","pid":1,"time":{},"store":"{MARIE}"}}"#,
+            crate::app::chat_now()
+        ),
+    )
+    .expect("w");
+    std::fs::write(
+        box_.join("messages").join("m1.json"),
+        format!(
+            r#"{{"id":"m1","direction":"out","peer":"{MARIE}","text":"Left for later","created":{},"state":"sent","stored":true,"detail":"a copy waits"}}"#,
+            crate::app::chat_now()
+        ),
+    )
+    .expect("w");
+    open(&mut a, Builtin::Chat);
+    press(&mut a, KeyCode::Up);
+    let screen = render(&mut a, 120, 30);
+    assert!(screen.contains("wait in a message store"), "{screen}");
+    press(&mut a, KeyCode::Enter);
+    let screen = render(&mut a, 120, 30);
+    assert!(screen.contains("[sent, kept on the network]"), "{screen}");
+    assert!(screen.contains("Left for later"), "{screen}");
+    assert!(!screen.contains("[delivered]"), "{screen}");
+    assert_console_glyphs(&screen);
+}
+
+#[test]
 fn writing_to_an_address_saves_a_request_and_never_claims_more() {
     let mut a = chat_app("chat-write");
     let box_ = resilience_core::messages::store_dir(&a.home);

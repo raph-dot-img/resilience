@@ -9,7 +9,8 @@ talks to the interface through files only:
     identity        the account's Reticulum identity (private key, 0600)
     address         its LXMF address (32 hex digits), written here
     name            optional display name, written by the interface
-    status.json     written here every few seconds: running, address, time
+    status.json     written here every second: running, address, time, and
+                    "store", the message store (propagation node) in use
     outbox/ID.json  written by the interface: {"to": ADDRESS, "text": TEXT}
     cancel/ID       written by the interface: give up on message ID
     messages/ID.json  written here only, one per message:
@@ -20,14 +21,29 @@ talks to the interface through files only:
 
 States (the specification's, never more than what happened):
   queued     kept here; no confirmed delivery yet, it will be tried again
-  sent       handed to the network, no proof of delivery yet
+  sent       handed to the network, no proof of delivery yet; with
+             "stored": true, a copy waits in a message store on the local
+             network for the recipient to collect it (ADR 0019)
   delivered  the recipient's program returned LXMF's delivery proof
   failed     given up (cancelled, too old, or refused), see "detail"
   received   an incoming message; "verified" says whether its signature
              was checked against the sender's announced key (it becomes
              true later if the sender is only identified afterwards)
 
-Usage: resilience-messages run [--dir DIR] [--client-config FILE]
+Store-and-forward (ADR 0019): a message still undelivered after two minutes
+is also left with a message store, an LXMF propagation node: the
+machine's own (`node` below) or one heard on the local network. Direct
+attempts go on; both copies have the same LXMF hash, so the recipient
+keeps one. The program collects its own waiting messages from the store
+regularly.
+
+  resilience-messages node   the machine's message store: an LXMF
+      propagation node with no address of its own (it receives nothing for
+      itself), a bounded store, and peering only with the stores of the
+      local network. Run by the system as an unprivileged user.
+
+Usage: resilience-messages run [--dir DIR] [--client-config FILE] [--local-store FILE]
+       resilience-messages node --dir DIR [--client-config FILE] [--address-file FILE] [--limit-mb N]
 """
 
 import json
@@ -40,6 +56,7 @@ import threading
 import time
 
 CLIENT_CONFIG = "/run/resilience-reticulum/client/config"
+LOCAL_STORE = "/run/resilience-messages-node/address"
 ADDRESS = re.compile(r"[0-9a-f]{32}")
 MESSAGE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 # Limits on what is accepted from the interface and from the network.
@@ -54,10 +71,26 @@ RETRY_DELAYS = [30, 60, 300, 900, 3600]
 GIVE_UP_AFTER = 7 * 24 * 3600
 ANNOUNCE_EVERY = 600
 ANNOUNCE_BEFORE_SENDING = 60
-# Unverified messages are checked again for this long, at most this many.
-RECHECK_FOR = 600
+# Unverified messages are checked again for this long, at most this many
+# (a message collected from a store may come from someone who is away).
+RECHECK_FOR = 7 * 24 * 3600
 MAX_UNVERIFIED = 200
 TICK = 1.0
+# Store-and-forward (ADR 0019).
+PROPAGATE_AFTER = 120
+STORE_RETRY = 300
+COLLECT_FIRST = 20
+COLLECT_EVERY = 300
+STORE_HEARD_FOR = 3600
+MAX_STORES = 50
+NODE_ANNOUNCE_EVERY = 600
+# The lowest stamp cost LXMF accepts (LXMRouter.PROPAGATION_COST_MIN):
+# slow computers must be able to leave messages.
+NODE_STAMP_COST = 13
+# Stores asking more than LXMF's default cost are not used.
+MAX_STORE_COST = 16
+NODE_STORAGE_MB = 32
+SAVE_KEYS_EVERY = 600
 
 
 def write_json(path, value, mode=0o600):
@@ -179,8 +212,113 @@ class Store:
             return fallback
 
 
+def read_address(path):
+    """A 32-hex-digit address from a small file, or None."""
+    try:
+        with open(path, encoding="ascii") as f:
+            text = f.read(100).strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return text if ADDRESS.fullmatch(text) else None
+
+
+def attach(RNS, configdir, client_config):
+    """Attach to the machine's Reticulum instance, never start one.
+
+    Without require_shared_instance, a program started before the instance
+    would become the shared instance itself and take its socket name.
+    """
+    os.makedirs(configdir, mode=0o700, exist_ok=True)
+    # The instance's name and key may change when the service restarts.
+    shutil.copyfile(client_config, os.path.join(configdir, "config"))
+    os.chmod(os.path.join(configdir, "config"), 0o600)
+    try:
+        RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING, require_shared_instance=True)
+    except SystemError:
+        sys.stderr.write("the machine's Reticulum instance is not running yet\n")
+        sys.stdout.flush()
+        os._exit(75)
+
+
+def load_identity(RNS, path):
+    if os.path.exists(path):
+        identity = RNS.Identity.from_file(path)
+        if identity is None:
+            raise SystemExit("the identity file is damaged: " + path)
+        return identity
+    identity = RNS.Identity()
+    old = os.umask(0o077)
+    try:
+        identity.to_file(path)
+    finally:
+        os.umask(old)
+    return identity
+
+
+def save_keys(RNS):
+    """Keep the public keys heard so far (Reticulum's clients never do it
+    themselves): a message collected from a store while its sender is away
+    can then still be checked."""
+    try:
+        RNS.Identity.save_known_destinations()
+    except Exception:
+        pass
+
+
+def shut_down(RNS, router):
+    """LXMF's own state (delivered message ids, a node's peers), the keys."""
+    try:
+        router.exit_handler()
+    except Exception:
+        pass
+    save_keys(RNS)
+    sys.stdout.flush()
+    # Reticulum's exit handlers may hang on the instance's socket.
+    os._exit(0)
+
+
+class Stores:
+    """Message stores (LXMF propagation nodes) heard on the network."""
+
+    aspect_filter = "lxmf.propagation"
+    receive_path_responses = True
+
+    def __init__(self, LXMF):
+        self.LXMF = LXMF
+        self.lock = threading.Lock()
+        self.heard = {}
+
+    def received_announce(self, destination_hash, announced_identity, app_data):
+        try:
+            if not self.LXMF.pn_announce_data_is_valid(app_data):
+                return
+            import RNS.vendor.umsgpack as msgpack
+
+            data = msgpack.unpackb(app_data)
+            if not data[2]:
+                return  # a node that says it is not running
+            if int(data[5][0]) > MAX_STORE_COST:
+                return  # its stamps would keep this computer busy
+        except Exception:
+            return
+        with self.lock:
+            if destination_hash not in self.heard and len(self.heard) >= MAX_STORES:
+                del self.heard[min(self.heard, key=self.heard.get)]
+            self.heard[destination_hash] = time.time()
+
+    def nearest(self, RNS):
+        """The closest store heard in the last hour, the most recent first."""
+        now = time.time()
+        with self.lock:
+            fresh = [(h, t) for h, t in self.heard.items() if now - t < STORE_HEARD_FOR]
+        if not fresh:
+            return None
+        fresh.sort(key=lambda ht: (RNS.Transport.hops_to(ht[0]), -ht[1]))
+        return fresh[0][0]
+
+
 class Messenger:
-    def __init__(self, store, client_config):
+    def __init__(self, store, client_config, local_store=LOCAL_STORE):
         import LXMF
         import RNS
 
@@ -188,22 +326,8 @@ class Messenger:
         self.store = store
         self.lock = threading.RLock()
         self.stop = threading.Event()
-        # The instance's name and key may change when the service restarts.
-        shutil.copyfile(client_config, store.path("reticulum", "config"))
-        os.chmod(store.path("reticulum", "config"), 0o600)
-        RNS.Reticulum(configdir=store.path("reticulum"), loglevel=RNS.LOG_WARNING)
-        idp = store.path("identity")
-        if os.path.exists(idp):
-            self.identity = RNS.Identity.from_file(idp)
-        else:
-            self.identity = RNS.Identity()
-            old = os.umask(0o077)
-            try:
-                self.identity.to_file(idp)
-            finally:
-                os.umask(old)
-        if self.identity is None:
-            raise SystemExit("the identity file is damaged: " + idp)
+        attach(RNS, store.path("reticulum"), client_config)
+        self.identity = load_identity(RNS, store.path("identity"))
         self.router = LXMF.LXMRouter(identity=self.identity, storagepath=store.path("lxmf"))
         self.name = store.display_name(os.environ.get("USER", "user"))
         self.dest = self.router.register_delivery_identity(self.identity, display_name=self.name)
@@ -220,13 +344,24 @@ class Messenger:
             self.peers = {}
         self.peers_dirty = False
         RNS.Transport.register_announce_handler(self)
-        # After a restart, what was on its way is simply queued again.
+        # After a restart, what was on its way is simply queued again (a
+        # copy already in a store stays "sent").
         for rec in self.records.values():
             if rec.get("direction") == "out" and rec.get("state") == "sent":
-                rec["state"] = "queued"
+                if not rec.get("stored"):
+                    rec["state"] = "queued"
                 rec["next_try"] = 0
                 store.save(rec)
         self.last_announce = 0.0
+        # Store-and-forward (ADR 0019).
+        self.local_store_file = local_store
+        self.stores = Stores(LXMF)
+        RNS.Transport.register_announce_handler(self.stores)
+        self.store_in_use = None
+        self.to_store = {}
+        self.started = time.time()
+        self.next_collect = self.started + COLLECT_FIRST
+        self.last_keys_saved = self.started
 
     # --- Reticulum announce handler -------------------------------------
     aspect_filter = "lxmf.delivery"
@@ -321,6 +456,9 @@ class Messenger:
                     "detail": problem or "waiting for the recipient",
                     "attempts": 0,
                     "next_try": 0,
+                    # LXMF's timestamp, the same for every copy: a message
+                    # sent directly and through a store has one hash.
+                    "ts": time.time(),
                 }
                 if not isinstance(rec["peer"], str) or not ADDRESS.fullmatch(rec["peer"]):
                     rec["peer"] = ""
@@ -334,7 +472,15 @@ class Messenger:
                 if rec and rec.get("direction") == "out" and rec.get("state") in ("queued", "sent"):
                     rec["state"] = "failed"
                     rec["detail"] = "cancelled"
+                    if rec.get("stored"):
+                        rec["detail"] = "cancelled; the copy left in a message store may still arrive"
                     self.in_flight.pop(mid, None)
+                    m = self.to_store.pop(mid, None)
+                    if m is not None:
+                        try:
+                            self.router.cancel_outbound(m.message_id)
+                        except Exception:
+                            pass
                     self.store.save(rec)
 
     def try_send(self, rec):
@@ -344,6 +490,8 @@ class Messenger:
         if now - rec["created"] > GIVE_UP_AFTER:
             rec["state"] = "failed"
             rec["detail"] = "not delivered after 7 days"
+            if rec.get("stored"):
+                rec["detail"] += "; the copy left in a message store may still arrive"
             self.store.save(rec)
             return
         recipient = RNS.Identity.recall(peer)
@@ -352,7 +500,8 @@ class Messenger:
             RNS.Transport.request_path(peer)
             rec["attempts"] += 1
             rec["next_try"] = now + retry_delay(rec["attempts"])
-            rec["detail"] = "the recipient has not been heard on the network"
+            if not rec.get("stored"):
+                rec["detail"] = "the recipient has not been heard on the network"
             self.store.save(rec)
             return
         if now - self.last_announce > ANNOUNCE_BEFORE_SENDING:
@@ -362,13 +511,77 @@ class Messenger:
             self.last_announce = now
             rec["next_try"] = now + 2
             return
-        out = RNS.Destination(recipient, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
-        m = LXMF.LXMessage(out, self.dest, rec["text"], desired_method=LXMF.LXMessage.DIRECT)
+        m = self.lxmessage(rec, recipient, LXMF.LXMessage.DIRECT)
         rec["attempts"] += 1
-        rec["detail"] = "trying to reach the recipient"
+        if not rec.get("stored"):
+            rec["detail"] = "trying to reach the recipient"
         self.in_flight[rec["id"]] = m
         self.store.save(rec)
         self.router.handle_outbound(m)
+
+    def lxmessage(self, rec, recipient, method):
+        RNS, LXMF = self.RNS, self.LXMF
+        out = RNS.Destination(recipient, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
+        m = LXMF.LXMessage(out, self.dest, rec["text"], desired_method=method)
+        # The same timestamp, so the same hash, for every copy (older
+        # records have none: their creation time).
+        ts = rec.get("ts")
+        m.timestamp = float(ts) if isinstance(ts, (int, float)) else float(rec["created"])
+        return m
+
+    # --- store-and-forward (ADR 0019) -------------------------------------
+    def choose_store(self):
+        """The machine's own store when it runs one, else the nearest heard."""
+        local = read_address(self.local_store_file)
+        choice = bytes.fromhex(local) if local else self.stores.nearest(self.RNS)
+        if choice != self.store_in_use:
+            self.store_in_use = choice
+            if choice is not None:
+                self.router.set_outbound_propagation_node(choice)
+                self.next_collect = min(self.next_collect, time.time() + 2)
+
+    def leave_in_store(self, rec, now):
+        """Hand a copy of a message that waits to the message store."""
+        if self.store_in_use is None or rec["id"] in self.to_store:
+            return
+        if rec.get("stored") or now - rec["created"] < PROPAGATE_AFTER:
+            return
+        if now < rec.get("next_store_try", 0):
+            return
+        recipient = self.RNS.Identity.recall(bytes.fromhex(rec["peer"]))
+        if recipient is None:
+            # The store cannot encrypt for a key nobody here has heard.
+            return
+        rec["next_store_try"] = now + STORE_RETRY
+        m = self.lxmessage(rec, recipient, self.LXMF.LXMessage.PROPAGATED)
+        self.to_store[rec["id"]] = m
+        self.router.handle_outbound(m)
+
+    def follow_store(self, rec, m):
+        LXMF = self.LXMF
+        if m.state == LXMF.LXMessage.SENT:
+            del self.to_store[rec["id"]]
+            rec["stored"] = True
+            if rec["state"] == "queued":
+                rec["state"] = "sent"
+            if rec["state"] == "sent":
+                rec["detail"] = "a copy waits in a message store on the local network; no proof of delivery yet"
+            self.store.save(rec)
+        elif m.state in (LXMF.LXMessage.FAILED, getattr(LXMF.LXMessage, "REJECTED", -1),
+                         getattr(LXMF.LXMessage, "CANCELLED", -1)):
+            del self.to_store[rec["id"]]
+
+    def collect(self, now):
+        """Ask the store for the messages that wait for this account."""
+        if self.store_in_use is None or now < self.next_collect:
+            return
+        self.next_collect = now + COLLECT_EVERY
+        idle = (
+            self.LXMF.LXMRouter.PR_IDLE,
+            self.LXMF.LXMRouter.PR_COMPLETE,
+        )
+        if self.router.propagation_transfer_state in idle or self.router.propagation_transfer_state >= 0xF0:
+            self.router.request_messages_from_propagation_node(self.identity)
 
     def follow(self, rec, m):
         """Copy the state of an LXMF message in flight into its record."""
@@ -376,13 +589,17 @@ class Messenger:
         if m.state == LXMF.LXMessage.DELIVERED:
             rec["state"], rec["detail"] = "delivered", ""
             del self.in_flight[rec["id"]]
+            self.to_store.pop(rec["id"], None)
         elif m.state == LXMF.LXMessage.SENT and rec["state"] != "sent":
             rec["state"], rec["detail"] = "sent", "no proof of delivery yet"
         elif m.state in (LXMF.LXMessage.FAILED, getattr(LXMF.LXMessage, "REJECTED", -1)):
             del self.in_flight[rec["id"]]
-            rec["state"] = "queued"
             rec["next_try"] = time.time() + retry_delay(rec["attempts"])
-            rec["detail"] = "the recipient could not be reached; it will be tried again"
+            if rec.get("stored"):
+                rec["state"] = "sent"
+            else:
+                rec["state"] = "queued"
+                rec["detail"] = "the recipient could not be reached; it will be tried again"
         else:
             return
         self.store.save(rec)
@@ -391,6 +608,7 @@ class Messenger:
         self.accept_outbox()
         self.apply_cancels()
         now = time.time()
+        self.choose_store()
         with self.lock:
             for rec in list(self.records.values()):
                 if rec.get("direction") != "out":
@@ -398,19 +616,37 @@ class Messenger:
                 m = self.in_flight.get(rec["id"])
                 if m is not None:
                     self.follow(rec, m)
-                elif rec.get("state") == "queued" and rec.get("next_try", 0) <= now:
+                s = self.to_store.get(rec["id"])
+                if s is not None:
+                    self.follow_store(rec, s)
+                waiting = rec.get("state") == "queued" or (rec.get("state") == "sent" and rec.get("stored"))
+                if not waiting:
+                    continue
+                if m is None and rec.get("next_try", 0) <= now:
                     self.try_send(rec)
+                if rec.get("state") in ("queued", "sent"):
+                    self.leave_in_store(rec, now)
             self.recheck_signatures()
             if self.peers_dirty:
                 write_json(self.store.path("peers.json"), self.peers)
                 self.peers_dirty = False
             self.prune()
+        self.collect(now)
         if now - self.last_announce > ANNOUNCE_EVERY:
             self.router.announce(self.dest.hash)
             self.last_announce = now
+        if now - self.last_keys_saved > SAVE_KEYS_EVERY:
+            self.last_keys_saved = now
+            save_keys(self.RNS)
         write_json(
             self.store.path("status.json"),
-            {"address": self.address, "name": self.name, "pid": os.getpid(), "time": int(now)},
+            {
+                "address": self.address,
+                "name": self.name,
+                "pid": os.getpid(),
+                "time": int(now),
+                "store": self.store_in_use.hex() if self.store_in_use else None,
+            },
         )
 
     def prune(self):
@@ -438,39 +674,111 @@ class Messenger:
             pass
 
 
+class Node:
+    """The machine's message store (ADR 0019): an LXMF propagation node.
+
+    It registers no delivery address, so nothing is ever delivered *to* it:
+    it only keeps messages encrypted for others, within a size limit, and
+    exchanges them with the stores of the local network.
+    """
+
+    def __init__(self, root, client_config, address_file, limit_mb):
+        import LXMF
+        import RNS
+
+        self.RNS = RNS
+        self.stop = threading.Event()
+        os.makedirs(root, mode=0o700, exist_ok=True)
+        attach(RNS, os.path.join(root, "reticulum"), client_config)
+        identity = load_identity(RNS, os.path.join(root, "identity"))
+        self.router = LXMF.LXMRouter(
+            identity=identity,
+            storagepath=os.path.join(root, "lxmf"),
+            autopeer=True,
+            # Only the stores of the local network itself.
+            autopeer_maxdepth=1,
+            propagation_cost=NODE_STAMP_COST,
+            propagation_cost_flexibility=0,
+        )
+        self.router.set_message_storage_limit(megabytes=limit_mb)
+        self.router.enable_propagation()
+        self.address = self.router.propagation_destination.hash.hex()
+        if address_file:
+            tmp = address_file + ".tmp"
+            with open(tmp, "w", encoding="ascii") as f:
+                f.write(self.address + "\n")
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, address_file)
+        print(f"message store {self.address} running, limit {limit_mb} MB", flush=True)
+
+    def run(self):
+        last_announce = last_saved = time.time()
+        while not self.stop.wait(10):
+            now = time.time()
+            if now - last_announce > NODE_ANNOUNCE_EVERY:
+                self.router.announce_propagation_node()
+                last_announce = now
+            if now - last_saved > SAVE_KEYS_EVERY:
+                save_keys(self.RNS)
+                last_saved = now
+
+
 def default_dir():
     base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
     return os.path.join(base, "resilience", "messages")
 
 
+def usage():
+    sys.stderr.write("\n".join(__doc__.strip().splitlines()[-2:]) + "\n")
+    return 64
+
+
 def main(argv):
-    if len(argv) < 2 or argv[1] != "run":
-        sys.stderr.write(__doc__.strip().splitlines()[-1] + "\n")
-        return 64
-    root, client = default_dir(), CLIENT_CONFIG
+    if len(argv) < 2 or argv[1] not in ("run", "node"):
+        return usage()
+    mode = argv[1]
+    opts = {
+        "--dir": default_dir() if mode == "run" else None,
+        "--client-config": CLIENT_CONFIG,
+        "--local-store": LOCAL_STORE,
+        "--address-file": None,
+        "--limit-mb": str(NODE_STORAGE_MB),
+    }
+    allowed = {"run": ("--dir", "--client-config", "--local-store"),
+               "node": ("--dir", "--client-config", "--address-file", "--limit-mb")}[mode]
     args = argv[2:]
     while args:
-        if args[0] == "--dir" and len(args) > 1:
-            root, args = args[1], args[2:]
-        elif args[0] == "--client-config" and len(args) > 1:
-            client, args = args[1], args[2:]
+        if args[0] in allowed and len(args) > 1:
+            opts[args[0]], args = args[1], args[2:]
         else:
             sys.stderr.write(f"unknown argument {args[0]!r}\n")
             return 64
+    if opts["--dir"] is None:
+        return usage()
     if os.geteuid() == 0:
         sys.stderr.write("resilience-messages must not run as root\n")
         return 1
+    client = opts["--client-config"]
     if not os.path.isfile(client):
         sys.stderr.write(f"local messaging is not enabled on this computer ({client} is missing)\n")
         return 1
     os.umask(0o077)
-    messenger = Messenger(Store(root), client)
-    signal.signal(signal.SIGTERM, lambda *_: messenger.stop.set())
-    signal.signal(signal.SIGINT, lambda *_: messenger.stop.set())
-    messenger.run()
-    # Reticulum's exit handlers may hang on the instance's socket.
-    sys.stdout.flush()
-    os._exit(0)
+    if mode == "node":
+        try:
+            limit = int(opts["--limit-mb"])
+        except ValueError:
+            limit = 0
+        if not 1 <= limit <= 100000:
+            sys.stderr.write("--limit-mb must be a number of megabytes from 1 to 100000\n")
+            return 64
+        worker = Node(opts["--dir"], client, opts["--address-file"], limit)
+    else:
+        worker = Messenger(Store(opts["--dir"]), client, opts["--local-store"])
+    # After LXMF's own handlers: stop cleanly, then let LXMF save its state.
+    signal.signal(signal.SIGTERM, lambda *_: worker.stop.set())
+    signal.signal(signal.SIGINT, lambda *_: worker.stop.set())
+    worker.run()
+    shut_down(worker.RNS, worker.router)
 
 
 if __name__ == "__main__":
