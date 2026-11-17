@@ -430,8 +430,9 @@ service `resilience-messages-node`, client fallback to the store, TUI
 markers, vm-comms subtest with alpha switched off). Slice 5 (branch
 `feat/comms-files`) = multi-line messages (Ctrl-N / Ctrl-J / Alt-Enter in
 the dialog, at most 40 lines). Slice 6 = ADR 0020 files in messages
-(`f` send, `o` open, `s` save into ~/Received). Open: Internet messengers
-(toxic, signal-cli); Yggdrasil/BATMAN.
+(`f` send, `o` open, `s` save into ~/Received). Open: Yggdrasil/BATMAN.
+Internet messengers (Tox, SimpleX, signal-cli; spec §14A) are DEFERRED by
+the owner (2026-11-17): do not start them unless asked.
 `resilience.comms.enable` is ON by default in the standard edition
 (owner, 2026-11-16; `nix/profiles/standard.nix`, mkDefault) and off in
 minimal. After that change: full flake check passed (2026-11-17, after
