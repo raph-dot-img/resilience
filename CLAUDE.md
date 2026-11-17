@@ -474,9 +474,9 @@ Git state (2026-11-17): `main` = end of Phase 4; `develop` = `feat/maps`,
 `feat/maps-overview` and `feat/comms` (Phase 6 slices 1 to 4, ADR 0018 and
 0019) merged, on origin; `feat/comms` is fully merged (new Phase 6 work:
 a new `feat/<topic>` branch from `develop`; push only when asked). Last
-full `nix flake check -L --max-jobs 1 --keep-going`: `feat/comms` at
-`ba62020` (with ADR 0019), 2026-11-17, all 18 checks (12 VM tests) passed.
-Rust: 199 core, 73 TUI, 134 maps (+1 on demand), 5 library/store tests;
+full `nix flake check -L --max-jobs 1 --keep-going`: `feat/comms-files` at
+`73754e8` (multi-line messages, ADR 0020), 2026-11-17, all 18 checks (12 VM
+tests) passed. Rust: 201 core, 75 TUI, 134 maps (+1 on demand), 5 library/store tests;
 clippy clean. The live ISO was rebuilt from `feat/comms` at `9d3ebd2`
 (message store included) and boot-tested in QEMU (BIOS, UEFI, 1-2 GiB) on 2026-11-17;
 the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.

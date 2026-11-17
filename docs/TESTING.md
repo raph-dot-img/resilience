@@ -4,7 +4,7 @@ Every result below is **PASS**, **FAIL**, **BLOCKED** or **NOT TESTED**.
 A test is only PASS if it was actually executed. "VM" means QEMU/KVM on the
 development host — physical hardware: one boot of the live ISO on a ThinkPad L15 Gen 1 (see "ISO boot").
 
-Last full run (`nix flake check -L --max-jobs 1 --keep-going`, all 18 checks incl. 12 VM tests): 2026-11-17 on `feat/comms` at `ba62020` (ADR 0019 store-and-forward), every check PASS in 36 min (vm-comms 328 s). Previous full run 2026-11-16/17 (slice 3 + messaging on in standard): `vm-crypto` failed on the first pass (it pressed `3` for Security, which slice 9's Maps & navigation had moved to `5`); fixed in `7f1a0ac`, then PASS. ISO last built and boot-tested 2026-11-17 from `feat/comms` at `9d3ebd2` (see "ISO boot"; bit-for-bit reproducibility not verified).
+Last full run (`nix flake check -L --max-jobs 1 --keep-going`, all 18 checks incl. 12 VM tests): 2026-11-17 on `feat/comms-files` at `73754e8` (multi-line messages, ADR 0020 files), every check PASS in 17 min; `vm-comms` and `comms-messages` were taken from their passing builds of the same derivations earlier that day (vm-comms 318 s), the other 10 VM tests ran. Earlier full run: 2026-11-17 on `feat/comms` at `ba62020` (ADR 0019), every check PASS in 36 min. Previous full run 2026-11-16/17 (slice 3 + messaging on in standard): `vm-crypto` failed on the first pass (it pressed `3` for Security, which slice 9's Maps & navigation had moved to `5`); fixed in `7f1a0ac`, then PASS. ISO last built and boot-tested 2026-11-17 from `feat/comms` at `9d3ebd2` (see "ISO boot"; bit-for-bit reproducibility not verified).
 
 ## How to run
 
