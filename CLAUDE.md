@@ -502,7 +502,7 @@ media and backups (0008), clock (0009), Wi-Fi (0010), default generation
 files and manual pages (0014); Phase 4 guided cryptography (0015).
 See docs/TESTING.md for what has actually been executed and passed.
 
-Git state (2026-11-17): `main` = `develop` at the Phase 6 milestone (local messaging, store-and-forward, files, mesh; maps parked), merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
+Git state (2026-11-17): release **0.2.0** (Phases 2 to 6, local part) is `main` = `develop`, tagged `v0.2.0` (and `v0.1.0` on `3a3c629`), pushed; the 0.2.0 ISO boot-tested in QEMU. The installer (`feat/installer`, not pushed) is meant for 0.3.0. Earlier: `main` = `develop` at the Phase 6 milestone, merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
 `feat/maps-overview`, `feat/comms` (Phase 6 slices 1 to 4, ADR 0018 and
 0019) and `feat/comms-files` (slices 5 and 6, ADR 0020) merged, on origin;
 both comms branches are fully merged (new Phase 6 work: a new

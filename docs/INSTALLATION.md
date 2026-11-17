@@ -1,12 +1,12 @@
 # Installation
 
-## Current status (v0.2.0)
+## Current status (development version after 0.2.0)
 
 You can:
 
 1. **Try the live system** from a USB stick or in a VM (no changes to the disk).
 2. **Install it on a whole disk with the text installer** of the live
-   system (section 3; ADR 0022). Tested in VMs only.
+   system (section 3; ADR 0022; not in 0.2.0). Tested in VMs only.
 3. **Install manually as an experienced NixOS user**, by importing the
    Resilience module into your own NixOS configuration (section 2).
 
