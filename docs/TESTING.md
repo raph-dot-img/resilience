@@ -4,7 +4,7 @@ Every result below is **PASS**, **FAIL**, **BLOCKED** or **NOT TESTED**.
 A test is only PASS if it was actually executed. "VM" means QEMU/KVM on the
 development host — physical hardware: one boot of the live ISO on a ThinkPad L15 Gen 1 (see "ISO boot").
 
-Last full run (`nix flake check -L --max-jobs 1`, all VM tests): 2026-11-14 on the Phase 2 commits (privileged helper, Users & modes, Recovery, backups, Date & time, Wi-Fi, default generation, user namespaces), nixpkgs `f1e5c356`. ISO last built and boot-tested 2026-11-16 from the end of Phase 4 (see "ISO boot"; bit-for-bit reproducibility not verified).
+Last full run (`nix flake check -L --max-jobs 1 --keep-going`, all 18 checks incl. 12 VM tests): 2026-11-16/17 on `feat/comms` (Phase 6 slice 3 + messaging on in standard). `vm-crypto` failed on the first pass (it pressed `3` for Security, which slice 9's Maps & navigation had moved to `5`); fixed in `7f1a0ac` (number read from the screen), then PASS; every other check PASS. ISO last built and boot-tested 2026-11-17 from `feat/comms` (see "ISO boot"; bit-for-bit reproducibility not verified).
 
 ## How to run
 
@@ -263,7 +263,8 @@ the last ones from the interface.
 | The other machine's program stopped: the message stays `queued` or `sent` for 20 s (not delivered, not lost); program started again → `delivered`, and the text is on the other machine | PASS |
 | Through the interface on both consoles (Ultra-Stable accounts): COMMUNICATIONS on the main menu; Local messages says messaging is running; `m` shows my address in groups; people nearby lists the other machine as `"alice"?` with its address (and the test program of an earlier step as "bob"); `n` with the address typed as read aloud (groups, upper case), a message typed → `You [delivered]` with the text on the first screen; on the other machine the conversation appears, `Them [from them]` with the text and not "NOT VERIFIED"; a reply typed there is `[delivered]` there and appears on the first screen by itself | PASS (2026-11-16) |
 | Three or more machines; a link that drops mid-message; a machine switched off for hours; Wi-Fi; hostile peers or messages; a physical network | NOT TESTED |
-| A system without `resilience.comms.enable` contains no Reticulum code (live-standard, live-minimal, dev-vm) | NOT TESTED as a check (the option is off by default and nothing else refers to the package) |
+| A system without `resilience.comms.enable` contains no Reticulum code | PASS once, by hand (2026-11-17): the live-minimal toplevel's derivation closure has no `reticulum`/`rns`/`lxmf` path (live-standard and dev-vm, which use the standard profile, have 7); not a flake check |
+| The standard live ISO (comms on by default) | PASS (2026-11-17, see "ISO boot") |
 
 ### ISO boot (`tests/iso/smoke.py`, screenshots reviewed by a human/agent)
 
@@ -274,6 +275,7 @@ the last ones from the interface.
 | Low memory: BIOS at 2048, 1024, 768 and 512 MiB; UEFI at 2048 and 1024 MiB — TUI, network diagnostics and system status shown, no failed service, no OOM message on the serial console | PASS (2026-11-16) |
 | Console keymap French AZERTY on an ISO built with `resilience.keyboard.layout = "fr"`: search typed with AZERTY key positions (`--keymap fr`) opens network diagnostics (BIOS, 2 GiB) | PASS (2026-11-16, `feat/maps` build; the default is now `us`) |
 | Build refuses an unknown keymap (`resilience.keyboard.layout = "azerty-nope"`) | PASS (manual, once) |
+| `feat/comms` build (local messaging on): BIOS 2048 MiB, UEFI 2048 MiB, BIOS 1024 MiB — TUI, Maps & navigation and Communications on the main menu, diagnostics, status; search "messages" finds Local messages (tool and handbook page); it opens with `[OK] Messaging is running. My address: …` (the per-account service and the machine's Reticulum instance start on the live system) | PASS (2026-11-17) |
 
 ### Keyboard layout (ADR 0017), in vm-boot-offline
 
@@ -289,10 +291,12 @@ the last ones from the interface.
 | Physical hardware: Lenovo ThinkPad L15 Gen 1, ISO built from `develop` (end of Phase 4) — boots without problem | PASS (owner, 2026-11-16; firmware mode, ISO hash and checklist items not recorded) |
 | Physical hardware: other machines | NOT TESTED |
 
-Last ISO run (2026-11-16): `develop` at `44f33b4` (code identical to
-`f77e6ba`, end of Phase 4), `resilience-standard-0.1.0-x86_64-linux.iso`,
-1,528,430,592 bytes, SHA-256 `f3f17b95e4c4e226e82fed58a45ab9cef31a3c78a1dc70584b37295a87a530a4`
-(same store path as the R1 build of 2026-11-15). QEMU/KVM, 2 vCPU, no
+Last ISO run (2026-11-17): `feat/comms` at `7f1a0ac`,
+`resilience-standard-0.1.0-x86_64-linux.iso`, 1,554,186,240 bytes, SHA-256
+`bc3cdeff9e936072ab98cc46fb1ac469441b3bb9f6dad3bb70908d1bf7b8df8d`.
+The smoke script now also searches "messages" and opens the first hit
+(screens 05 and 06). Previous run (2026-11-16): end of Phase 4,
+1,528,430,592 bytes, SHA-256 `f3f17b95e4c4e226e82fed58a45ab9cef31a3c78a1dc70584b37295a87a530a4`. QEMU/KVM, 2 vCPU, no
 network device, `-vga std` (160×50 console). Only the four smoke-test
 screens were exercised. The smoke script waits a fixed 75 s, so time to
 TUI is not measured (R1 saw the menu at 84 s, BIOS, 2 GiB).
@@ -312,7 +316,8 @@ modest machine running the live ISO has little room for files.
 | Boot to multi-user (kernel + initrd + userspace) | 0.9 + 3.6 + 4.3 = 8.8 s | vm-boot-offline |
 | Running services | journald, udevd, logind, dbus-broker, NetworkManager, nscd, oomd (+ transient) | vm-boot-offline |
 | System closure (live-standard) | 2.2 GiB, of which linux-firmware 825 MiB, nixpkgs source 197 MiB | `nix path-info -S` |
-| ISO size (standard) | 1.53 GB (1,528,430,592 bytes) | build, end of Phase 4 (2026-11-15/16) |
+| ISO size (standard) | 1.53 GB (1,528,430,592 bytes) at the end of Phase 4; 1.55 GB (1,554,186,240 bytes) with maps (world overview) and local messaging | builds of 2026-11-16 and 2026-11-17 |
+| Memory used on live ISO after boot with local messaging on (rnsd + per-account Python service) | 339 MiB of 1.9 GiB; 330 MiB of 964 MiB (about +40 to +50 MiB over the end of Phase 4) | ISO screenshots 2026-11-17 |
 | Closure growth from removable media + backups | +62 MiB (2231.6 → 2293.9 MiB; age 23 MiB, udisks2 + libblockdev deps ≈ 30 MiB) | `nix path-info -S`, main vs branch |
 | TUI binary | 1.5 MiB (stripped, LTO) | build |
 | Map viewer, dense view (4 tiles of zoom 14, 384 KiB of MVT and ~84,000 vertices each, 170×45 map): decode 2.9 ms per tile; cold frame 25-31 ms (read + inflate + decode 19-23 ms of it); warm frame 4.5-6.8 ms (worst 7.3 ms) at 5, 10 and 20 m per pixel; cache 5.6 MiB for the 4 tiles | release build, Ryzen 5 PRO 4650U | `cargo test --release -p resilience-maps --test perf -- --ignored --nocapture` (dev host, not a VM) |
@@ -324,12 +329,12 @@ modest machine running the live ISO has little room for files.
 |---|---|---|
 | 2 | Boot with Wi-Fi unavailable | NOT TESTED as a boot scenario (vm-wifi uses simulated radios; logic shared with #1) |
 | 6 | Search locally installed resources (resource packs) | PASS (vm-packs: full-text search in an installed pack) |
-| 7 | Open installed maps | BLOCKED — maps not implemented |
-| 9 | Cryptographic operations | BLOCKED — Phase 4 |
+| 7 | Open installed maps | PASS for the built-in world overview and a map from the list (vm-maps); a detailed pack from a stick NOT TESTED in VM |
+| 9 | Cryptographic operations | PASS (vm-crypto) |
 | 10 | Access local files (file manager) | NOT TESTED in VM (mc launch untested) |
 | 11 | Import a resource pack from USB | PASS (vm-packs, QEMU usb-storage) |
 | 12 | Verify an offline update bundle | BLOCKED — Phase 8 |
-| 13 | Communicate across a local network | BLOCKED — Phase 6 |
+| 13 | Communicate across a local network | PASS between two VMs (vm-comms); physical network NOT TESTED |
 | — | Installer, rollback to previous generation | BLOCKED — no installer yet |
 | — | Recovery section with real generations; diagnostic report on a real system | NOT TESTED in VM (unit/TUI tests with fake profiles only) |
 | — | Backup / restore with a physical USB stick | NOT TESTED (QEMU usb-storage only) |

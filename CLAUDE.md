@@ -405,12 +405,13 @@ Slice 3 = `resilience-core/src/messages.rs` and the TUI screens
 (`crates/resilience-tui/src/chat_ui.rs`: `Builtin::Chat` "Local
 messages" under Communications, views Chats / Nearby / Chat, dialog
 `Modal::ChatInput`), handbook `60-local-messages.md`, vm-comms through
-the TUI. Open: whether the standard edition turns the module on (owner);
-a propagation node (store-and-forward); file exchange; multi-line
+the TUI. Open: a propagation node (store-and-forward); file exchange; multi-line
 messages; Internet messengers (toxic, signal-cli); Yggdrasil/BATMAN.
 `resilience.comms.enable` is ON by default in the standard edition
 (owner, 2026-11-16; `nix/profiles/standard.nix`, mkDefault) and off in
-minimal. Not yet done after that change: ISO rebuild, full flake check.
+minimal. After that change: full flake check passed (2026-11-17, after
+fixing vm-crypto's menu number) and the standard ISO was rebuilt and
+booted in QEMU (BIOS, UEFI, 1 GiB) with Local messages running.
 
 Phase 5 state when parked:
 
@@ -444,12 +445,12 @@ See docs/TESTING.md for what has actually been executed and passed.
 
 Git state (2026-11-16): `main` = end of Phase 4; `develop` = `feat/maps`
 and `feat/maps-overview` merged (local, not pushed); `feat/comms` = Phase 6
-work, local, from `develop`. Last full `nix flake check -L --max-jobs 1 --keep-going` on
-`feat/maps` (before the keyboard work) passed: 9 VM tests, security
-invariants, ISO evaluation, both map pack checks. Rust: 198 core, 71 TUI,
+work from `develop` (on origin; push new commits only when asked). Last
+full `nix flake check -L --max-jobs 1 --keep-going`: `feat/comms`,
+2026-11-17, all 18 checks (12 VM tests) passed. Rust: 198 core, 71 TUI,
 134 maps (+1 on demand), 5 library/store tests; clippy clean. The live ISO was rebuilt
-and boot-tested in QEMU (BIOS and UEFI, 512 MiB to 2 GiB) on 2026-11-16 and
-booted once on a ThinkPad L15 Gen 1.
+from `feat/comms` and boot-tested in QEMU (BIOS, UEFI, 1-2 GiB) on 2026-11-17;
+the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 
 ## 15. Known bugs and limitations
 
@@ -475,8 +476,8 @@ booted once on a ThinkPad L15 Gen 1.
   signs), no secure deletion of originals (the user is told); contacts'
   keys are only as trustworthy as the user's own check.
 - Local messaging: on in standard, off in minimal; two machines tested, in
-  VMs only (with the minimal profile plus the option; the standard image
-  with it has only been evaluated, not built or booted);
+  VMs only (with the minimal profile plus the option; the standard live
+  ISO boots with it running, ~+45 MiB RAM, but has not exchanged messages);
   no store-and-forward node (both computers must be on at the same time at
   some point within 7 days); one-line messages; no "read" state; received
   messages are not announced outside the messages screens.
