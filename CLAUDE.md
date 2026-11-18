@@ -533,7 +533,10 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 
 ## 15. Known bugs and limitations
 
-- No installer yet; the ISO is live-only and has no admin account (by design).
+- Installer (ADR 0022): whole disk only (no dual boot), ext4, no swap,
+  host name `resilience` and UTC fixed; tested in QEMU only (VM tests and
+  installs from the ISO), never on a physical disk. The live session
+  itself has no admin account (by design).
 - Mode changes need an Advanced account to authorise; the live ISO has none,
   so modes cannot be changed there (by design).
 - pkexec's built-in text agent fails on success with NixOS 26.05's
