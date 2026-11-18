@@ -399,7 +399,7 @@ in
           # The running system is unchanged until the restart.
           machine.fail("test -e /etc/resilience-test-marker")
           log = audit()
-          assert re.search(r"op=apply-update caller=alice .*from=0\.3\.0 .*UPDATESTICK/resilience-update.* to=0\.99\.0 result=ok", log), log
+          assert re.search(rf"op=apply-update caller=alice .*from={re.escape(RUNNING)} .*UPDATESTICK/resilience-update.* to=0\.99\.0 result=ok", log), log
           machine.succeed("journalctl -t resilience-admin | grep -q 'op=apply-update.*result=ok'")
           machine.send_key("ret")
           wait_tty("1", "UPDATE FROM A USB STICK")
