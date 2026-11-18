@@ -109,6 +109,10 @@ in
     ) cfg.users;
 
     environment.shells = [ cfg.sessionPackage ];
+    # /run/current-system/sw/bin/resilience-session must exist: it is the
+    # login shell of accounts created on the machine (ADR 0022, stable
+    # across generations) and the SHELL given to pkexec (admin.toml).
+    environment.systemPackages = [ cfg.sessionPackage ];
 
     # Ultra-Stable accounts may not talk to the Nix daemon at all, so they
     # cannot build or install software or fill the store.

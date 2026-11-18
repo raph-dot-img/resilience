@@ -8,9 +8,13 @@ let
   otherHumans = lib.filterAttrs (
     n: u: u.isNormalUser && !(config.resilience.users ? ${n})
   ) config.users.users;
+  # Accounts created on an installed machine (ADR 0022) are not known at
+  # build time and may be raised later: such a system is never "only
+  # Ultra-Stable".
   onlyUltraStable =
     lib.all (u: u.mode == "ultra-stable") (lib.attrValues config.resilience.users)
-    && otherHumans == { };
+    && otherHumans == { }
+    && !config.resilience.localAccounts;
   userns = config.resilience.security.userNamespaces;
   # Rate-limit password guessing (THREAT_MODEL T6): after 5 failures within
   # 15 minutes the account is locked for 5 minutes. Short enough not to lock a

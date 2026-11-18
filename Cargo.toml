@@ -8,6 +8,7 @@ members = [
   "crates/resilience-library",
   "crates/resilience-crypto",
   "crates/resilience-maps",
+  "crates/resilience-install",
 ]
 
 [workspace.package]

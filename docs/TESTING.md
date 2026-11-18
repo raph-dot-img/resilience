@@ -4,7 +4,7 @@ Every result below is **PASS**, **FAIL**, **BLOCKED** or **NOT TESTED**.
 A test is only PASS if it was actually executed. "VM" means QEMU/KVM on the
 development host — physical hardware: one boot of the live ISO on a ThinkPad L15 Gen 1 (see "ISO boot").
 
-Last full run (`nix flake check -L --max-jobs 1 --keep-going`, all 19 checks incl. 13 VM tests): 2026-11-17 on `develop` at `af4b661` (mesh network, ADR 0021), every check PASS in 13 min; `vm-comms`, `vm-mesh` and `comms-messages` were taken from their passing builds of the same derivations in the run just before (at `7039e06`). That run and the one before it each had one failure, both fixed: `vm-crypto` (GnuPG asked a third time for the passphrase while creating a key on the loaded host: `max-cache-ttl 0` expires the creation's cache nonce; the tool now says so and the test answers it) and `vm-modes` (`stty` on tty2 failed with EIO while its getty started; every test's `tty_text` now retries it). Earlier full run: 2026-11-17 on `feat/comms-files` at `73754e8` (multi-line messages, ADR 0020 files), every check PASS in 17 min; `vm-comms` and `comms-messages` were taken from their passing builds of the same derivations earlier that day (vm-comms 318 s), the other 10 VM tests ran. Earlier full run: 2026-11-17 on `feat/comms` at `ba62020` (ADR 0019), every check PASS in 36 min. Previous full run 2026-11-16/17 (slice 3 + messaging on in standard): `vm-crypto` failed on the first pass (it pressed `3` for Security, which slice 9's Maps & navigation had moved to `5`); fixed in `7f1a0ac`, then PASS. ISO last built and boot-tested 2026-11-17 from `develop` at `af4b661` (see "ISO boot"; bit-for-bit reproducibility not verified).
+Last full run: 2026-11-18 on `feat/installer` at `84bf3c4` (the installer, ADR 0022): all 21 checks incl. 15 VM tests (new: `vm-install`, `vm-install-uefi`) PASS, built as derivations (see below) with 2 jobs at a time. Previous full run (`nix flake check -L --max-jobs 1 --keep-going`, all 19 checks incl. 13 VM tests): 2026-11-17 on `develop` at `af4b661` (mesh network, ADR 0021), every check PASS in 13 min; `vm-comms`, `vm-mesh` and `comms-messages` were taken from their passing builds of the same derivations in the run just before (at `7039e06`). That run and the one before it each had one failure, both fixed: `vm-crypto` (GnuPG asked a third time for the passphrase while creating a key on the loaded host: `max-cache-ttl 0` expires the creation's cache nonce; the tool now says so and the test answers it) and `vm-modes` (`stty` on tty2 failed with EIO while its getty started; every test's `tty_text` now retries it). Earlier full run: 2026-11-17 on `feat/comms-files` at `73754e8` (multi-line messages, ADR 0020 files), every check PASS in 17 min; `vm-comms` and `comms-messages` were taken from their passing builds of the same derivations earlier that day (vm-comms 318 s), the other 10 VM tests ran. Earlier full run: 2026-11-17 on `feat/comms` at `ba62020` (ADR 0019), every check PASS in 36 min. Previous full run 2026-11-16/17 (slice 3 + messaging on in standard): `vm-crypto` failed on the first pass (it pressed `3` for Security, which slice 9's Maps & navigation had moved to `5`); fixed in `7f1a0ac`, then PASS. ISO last built and boot-tested 2026-11-17 from `develop` at `af4b661` (see "ISO boot"; bit-for-bit reproducibility not verified).
 
 ## How to run
 
@@ -14,12 +14,14 @@ Last full run (`nix flake check -L --max-jobs 1 --keep-going`, all 19 checks inc
 | Lints | `cargo clippy --all-targets` (must be clean), `nix fmt` | ~10 s |
 | Screen dump for review | `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` | ~2 s |
 | Evaluate everything | `nix flake check --no-build` | ~30 s |
-| Everything incl. VM tests | `nix flake check -L --max-jobs 1` | ~5 min cold |
+| Everything incl. VM tests | `nix flake check --no-build`, then each check's `drvPath` evaluated alone and all built with one `nix build --no-link --keep-going -L DRV^*...` | ~1 h |
 | One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-backup`, `vm-wifi`, `vm-generations`, `vm-packs`, `vm-documents`, `vm-crypto`, `vm-boot-offline`) | ~1–2 min |
 | ISO boot smoke test | `nix build .#iso -o result-iso && python3 -I tests/iso/smoke.py result-iso/iso/*.iso /tmp/shots [--uefi OVMF.fd]` | ~2 min |
 
-Always pass `--max-jobs 1` to `nix flake check` on the 12 GB development
-host so the VM tests never run at the same time.
+Do not run a building `nix flake check` on the 12 GB development host:
+its evaluator keeps 8+ GB for the whole run and, with VM tests running,
+the host ran out of memory (2026-11-18). Evaluating one check per
+process frees that memory before the VM tests start.
 
 VM tests read the console through `/dev/vcsuN` (UTF-32) instead of the test
 driver's `get_tty_text()`: the latter decodes 8-bit glyph indices as UTF-8,
@@ -54,6 +56,8 @@ which corrupts text next to box-drawing characters with our console font.
 | resilience-tui multi-line messages: Ctrl-N, Ctrl-J and Alt-Enter start a new line in the message dialog (Enter still sends), each typed line drawn on its own line with the cursor after the last; Backspace removes a line break; the request file holds the text with `\n`; only line breaks → "the message is empty"; a contact name stays on one line; at most 40 lines, the end being typed stays on screen | 1 | PASS (host and Nix build, 2026-11-17) |
 | resilience-core admin `plan_set_mesh` (ADR 0021): only `on` and `off`, only the configured unit (a `.service` name of safe characters, never starting with `-`), an absolute `systemctl`; without `mesh_unit` the operation is unavailable; the plan is exactly `systemctl start|stop -- UNIT` | 1 | PASS (host and Nix build, 2026-11-17) |
 | resilience-tui Mesh network (ADR 0021): absent (even from search) without `mesh_unit` in admin.toml, present with it and found by search ("mesh", "router"); its confirmation says it is off and that the card cannot join an ordinary network meanwhile, Cancel focused (Enter runs nothing); "Turn on" runs `pkexec HELPER set-mesh on` with `SHELL` = the session shell and reports it on; with `/run/resilience-mesh/devices` written it shows "ON (wlan0)" and "Turn off" runs `set-mesh off` | 1 | PASS (host and Nix build, 2026-11-17) |
+| resilience-core install (ADR 0022): disk list from lsblk (whole disks only; loop, CD, zram, partitions left out; in use when anything below is mounted, read-only, under 16 GiB), partition paths (sda3, nvme0n1p2), the sfdisk script and its labels, request ↔ arguments round trip and refused arguments, the disk must still match size and model, keymap offered, account rules (names, reserved and taken names, duplicates, full names, at most 8), state written for local accounts (overrides of Ultra-Stable), install.toml paths; admin local accounts (base mode Ultra-Stable, overrides, a declared account kept, bad files refused); keyboard state file (`KEYMAP=<offered id>` only) | 14 | PASS (2026-11-17) |
+| resilience-tui Install (ADR 0022): absent without install.toml, present with it; defaults (encryption on, BIOS here, current layout, user Stable + administrator Advanced); Install without a disk refused; the live stick not choosable; disk, encryption, keyboard, account name (bad name refused), mode cycling, full name, add and remove; the summary shows the disk, its partitions and the no-administrator warning; a wrong disk name does nothing; the exact pkexec argv and SHELL | 2 | PASS (2026-11-17) |
 | `cargo clippy --all-targets` | — | PASS (0 warnings) |
 
 ### Nix
@@ -62,7 +66,7 @@ which corrupts text next to box-drawing characters with our console font.
 |---|---|
 | Flake evaluation (`nix flake check --no-build`) | PASS |
 | `eval-live-iso`: live-standard, live-minimal, dev-vm evaluate | PASS |
-| `security-invariants`: 29 invariants × 3 configurations (2026-11-17: new "the mesh comes only with local messaging and starts on request": mesh only with comms, never `autoStart` in the shipped systems, `bat0` unmanaged by NetworkManager; the firewall one now allows exactly UDP 29716 and 42671 where local messaging is on, and nothing else; two earlier ones: the messaging service is unprivileged with nothing of Reticulum in `PATH`, and the minimal edition has no local messaging) | PASS (2026-11-17) |
+| `security-invariants`: 33 invariants × 11 configurations (the 8 installed systems of ADR 0022 added; new: installed systems keep user namespaces and the sandbox, have no autologin and keep root locked, the installer exists on live systems only, the session shell listed in /etc/shells is installed) (2026-11-17: new "the mesh comes only with local messaging and starts on request": mesh only with comms, never `autoStart` in the shipped systems, `bat0` unmanaged by NetworkManager; the firewall one now allows exactly UDP 29716 and 42671 where local messaging is on, and nothing else; two earlier ones: the messaging service is unprivileged with nothing of Reticulum in `PATH`, and the minimal edition has no local messaging) | PASS (2026-11-17) |
 | Invariant checker rejects a live configuration with user namespaces forced on | PASS (manual, once) |
 | Invariant checker rejects a deliberately broken configuration (ssh on, root password) | PASS (manual, once) |
 | Invariant checker rejects a privileged autologin account and an extra polkit admin identity | PASS (manual, once; this found that the autologin invariant had been vacuous) |
@@ -294,6 +298,67 @@ second radio in a network namespace playing the other computer.
 | Wi-Fi (delta): `set-mesh on` with no device configured takes the first card (wlan0): type IBSS, joined cell `02:52:45:53:4d:31`; a BATMAN-adv neighbour (the other radio); ping6 to it over `bat0` | PASS (2026-11-17) |
 | Wi-Fi: `set-mesh off` → no `bat0`, the card back to type managed and to its NetworkManager state | PASS (2026-11-17) |
 | Real Wi-Fi cards (IBSS on iwlwifi and others), radio range, several hops over the air, battery use | NOT TESTED |
+
+### VM: `vm-install` — the text installer (ADR 0022), driven through the TUI
+
+`installer`: a live-like system (autologin, no administrator, installer
+enabled), running from vdb; vda (20 GiB, empty) is the target. `target`:
+the same disk booted with SeaBIOS. The installed system is the real
+`installed-standard-bios-luks` plus the NixOS test instrumentation only.
+
+| Scenario | Result |
+|---|---|
+| Install is offered (live only); the disk list shows vda, and vdb (the running system) "in use", not choosable | PASS (2026-11-17) |
+| French keyboard and encryption chosen on the Install screen, the two proposed accounts kept | PASS (2026-11-17) |
+| The summary names the disk; a wrong name ("vdb") is refused and the disk's first 4 MiB are unchanged; "vda" starts `resilience-install` through pkexec | PASS (2026-11-17) |
+| Passphrase typed twice into `cryptsetup luksFormat` and once into `cryptsetup open`, passwords twice into `passwd` for each account (French layout loaded by the installer); "Resilience is installed"; nothing left mounted or open | PASS (2026-11-17, ~3 min) |
+| The disk boots (GRUB on BIOS); the initrd loads the French layout and keeps it after udev restarts the console setup; the passphrase typed on the keyboard unlocks the disk; `/` on `/dev/mapper/root`; login prompts use the French layout (`dumpkeys`) | PASS (2026-11-17) |
+| Local accounts: shell `/run/current-system/sw/bin/resilience-session`; `user` Stable, `administrator` Advanced (wheel) as overrides of Ultra-Stable in `resilience-admin list`; no autologin; user namespaces on | PASS (2026-11-17) |
+| `user` logs in on tty1 with the password typed during the installation; the interface starts (MODE: STABLE) | PASS (2026-11-17) |
+| Minimal edition; installing next to another system (not offered) | NOT TESTED |
+
+Found and fixed by this test: the initrd keymap unit could not start (its
+interpreter is not in the systemd initrd); udev's restart of
+systemd-vconsole-setup then put the US layout back before the prompt;
+`/run/current-system/sw/bin/resilience-session` (in `/etc/shells`) did not
+exist. Each would have left an installed French machine unusable.
+
+### VM: `vm-install-uefi` — the same test with UEFI firmware, no encryption
+
+Same script (`tests/vm/install.nix` with `firmware = "uefi"`). Both
+machines have OVMF firmware: the installer starts its kernel directly
+through OVMF (`/sys/firmware/efi` exists, so the installer chooses UEFI),
+the target boots the disk with an **empty** variable store (the installer
+never writes firmware variables). Installed system:
+`installed-standard-uefi-plain` plus the test instrumentation.
+
+| Scenario | Result |
+|---|---|
+| The live system sees UEFI firmware; the form says UEFI; encryption turned off on the form ("off: anyone with the disk can read it"), French keyboard, the two proposed accounts | PASS (2026-11-18) |
+| Wrong disk name refused, first 4 MiB unchanged; "vda" starts the installer; no passphrase asked; passwords typed into `passwd`; "Resilience is installed"; nothing left mounted | PASS (2026-11-18, ~3 min) |
+| The disk boots through OVMF's fallback path `EFI/BOOT/BOOTX64.EFI` (systemd-boot) with no boot entry in the firmware; `/` on `/dev/vda3` (no mapper device); `/boot` = `/dev/vda2` with NixOS loader entries; login prompts in the French layout | PASS (2026-11-18) |
+| Accounts and modes as in `vm-install`; `user` logs in on tty1, MODE: STABLE | PASS (2026-11-18) |
+
+### Install from the live ISO (`tests/iso/install.py`, screenshots reviewed)
+
+The standard ISO built from `feat/installer` (1,647,968,256 bytes; the
+four prebuilt installed systems add ~94 MB) attached to QEMU as a **USB
+stick** (snapshot, never written), a new empty 20 GiB qcow2 disk as
+`vda`, no network device, 2 GiB RAM. Keys are sent as physical keys.
+
+| Run | Result |
+|---|---|
+| Disk list: `/dev/sda` (the stick, "QEMU HARDDISK 1.6 GB, usb") "in use", `/dev/fd0` "too small", `/dev/vda` chosen by default; summary names the disk, BIOS / legacy (GRUB) or UEFI (systemd-boot), encryption, keyboard, the two accounts | PASS (2026-11-18) |
+| BIOS (SeaBIOS), encryption on, French layout: passphrase into cryptsetup (×3), copy ~3.9 GB, passwords into passwd, grub-install, "Resilience is installed"; the disk then starts through GRUB, the passphrase typed at the initrd prompt unlocks it, `user` logs in on tty1, the interface shows MODE: STABLE, 14.7 GiB free | PASS (2026-11-18, ~4 min to install) |
+| UEFI (OVMF 202602, pinned nixpkgs, `-bios OVMF.fd`, no stored boot entry), no encryption, US layout: systemd-boot copied to `EFI/BOOT/BOOTX64.EFI`, activation "0 override(s) applied", steps 1/10 to 10/10; the disk starts, `user` logs in, MODE: STABLE, network diagnostics open | PASS (2026-11-18, ~2.5 min to install) |
+| Physical hardware | NOT TESTED |
+
+Found by the first run and fixed: `modes.toml` was written before the
+accounts existed, so the activation inside `nixos-install` printed
+"gpasswd: user 'administrator' does not exist / apply-state failed"; the
+last step was numbered 12/11; the summary mentioned a passphrase with
+encryption off. The console blanks after 10 minutes without a key
+press (the passwords wait at `passwd`): any key wakes it.
 
 ### ISO boot (`tests/iso/smoke.py`, screenshots reviewed by a human/agent)
 

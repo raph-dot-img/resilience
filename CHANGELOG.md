@@ -6,6 +6,20 @@ Git tags: `vX.Y.Z` on the commit of each release.
 
 ## [Unreleased]
 
+### Added
+- *Install Resilience on this computer* (ADR 0022, Phase 8): a text
+  installer on the live system. Whole disk, GPT, encryption (LUKS2) on by
+  default, keyboard layout, accounts and their modes; nothing is changed
+  before the disk's name is typed. Copies one of four prebuilt installed
+  systems per edition (UEFI/systemd-boot or BIOS/GRUB, with or without
+  encryption) offline. Accounts created on the machine are managed by
+  `resilience-admin` like declared ones. VM test `vm-install`.
+
+### Fixed
+- `/run/current-system/sw/bin/resilience-session`, listed in
+  `/etc/shells` and passed as `SHELL` to pkexec, did not exist: the
+  session package is now installed system-wide.
+
 ## [0.2.0] — 2026-11-17 — Phases 2 to 6 (local part)
 
 Accounts and security modes, backups, clock, Wi-Fi, generations, resource

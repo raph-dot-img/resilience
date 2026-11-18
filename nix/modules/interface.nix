@@ -15,6 +15,19 @@ let
   # Every name offered or used, checked against kbd at build time.
   keymapNames = lib.unique ([ layout ] ++ map (l: l.id) kb.layouts);
   keymapId = lib.types.strMatching "[A-Za-z0-9][A-Za-z0-9_-]{0,39}";
+  offered = lib.unique ([ layout ] ++ map (l: l.id) kb.layouts);
+  # The state file holds `KEYMAP=<id>`; anything not offered is ignored and
+  # the built-in layout stays.
+  loadSystemKeymap = pkgs.writeShellScript "resilience-load-keymap" ''
+    id=${layout}
+    if [ -r ${lib.escapeShellArg (toString kb.stateFile)} ]; then
+      line=$(${pkgs.coreutils}/bin/head -c 64 ${lib.escapeShellArg (toString kb.stateFile)})
+      case "''${line#KEYMAP=}" in
+        ${lib.concatStringsSep "|" offered}) id=''${line#KEYMAP=} ;;
+      esac
+    fi
+    exec ${pkgs.kbd}/bin/loadkeys -q -- "$id"
+  '';
 in
 {
   options.resilience.keyboard = {
@@ -107,6 +120,19 @@ in
         be in the list.
       '';
     };
+    stateFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/var/lib/resilience/keyboard";
+      description = ''
+        Installed systems (ADR 0022): a root-owned file `KEYMAP=<id>`
+        written by the installer. When it names one of `layouts`, that
+        layout replaces `layout` at login prompts, in the interface and in
+        the initrd (for the disk encryption passphrase; the file is added
+        to the initrd when the bootloader is installed, so changing it
+        takes effect for the initrd only after the next system switch).
+      '';
+    };
   };
 
   options.resilience.interface = {
@@ -191,8 +217,56 @@ in
     # Load the system's layout again before every login prompt, so nobody
     # types a password (and trips faillock) with another account's layout.
     systemd.services."getty@".serviceConfig.ExecStartPre = [
-      "-${pkgs.kbd}/bin/loadkeys -q -- ${layout}"
+      (
+        if kb.stateFile == null then "-${pkgs.kbd}/bin/loadkeys -q -- ${layout}" else "-${loadSystemKeymap}"
+      )
     ];
+
+    # Installed systems: the layout chosen when installing (ADR 0022).
+    boot.initrd.secrets = lib.mkIf (kb.stateFile != null) {
+      "/etc/resilience-keyboard" = kb.stateFile;
+    };
+    boot.initrd.systemd.services.resilience-keymap = lib.mkIf (kb.stateFile != null) {
+      description = "Keyboard layout chosen when installing";
+      # udev restarts systemd-vconsole-setup when the console device
+      # appears, which loads the built-in layout again: run again after it
+      # every time (PartOf propagates its restarts here).
+      wantedBy = [
+        "sysinit.target"
+        "systemd-vconsole-setup.service"
+      ];
+      partOf = [ "systemd-vconsole-setup.service" ];
+      # The file arrives under /.initrd-secrets; NixOS copies it into place.
+      after = [
+        "systemd-vconsole-setup.service"
+        "initrd-nixos-copy-secrets.service"
+      ];
+      before = [
+        "cryptsetup-pre.target"
+        "systemd-ask-password-console.service"
+      ];
+      wants = [ "cryptsetup-pre.target" ];
+      unitConfig = {
+        DefaultDependencies = false;
+        ConditionPathExists = "/etc/resilience-keyboard";
+      };
+      serviceConfig = {
+        Type = "oneshot";
+        # Stays active, so that restarts of systemd-vconsole-setup reach it.
+        RemainAfterExit = true;
+        # vconsole.conf syntax; only an offered layout is loaded.
+        EnvironmentFile = "/etc/resilience-keyboard";
+      };
+      # `script`: run by the initrd's own shell (a script with another
+      # interpreter would not start there). loadkeys and the keymaps are in
+      # the initrd with console.earlySetup (nixos/modules/config/console.nix).
+      script = ''
+        case "''${KEYMAP-}" in
+          ${lib.concatStringsSep "|" offered})
+            exec ${config.boot.initrd.systemd.package.kbd}/bin/loadkeys -q -- "$KEYMAP" ;;
+        esac
+      '';
+    };
 
     # No graphical stack, ever.
     services.xserver.enable = false;

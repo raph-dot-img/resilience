@@ -185,6 +185,9 @@ let
     keyboard = {
       default = config.resilience.keyboard.layout;
       layouts = map (l: { inherit (l) id label; }) config.resilience.keyboard.layouts;
+    }
+    // lib.optionalAttrs (config.resilience.keyboard.stateFile != null) {
+      state_file = config.resilience.keyboard.stateFile;
     };
   };
 

@@ -14,9 +14,10 @@ use resilience_core::mode::{Detected, Mode};
 use resilience_core::packs::PackKind;
 
 use crate::app::{
-    App, BACKUP_LABEL, Builtin, CHECK_LABEL, CRYPTO_LABEL, Effect, EncryptTarget, Entry, ItemPlace,
-    MediaPurpose, Modal, PACKS_LABEL, PackRow, Paths, Pending, Pick, RESTORE_LABEL, Recipient,
-    SearchHit, Startup, View, stick_items,
+    App, BACKUP_LABEL, Builtin, CHECK_LABEL, CRYPTO_LABEL, Effect, EncryptTarget, Entry,
+    INSTALL_LABEL, InstallForm, InstallInput, InstallRow, ItemPlace, MediaPurpose, Modal,
+    PACKS_LABEL, PackRow, Paths, Pending, Pick, RESTORE_LABEL, Recipient, SearchHit, Startup, View,
+    stick_items,
 };
 use crate::ui;
 
@@ -135,6 +136,9 @@ description = "Carol the admin"
         comms_client: sys.join("comms-client-config"),
         // Absent: the mesh is off.
         mesh_devices: sys.join("mesh-devices"),
+        // Absent: not a live system (no installer).
+        install_config: sys.join("install.toml"),
+        efi: sys.join("efi"),
     }
 }
 
@@ -3354,6 +3358,7 @@ fn fake_keymap_helper(a: &mut App) -> std::path::PathBuf {
             l("fr", "French (AZERTY)"),
             l("de", "German (QWERTZ)"),
         ],
+        state_file: None,
     };
     log
 }
@@ -4047,5 +4052,257 @@ fn people_nearby_are_listed_with_claimed_names() {
     assert_eq!(
         std::fs::read_dir(box_.join("outbox")).expect("ls").count(),
         1
+    );
+}
+
+/// A live system with the installer (ADR 0022): a fake lsblk with one
+/// usable disk and the live stick (mounted, so never offered).
+fn enable_installer(a: &App) {
+    use std::os::unix::fs::PermissionsExt;
+    let sys = a.home.join("sys");
+    let lsblk = sys.join("install-lsblk");
+    std::fs::write(
+        &lsblk,
+        r#"#!/bin/sh
+cat <<LSBLK
+NAME="sda" PATH="/dev/sda" PKNAME="" TYPE="disk" RM="0" RO="0" SIZE="500107862016" MODEL="Samsung SSD 860" SERIAL="S3Z" TRAN="sata" FSTYPE="" LABEL="" PARTLABEL="" MOUNTPOINT=""
+NAME="sda1" PATH="/dev/sda1" PKNAME="sda" TYPE="part" RM="0" RO="0" SIZE="499570991104" MODEL="" SERIAL="" TRAN="" FSTYPE="ntfs" LABEL="Windows" PARTLABEL="" MOUNTPOINT=""
+NAME="sdb" PATH="/dev/sdb" PKNAME="" TYPE="disk" RM="1" RO="0" SIZE="32010928128" MODEL="Flash Disk" SERIAL="" TRAN="usb" FSTYPE="" LABEL="" PARTLABEL="" MOUNTPOINT=""
+NAME="sdb1" PATH="/dev/sdb1" PKNAME="sdb" TYPE="part" RM="1" RO="0" SIZE="1600000000" MODEL="" SERIAL="" TRAN="" FSTYPE="iso9660" LABEL="RESILIENCE" PARTLABEL="" MOUNTPOINT="/iso"
+LSBLK
+"#,
+    )
+    .expect("write lsblk");
+    std::fs::set_permissions(&lsblk, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let mut text = format!(
+        "edition = \"standard\"\npath = \"/run/current-system/sw/bin\"\n\
+         keymaps = [\"us\", \"fr\"]\nlsblk = \"{}\"\n",
+        lsblk.display()
+    );
+    for k in [
+        "installer",
+        "wipefs",
+        "sfdisk",
+        "udevadm",
+        "mkfs_vfat",
+        "mkfs_ext4",
+        "cryptsetup",
+        "mount",
+        "umount",
+        "nixos_install",
+        "nixos_enter",
+        "loadkeys",
+        "grub_install",
+        "sync",
+    ] {
+        text.push_str(&format!("{k} = \"/store/bin/{k}\"\n"));
+    }
+    text.push_str("[systems]\n");
+    for k in ["uefi_plain", "uefi_luks", "bios_plain", "bios_luks"] {
+        text.push_str(&format!("{k} = \"/store/{k}\"\n"));
+    }
+    std::fs::write(sys.join("install.toml"), text).expect("write install.toml");
+}
+
+fn install_rows(a: &App) -> Vec<InstallRow> {
+    match a.view() {
+        View::Install { form, .. } => form.rows(),
+        v => panic!("not the Install screen: {v:?}"),
+    }
+}
+
+fn install_form(a: &App) -> InstallForm {
+    match a.view() {
+        View::Install { form, .. } => (**form).clone(),
+        v => panic!("not the Install screen: {v:?}"),
+    }
+}
+
+fn select_install_row(a: &mut App, row: InstallRow) {
+    let i = install_rows(a).iter().position(|r| *r == row).expect("row");
+    press(a, KeyCode::Home);
+    for _ in 0..i {
+        press(a, KeyCode::Down);
+    }
+}
+
+#[test]
+fn installer_is_offered_only_on_live_systems() {
+    let a = app(Mode::UltraStable, "install-absent");
+    assert!(
+        !a.entries(Category::System)
+            .contains(&Entry::Builtin(Builtin::Install))
+    );
+    enable_installer(&a);
+    assert!(
+        a.entries(Category::System)
+            .contains(&Entry::Builtin(Builtin::Install))
+    );
+}
+
+#[test]
+fn installer_gathers_answers_and_runs_only_after_the_disk_name_is_typed() {
+    let mut a = app(Mode::UltraStable, "install");
+    enable_installer(&a);
+    let (v, e) = a.activate(Entry::Builtin(Builtin::Install));
+    assert_eq!(e, Effect::None);
+    a.stack.push(v.expect("install view"));
+    let f = install_form(&a);
+    assert!(f.encrypt, "encryption is on by default");
+    assert_eq!(f.firmware, resilience_core::install::Firmware::Bios);
+    assert_eq!(f.keymap, "us");
+    assert_eq!(
+        f.accounts
+            .iter()
+            .map(|x| (x.name.as_str(), x.mode))
+            .collect::<Vec<_>>(),
+        [("user", Mode::Stable), ("administrator", Mode::Advanced)]
+    );
+
+    // Install without a disk: refused with a message.
+    select_install_row(&mut a, InstallRow::Install);
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(&a.modal, Some(Modal::Message { title, .. }) if title == "CHOOSE A DISK"));
+    press(&mut a, KeyCode::Enter);
+
+    // The live stick is in use and cannot be chosen; the SSD can.
+    select_install_row(&mut a, InstallRow::Disk);
+    press(&mut a, KeyCode::Enter);
+    let View::InstallDisks { disks, .. } = a.view() else {
+        panic!("disk list");
+    };
+    assert_eq!(disks.len(), 2);
+    let screen = render(&mut a, 100, 30);
+    assert!(screen.contains("Windows"), "{screen}");
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(&a.modal, Some(Modal::Message { error: true, .. })));
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::Up);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        install_form(&a).disk.map(|d| d.path),
+        Some("/dev/sda".to_string())
+    );
+
+    // Encryption off and on again; keyboard French.
+    select_install_row(&mut a, InstallRow::Encrypt);
+    press(&mut a, KeyCode::Enter);
+    assert!(!install_form(&a).encrypt);
+    press(&mut a, KeyCode::Enter);
+    assert!(install_form(&a).encrypt);
+    select_install_row(&mut a, InstallRow::Keyboard);
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(install_form(&a).keymap, "fr");
+
+    // Rename the first account (a bad name is refused), change its mode.
+    select_install_row(&mut a, InstallRow::Account(0));
+    press(&mut a, KeyCode::Enter);
+    for _ in 0..4 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    type_text(&mut a, "root");
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(
+        &a.modal,
+        Some(Modal::InstallText { error: Some(_), .. })
+    ));
+    for _ in 0..4 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    type_text(&mut a, "jeanne");
+    press(&mut a, KeyCode::Enter);
+    assert!(a.modal.is_none());
+    press(&mut a, KeyCode::Char('m'));
+    assert_eq!(install_form(&a).accounts[0].name, "jeanne");
+    assert_eq!(install_form(&a).accounts[0].mode, Mode::Advanced);
+    press(&mut a, KeyCode::Char('m'));
+    assert_eq!(install_form(&a).accounts[0].mode, Mode::UltraStable);
+    press(&mut a, KeyCode::Char('m'));
+
+    // Add an account with a full name; remove the administrator.
+    press(&mut a, KeyCode::Char('a'));
+    type_text(&mut a, "kid");
+    press(&mut a, KeyCode::Enter);
+    type_text(&mut a, "The kid");
+    press(&mut a, KeyCode::Enter);
+    assert!(a.modal.is_none());
+    select_install_row(&mut a, InstallRow::Account(1));
+    press(&mut a, KeyCode::Char('d'));
+    let names: Vec<String> = install_form(&a)
+        .accounts
+        .into_iter()
+        .map(|x| x.name)
+        .collect();
+    assert_eq!(names, ["jeanne", "kid"]);
+
+    // The summary names the disk, what is on it, and warns: no administrator.
+    select_install_row(&mut a, InstallRow::Install);
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(
+        &a.modal,
+        Some(Modal::InstallText {
+            field: InstallInput::Confirm,
+            ..
+        })
+    ));
+    let screen = render(&mut a, 100, 50);
+    for want in [
+        "ERASED",
+        "/dev/sda",
+        "Windows",
+        "no Advanced",
+        "type the disk",
+    ] {
+        assert!(screen.contains(want), "{want}: {screen}");
+    }
+    // Anything but the disk's name does nothing.
+    type_text(&mut a, "sdb");
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    assert!(matches!(
+        &a.modal,
+        Some(Modal::InstallText { error: Some(_), .. })
+    ));
+    for _ in 0..3 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    type_text(&mut a, "sda");
+    let Effect::Run(req) = press(&mut a, KeyCode::Enter) else {
+        panic!("the installer should run");
+    };
+    assert_eq!(req.label, INSTALL_LABEL);
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        req.argv,
+        s(&[
+            "/run/wrappers/bin/pkexec",
+            "/store/bin/installer",
+            "run",
+            "--disk",
+            "/dev/sda",
+            "--size",
+            "500107862016",
+            "--model",
+            "Samsung SSD 860",
+            "--firmware",
+            "bios",
+            "--encrypt",
+            "yes",
+            "--keymap",
+            "fr",
+            "--account",
+            "jeanne:stable:Everyday account",
+            "--account",
+            "kid:stable:The kid",
+        ])
+    );
+    assert_eq!(
+        req.env,
+        vec![(
+            "SHELL".to_string(),
+            "/run/current-system/sw/bin/resilience-session".to_string()
+        )]
     );
 }

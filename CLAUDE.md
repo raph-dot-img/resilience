@@ -78,7 +78,8 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    ├─ packages: resilience, resilience-session, resilience-handbook, resilience-world-map, iso, iso-minimal, vm
    ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
-              vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-maps, vm-comms, vm-mesh,
+              vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-install,
+              vm-install-uefi, vm-maps, vm-comms, vm-mesh,
               security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world,
               comms-messages (the messaging program with real Reticulum + LXMF, no VM)
 
@@ -323,6 +324,11 @@ it concurrently with VM tests.
   `drive_add`/`device_add usb-storage` (new ids per plug), see vm-backup.
 - The age round-trip unit test needs age in PATH (Nix build has it; on the
   host prepend the store path of `nixpkgs#age`, otherwise it prints SKIPPED).
+- Installing from the ISO: `python3 -I tests/iso/install.py ISO WORKDIR
+  [--uefi OVMF.fd] [--encrypt] [--keymap fr]` (ISO as a USB stick, new
+  qcow2 disk in WORKDIR: put it on a real disk such as ~/.cache, never a
+  tmpfs; it keeps the disk, delete it). OVMF: `nix build --inputs-from .
+  nixpkgs#OVMF.fd`. QEMU 10's `info blockstats` is a table per device.
 - ISO: `python3 -I tests/iso/smoke.py ISO OUTDIR [--uefi OVMF.fd] [--keymap us|fr]`
   takes screenshots; look at them (the Read tool displays PNGs). `--keymap`
   is the ISO's layout (default us): QEMU sends physical keys.
@@ -342,7 +348,13 @@ it concurrently with VM tests.
   land and sea differ by colour, which the test counts).
 - Rust: `cargo test` (unit + TUI behaviour via ratatui TestBackend) and
   `cargo clippy --all-targets` must be clean. `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` prints screens.
-- Nix/VM: `nix flake check` runs everything including VM tests.
+- Nix/VM: do NOT run a building `nix flake check` on this host: its
+  evaluator keeps every configuration in memory (8+ GB) for the whole run
+  and, with VM tests, the machine ran out of memory (2026-11-18, the
+  session was killed). Instead: `nix flake check --no-build`, then
+  evaluate each check alone (`nix eval --raw .#checks.x86_64-linux.NAME.drvPath`,
+  peak 6.4 GB for eval-live-iso, freed on exit) and build the list of
+  `.drv^*` with one `nix build --no-link --keep-going -L`. Same coverage.
 - Report each test as PASS / FAIL / BLOCKED / NOT TESTED in docs/TESTING.md.
   Never mark untested things as passing.
 
@@ -430,6 +442,25 @@ needlessly. Watch `free -h` during VM tests.
 ## 14. Current implementation status (2026-11-16)
 
 **Now: Phase 6's local part is done and in `main` (2026-11-17); next work on a new `feat/<topic>` branch from `develop`.**
+**Current work: Phase 8 text installer (ADR 0022) on `feat/installer`.**
+Slices 1 to 5 done (ADR, installed configurations, `resilience-core/src/
+install.rs` + `crates/resilience-install`, TUI `install_ui.rs`, `vm-install`
+BIOS + LUKS + French layout PASS, handbook `12-installing.md`,
+docs/INSTALLATION.md); `vm-install-uefi` (OVMF, no encryption, systemd-boot
+fallback path) PASS; the ISO with the installer built and installed from
+in QEMU as a USB stick (`tests/iso/install.py`: BIOS + LUKS + fr, UEFI +
+plain) PASS (2026-11-18); all 21 checks PASS at `84bf3c4`; merged into
+`develop` (2026-11-18, not pushed). Next for 0.3.0: ask the owner.
+VM-test lessons: `Machine.sleep` waits for the root shell (use time.sleep
+before the installed disk is unlocked); a second machine on the same disk
+needs `target.state_dir = installer.state_dir`; never run the test driver
+by hand with the default XDG_RUNTIME_DIR (it puts the disk images in
+/run/user/1000, a small tmpfs). UEFI without a boot loader: `useEFIBoot`
+alone gives OVMF + direct kernel boot (`/sys/firmware/efi` exists); a
+`useBootLoader` machine booting another machine's disk needs
+`efi.keepVariables = false` (otherwise it builds its own disk image).
+Phase 7 (SDR) is POSTPONED by the owner (2026-11-17) until they buy the
+hardware: do not start it. Power profiles stay open (need hardware).
 Maps (Phase 5) were parked by the owner on 2026-11-16 after slice 9: do
 not continue slices 10 to 13 unless asked. Phase 6 so far: ADR 0018
 (Reticulum + LXMF, opt-in because their licence is not free: owner's
@@ -488,7 +519,7 @@ media and backups (0008), clock (0009), Wi-Fi (0010), default generation
 files and manual pages (0014); Phase 4 guided cryptography (0015).
 See docs/TESTING.md for what has actually been executed and passed.
 
-Git state (2026-11-17): `main` = `develop` at the Phase 6 milestone (local messaging, store-and-forward, files, mesh; maps parked), merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
+Git state (2026-11-17): release **0.2.0** (Phases 2 to 6, local part) is `main` = `develop`, tagged `v0.2.0` (and `v0.1.0` on `3a3c629`), pushed; the 0.2.0 ISO boot-tested in QEMU. The installer (`feat/installer`) was merged into `develop` on 2026-11-18 after all 21 checks passed (not pushed); meant for 0.3.0. Earlier: `main` = `develop` at the Phase 6 milestone, merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
 `feat/maps-overview`, `feat/comms` (Phase 6 slices 1 to 4, ADR 0018 and
 0019) and `feat/comms-files` (slices 5 and 6, ADR 0020) merged, on origin;
 both comms branches are fully merged (new Phase 6 work: a new
@@ -579,6 +610,7 @@ Phase 5 (maps) is parked.
 - 0019 Store-and-forward: a message store (LXMF propagation node, our own `resilience-messages node`, no delivery address) on every machine with messaging; clients go direct first, a copy to the store after 2 min
 - 0020 Files in local messages: one per message ≤ 900 KB, sent as a copy, received under the message id (64 MB/account), saved on request into ~/Received
 - 0021 Mesh network: BATMAN-adv over Wi-Fi ad hoc (IBSS; 802.11s is missing on Intel cards), off until turned on at the console via helper `set-mesh` (allow_active=yes), bat0 link-local only; Yggdrasil not adopted
+- 0022 Installer: prebuilt generic installed systems (per edition, UEFI/BIOS, plain/LUKS), accounts as local accounts in modes.toml, keyboard in /var/lib/resilience/keyboard (+ initrd secret), `resilience-install` via polkit allow_active on the live ISO only
 
 ## 18. How to continue safely
 
