@@ -10,7 +10,7 @@ works at 80×24, without colour, and on modest hardware.
 ```
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║█▀█ █▀▀ █▀ █ █   █ █▀▀ █▄ █ █▀▀ █▀▀                                   12:49:23║
-║█▀▄ ██▄ ▄█ █ █▄▄ █ ██▄ █ ▀█ █▄▄ ██▄                            STANDARD v0.3.0║
+║█▀▄ ██▄ ▄█ █ █▄▄ █ ██▄ █ ▀█ █▄▄ ██▄                            STANDARD v0.4.0║
 ║OS :: AUTONOMOUS INFORMATION SYSTEM                         MODE: ULTRA-STABLE║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ┌ STATUS ────────────────────────────┐┌ MAIN MENU ─────────────────────────────┐
@@ -21,11 +21,12 @@ works at 80×24, without colour, and on modest hardware.
 │STORAGE [OK] 7.5 GiB FREE           ││  [5] SYSTEM MANAGEMENT                 │
 ```
 
-> **Status: early prototype (v0.3.0).** It boots and is usable in a
+> **Status: early prototype (v0.4.0).** It boots and is usable in a
 > virtual machine (x86_64). It has booted once on physical hardware (a ThinkPad
 > L15 Gen 1) and has otherwise run only in virtual machines. It runs as a live
-> system and has a text installer (whole disk, optional encryption), tested
-> in virtual machines only. Maps cover the world overview and
+> system and has a text installer (whole disk, optional encryption) and
+> signed offline updates from a USB stick, both tested in virtual machines
+> only. Maps cover the world overview and
 > packs you build; local messaging and the mesh have been tested between
 > virtual machines only; radio tools do not exist yet.
 > See [ROADMAP.md](ROADMAP.md) and [docs/TESTING.md](docs/TESTING.md) for
@@ -52,6 +53,18 @@ works at 80×24, without colour, and on modest hardware.
   beginners.
 - Crash recovery: the session restarts the interface; other consoles and
   previous system generations remain available.
+- Text installer (whole disk, encryption on by default, accounts and their
+  modes, keyboard layout) and offline updates: a signed update on a USB
+  stick is checked, installed with an administrator's password, and starts
+  at the next restart with the previous version kept in the boot menu.
+  Computers installed from 0.3.0 cannot take updates: reinstall them once.
+
+## Downloads
+
+Releases (ISO, offline update, source) are published on GitHub and on
+<https://mirror.canevet.eu/files/resilience/>, with a `SHA256SUMS` file
+signed with minisign. Check a download as explained in
+[keys/README.md](keys/README.md) before using it.
 
 ## Quick start (developers)
 

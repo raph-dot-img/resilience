@@ -6,13 +6,29 @@ Git tags: `vX.Y.Z` on the commit of each release.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-18 — Offline updates
+
+Installed computers can now be updated from a USB stick, without the
+Internet. Computers installed from 0.3.0 cannot: reinstall them once.
+
 ### Added
 - Offline updates (ADR 0023): a signed update on a USB stick, checked
   (integrity and authenticity, as the user) and installed from Recovery →
   "Update from a USB stick" with an administrator's password; it starts
   at the next restart and the previous version stays in the boot menu.
-  Bundles are made with `scripts/make-update-bundle.sh`. No release key
-  exists yet, so no system takes updates until the owner makes one.
+  Bundles are made with `scripts/make-update-bundle.sh`. VM test
+  `vm-update`; also tested end to end in QEMU from a system installed
+  from the ISO, with the real release key, including going back to the
+  previous version.
+- The Resilience release key `resilience-release` (Nix binary-cache key,
+  `nix/release-keys.nix`), built into installed systems; the secret part
+  is kept offline by the owner.
+- Release publishing: `scripts/make-release.sh` builds a release folder
+  (ISO, offline update archive per edition, source archive, `SHA256SUMS`)
+  and signs the checksums with a separate minisign key
+  (`keys/resilience-release.minisign.pub`, ID `5CC1E51F72AC25E7`; see
+  keys/README.md). Mirror layout `releases/VERSION/` + `LATEST`; second
+  official mirror <https://mirror.canevet.eu/files/resilience/>.
 - Licence notice (ADR 0024): before an account first uses the interface
   (and at every start of the live ISO), a plain summary and the original
   text of the Hippocratic License 2.1; the person certifies having read

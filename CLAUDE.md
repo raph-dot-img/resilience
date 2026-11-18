@@ -441,10 +441,23 @@ needlessly. Watch `free -h` during VM tests.
 4. The build-time catalog check ensures the binary exists. Add a VM test
    assertion if the app is important.
 
-## 14. Current implementation status (2026-11-16)
+## 14. Current implementation status (2026-11-18)
 
-**Now: Phase 6's local part is done and in `main` (2026-11-17); next work on a new `feat/<topic>` branch from `develop`.**
-**Current work: Phase 8 text installer (ADR 0022) on `feat/installer`.**
+**Now: release 0.4.0 (offline updates ADR 0023, licence notice ADR 0024,
+the owner's release key, `scripts/make-release.sh`) is being prepared on
+`develop`.** Release flow: version bump + CHANGELOG on `develop`, full
+test run, `make-release.sh --update-key NIXKEY --sign MINISIGNKEY V OUT` at
+tag `vV` (the owner signs in their own terminal; secret keys under
+`~/.resilience-keys`, later a VeraCrypt container), merge into `main`, tag
+and push only when the owner says so; upload `releases/V/` to the mirror
+first, `LATEST` last (docs/BUILDING.md). Mirrors: GitHub and
+https://mirror.canevet.eu/files/resilience/ (rsync over SSH through Tor,
+restricted key `yoga-mirror-claude`, hidden `.staging/` then one rename).
+Systems installed from 0.3.0 have no release key: reinstall once.
+Offline updates were tested end to end with the real key in QEMU
+(install 0.3.0-with-key, update to 0.3.1, roll back; TESTING.md).
+
+Phase 8 text installer (ADR 0022, released in 0.3.0):
 Slices 1 to 5 done (ADR, installed configurations, `resilience-core/src/
 install.rs` + `crates/resilience-install`, TUI `install_ui.rs`, `vm-install`
 BIOS + LUKS + French layout PASS, handbook `12-installing.md`,
@@ -521,7 +534,7 @@ media and backups (0008), clock (0009), Wi-Fi (0010), default generation
 files and manual pages (0014); Phase 4 guided cryptography (0015).
 See docs/TESTING.md for what has actually been executed and passed.
 
-Git state (2026-11-17): release **0.2.0** (Phases 2 to 6, local part) is `main` = `develop`, tagged `v0.2.0` (and `v0.1.0` on `3a3c629`), pushed; the 0.2.0 ISO boot-tested in QEMU. The installer (`feat/installer`) was merged into `develop` on 2026-11-18 after all 21 checks passed (not pushed); meant for 0.3.0. Earlier: `main` = `develop` at the Phase 6 milestone, merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
+Git state (2026-11-18): release **0.3.0** is `main`, tagged `v0.3.0`, pushed; `develop` holds 0.4.0 work (not pushed). Before: release **0.2.0** (Phases 2 to 6, local part) is `main` = `develop`, tagged `v0.2.0` (and `v0.1.0` on `3a3c629`), pushed; the 0.2.0 ISO boot-tested in QEMU. The installer (`feat/installer`) was merged into `develop` on 2026-11-18 after all 21 checks passed (not pushed); meant for 0.3.0. Earlier: `main` = `develop` at the Phase 6 milestone, merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
 `feat/maps-overview`, `feat/comms` (Phase 6 slices 1 to 4, ADR 0018 and
 0019) and `feat/comms-files` (slices 5 and 6, ADR 0020) merged, on origin;
 both comms branches are fully merged (new Phase 6 work: a new
@@ -615,9 +628,9 @@ Phase 5 (maps) is parked.
 - 0019 Store-and-forward: a message store (LXMF propagation node, our own `resilience-messages node`, no delivery address) on every machine with messaging; clients go direct first, a copy to the store after 2 min
 - 0020 Files in local messages: one per message ≤ 900 KB, sent as a copy, received under the message id (64 MB/account), saved on request into ~/Received
 - 0021 Mesh network: BATMAN-adv over Wi-Fi ad hoc (IBSS; 802.11s is missing on Intel cards), off until turned on at the console via helper `set-mesh` (allow_active=yes), bat0 link-local only; Yggdrasil not adopted
+- 0022 Installer: prebuilt generic installed systems (per edition, UEFI/BIOS, plain/LUKS), accounts as local accounts in modes.toml, keyboard in /var/lib/resilience/keyboard (+ initrd secret), `resilience-install` via polkit allow_active on the live ISO only
 - 0023 Offline updates: signed Nix binary cache on a USB stick (release key in nix/release-keys.nix, passed per import, never in nix.conf), helper `apply-update` (auth_admin, newer version of this edition and variant only, switch-to-configuration boot), `check-update` as the user, TUI Recovery → Update from a USB stick
 - 0024 Licence notice: before an account's first use of the TUI, Hippocratic License 2.1 summary + original text, "I certify that I have read" → helper `record-licence SHA256` (allow_active=yes) appends to /var/lib/resilience/licence-acceptances.log (root 0644); `resilience.licence.prompt` off only in VM tests (flake wrapper, mkDefault); live ISO asks at every start
-- 0022 Installer: prebuilt generic installed systems (per edition, UEFI/BIOS, plain/LUKS), accounts as local accounts in modes.toml, keyboard in /var/lib/resilience/keyboard (+ initrd secret), `resilience-install` via polkit allow_active on the live ISO only
 
 ## 18. How to continue safely
 

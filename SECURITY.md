@@ -8,7 +8,7 @@ public issue. Include the commit, steps to reproduce and impact.
 
 ## Supported versions
 
-None yet. v0.3.0 is a development prototype and must not be relied on for
+None yet. v0.4.0 is a development prototype and must not be relied on for
 safety-critical use.
 
 ## Security principles (summary)

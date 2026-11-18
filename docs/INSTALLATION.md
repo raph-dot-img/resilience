@@ -1,6 +1,6 @@
 # Installation
 
-## Current status (0.3.0)
+## Current status (0.4.0)
 
 You can:
 
@@ -14,7 +14,7 @@ Never test installation procedures on a machine whose data you need.
 
 ## 1. Live system
 
-Build or obtain `resilience-standard-0.3.0-x86_64-linux.iso`, verify its
+Build or obtain `resilience-standard-0.4.0-x86_64-linux.iso`, verify its
 SHA-256 checksum against the one published with it, and either boot it in a
 VM (`scripts/boot-iso.sh --gui`) or write it to a USB stick (docs/BUILDING.md).
 
@@ -93,3 +93,24 @@ this section is the technical summary.
 - **Not offered yet:** installing next to another system, other file
   systems, swap, choosing the host name or time zone (fixed: `resilience`,
   UTC).
+
+## 4. Updating an installed system (ADR 0023)
+
+Since 0.4.0, each release can come with an offline update per edition,
+`resilience-update-<edition>-<version>.tar`, on the download mirrors next
+to the ISO. Check the download (keys/README.md), extract the archive to
+the root of a USB stick (it makes a `resilience-update/` folder), plug the
+stick into the installed computer, then Recovery > "Update from a USB
+stick": `c` checks it (any account), Enter installs it with an
+administrator's password. The new version starts at the next restart;
+the previous one stays in the boot menu and in Recovery > System
+generations.
+
+The system checks the update itself: every file must be intact and
+signed with the Resilience release key built into it
+(`nix/release-keys.nix`), for the same edition, and newer than the
+running version. Accounts, files, settings and resource packs are kept.
+
+Computers installed from **0.3.0** have no release key and cannot take
+updates: install 0.4.0 on them once (copy your files out first, for
+example with an encrypted backup).

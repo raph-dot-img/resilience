@@ -1,5 +1,5 @@
 # Offline updates (ADR 0023), on a VM that boots through systemd-boot
-# (UEFI) like an installed system. The VM runs version 0.3.0 and trusts a
+# (UEFI) like an installed system. The VM runs the current version and trusts a
 # test-only release key (update-snakeoil-key.nix). One USB stick holds:
 #
 #   resilience-update/            0.99.0, this edition and variant, signed:
@@ -229,6 +229,7 @@ in
 
       NEW_SYSTEM = "${nodes.machine.resilienceTest.newSystem}"
       MARKER = "${marker}"
+      RUNNING = "${nodes.machine.resilience.version}"
 
       def tty_text(tty):
           """Screen text from /dev/vcsuN (UTF-32); see modes.nix."""
@@ -294,7 +295,7 @@ in
       boot()
       helper = machine.succeed("sed -n 's/^helper = \"\\(.*\\)\"$/\\1/p' /etc/resilience/admin.toml").strip()
 
-      with subtest("the system runs 0.3.0, trusts the test key, and has no new system yet"):
+      with subtest(f"the system runs {RUNNING}, trusts the test key, and has no new system yet"):
           print(machine.succeed("cat /etc/resilience/system.toml"))
           machine.succeed("grep -q '^\\[updates\\]' /etc/resilience/system.toml")
           machine.succeed("grep -q 'resilience-vmtest-snakeoil-1:' /etc/resilience/admin.toml")
@@ -339,7 +340,7 @@ in
 
       with subtest("refusals: nothing is installed, every attempt is audited"):
           cases = [
-              ("older", 2, "not newer than the running 0.3.0"),
+              ("older", 2, f"not newer than the running {RUNNING}"),
               ("other-edition", 2, "for the standard edition"),
               ("wrong-key", 2, "not signed by a Resilience release key"),
               ("tampered", 2, "or it is damaged"),
@@ -403,7 +404,7 @@ in
           machine.send_key("ret")
           wait_tty("1", "UPDATE FROM A USB STICK")
 
-      with subtest("after a restart 0.99.0 runs; 0.3.0 is still in the boot menu"):
+      with subtest(f"after a restart 0.99.0 runs; {RUNNING} is still in the boot menu"):
           machine.shutdown()
           boot()
           machine.succeed(f"grep -qx {MARKER} /etc/resilience-test-marker")
