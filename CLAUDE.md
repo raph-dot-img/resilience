@@ -449,7 +449,8 @@ BIOS + LUKS + French layout PASS, handbook `12-installing.md`,
 docs/INSTALLATION.md); `vm-install-uefi` (OVMF, no encryption, systemd-boot
 fallback path) PASS; the ISO with the installer built and installed from
 in QEMU as a USB stick (`tests/iso/install.py`: BIOS + LUKS + fr, UEFI +
-plain) PASS (2026-11-18). Open: full flake check, then merge into develop.
+plain) PASS (2026-11-18); all 21 checks PASS at `84bf3c4`; merged into
+`develop` (2026-11-18, not pushed). Next for 0.3.0: ask the owner.
 VM-test lessons: `Machine.sleep` waits for the root shell (use time.sleep
 before the installed disk is unlocked); a second machine on the same disk
 needs `target.state_dir = installer.state_dir`; never run the test driver
@@ -518,7 +519,7 @@ media and backups (0008), clock (0009), Wi-Fi (0010), default generation
 files and manual pages (0014); Phase 4 guided cryptography (0015).
 See docs/TESTING.md for what has actually been executed and passed.
 
-Git state (2026-11-17): release **0.2.0** (Phases 2 to 6, local part) is `main` = `develop`, tagged `v0.2.0` (and `v0.1.0` on `3a3c629`), pushed; the 0.2.0 ISO boot-tested in QEMU. The installer (`feat/installer`, not pushed) is meant for 0.3.0. Earlier: `main` = `develop` at the Phase 6 milestone, merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
+Git state (2026-11-17): release **0.2.0** (Phases 2 to 6, local part) is `main` = `develop`, tagged `v0.2.0` (and `v0.1.0` on `3a3c629`), pushed; the 0.2.0 ISO boot-tested in QEMU. The installer (`feat/installer`) was merged into `develop` on 2026-11-18 after all 21 checks passed (not pushed); meant for 0.3.0. Earlier: `main` = `develop` at the Phase 6 milestone, merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
 `feat/maps-overview`, `feat/comms` (Phase 6 slices 1 to 4, ADR 0018 and
 0019) and `feat/comms-files` (slices 5 and 6, ADR 0020) merged, on origin;
 both comms branches are fully merged (new Phase 6 work: a new
