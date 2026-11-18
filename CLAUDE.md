@@ -348,7 +348,13 @@ it concurrently with VM tests.
   land and sea differ by colour, which the test counts).
 - Rust: `cargo test` (unit + TUI behaviour via ratatui TestBackend) and
   `cargo clippy --all-targets` must be clean. `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` prints screens.
-- Nix/VM: `nix flake check` runs everything including VM tests.
+- Nix/VM: do NOT run a building `nix flake check` on this host: its
+  evaluator keeps every configuration in memory (8+ GB) for the whole run
+  and, with VM tests, the machine ran out of memory (2026-11-18, the
+  session was killed). Instead: `nix flake check --no-build`, then
+  evaluate each check alone (`nix eval --raw .#checks.x86_64-linux.NAME.drvPath`,
+  peak 6.4 GB for eval-live-iso, freed on exit) and build the list of
+  `.drv^*` with one `nix build --no-link --keep-going -L`. Same coverage.
 - Report each test as PASS / FAIL / BLOCKED / NOT TESTED in docs/TESTING.md.
   Never mark untested things as passing.
 
