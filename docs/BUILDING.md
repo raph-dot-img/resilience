@@ -99,3 +99,11 @@ source archive and `SHA256SUMS`, signed with the minisign release key
 (public key in `keys/`), plus `LATEST`, `README.txt` and the public key at
 the top. Upload `releases/VERSION/` first and `LATEST` last. For folders
 filled by hand (older releases), `--resign DIR` rewrites and signs the sums.
+`--index VERSION OUTDIR` writes only `README.txt`, `LATEST` and the public
+key, for a tree rebuilt from existing releases.
+
+Uploading (the owner's server, through Tor): a key restricted with
+`rrsync` to the mirror folder (`ssh yoga-mirror-claude`), then
+`rsync -rt --partial --ignore-existing --delay-updates --chmod=D755,F644
+OUTDIR/releases/ yoga-mirror-claude:releases/`, and the top files last.
+Published files are never changed: `--ignore-existing` keeps it so.

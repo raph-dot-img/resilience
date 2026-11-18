@@ -27,6 +27,9 @@
 #                        it, the command to sign is printed at the end
 #   --allow-untagged     for trial runs: HEAD need not be tagged vVERSION
 #
+# --index VERSION OUTDIR only writes README.txt, LATEST (= VERSION) and the
+# public key at the top of OUTDIR, for a tree of existing releases.
+#
 # --resign DIR rewrites SHA256SUMS (and signs it) for a folder filled by
 # hand, e.g. older releases whose ISOs were already built.
 #
@@ -44,10 +47,14 @@ pubkey=$root/keys/resilience-release.minisign.pub
 
 # Tools from the pinned nixpkgs, so the host needs only Nix.
 tool() {
-  local p
-  p=$(nix build --no-link --print-out-paths --inputs-from "$root" "nixpkgs#$1") ||
+  local p paths
+  # A package may have several outputs (zstd: bin, dev, man...).
+  paths=$(nix build --no-link --print-out-paths --inputs-from "$root" "nixpkgs#$1") ||
     die "cannot build $1"
-  printf '%s/bin/%s' "$p" "${2:-$1}"
+  for p in $paths; do
+    [ -x "$p/bin/${2:-$1}" ] && { printf '%s/bin/%s' "$p" "${2:-$1}"; return; }
+  done
+  die "no bin/${2:-$1} in $1"
 }
 
 checksums_and_sign() { # DIR VERSION SIGNKEY
@@ -85,7 +92,42 @@ checksums_and_sign() { # DIR VERSION SIGNKEY
   fi
 }
 
-minimal=0 updatekey="" sign="" untagged=0 resign=""
+write_index() { # OUTDIR VERSION: the files at the top of the mirror
+  local out=$1 version=$2
+  cp -- "$pubkey" "$out/resilience-release.minisign.pub"
+  chmod 644 "$out/resilience-release.minisign.pub"
+  printf '%s\n' "$version" >"$out/LATEST"
+  chmod 644 "$out/LATEST"
+  cat >"$out/README.txt" <<EOF
+Resilience OS: offline-first terminal Linux distribution for x86_64 PCs.
+Source and documentation: https://github.com/raph-dot-img/resilience-os
+
+releases/VERSION/   one folder per version, never changed once published
+LATEST              the newest version, as one line
+
+Each release folder holds:
+  resilience-EDITION-VERSION-x86_64-linux.iso   live system and installer
+  resilience-update-EDITION-VERSION.tar         offline update: extract it to
+                                                the root of a USB stick, then
+                                                Recovery > Update from a USB stick
+  resilience-VERSION-source.tar.zst             source code of this version
+  resilience-EDITION-VERSION-x86_64-linux.torrent  the same ISO by BitTorrent
+  SHA256SUMS, SHA256SUMS.minisig                checksums, signed
+
+Check a download before using it:
+
+  minisign -V -p resilience-release.minisign.pub -m SHA256SUMS
+  sha256sum -c --ignore-missing SHA256SUMS
+
+The public key resilience-release.minisign.pub is also published in the
+source repository (keys/). Compare the two copies: if they differ, do not
+trust the download. Update bundles are also signed with a separate key that
+installed systems check themselves.
+EOF
+  chmod 644 "$out/README.txt"
+}
+
+minimal=0 updatekey="" sign="" untagged=0 resign="" index=0
 while [ $# -gt 0 ]; do
   case $1 in
     --minimal) minimal=1 ;;
@@ -93,6 +135,7 @@ while [ $# -gt 0 ]; do
     --sign) sign=${2:?}; shift ;;
     --allow-untagged) untagged=1 ;;
     --resign) resign=${2:?}; shift ;;
+    --index) index=1 ;;
     -*) die "unknown option $1" ;;
     *) break ;;
   esac
@@ -104,6 +147,13 @@ if [ -n "$resign" ]; then
   [ $# -eq 0 ] || die "--resign takes only a folder"
   [ -d "$resign" ] || die "no folder $resign"
   checksums_and_sign "$(realpath "$resign")" "$(basename "$resign")" "$sign"
+  exit 0
+fi
+
+if [ $index = 1 ]; then
+  [ $# -eq 2 ] || die "usage: $0 --index VERSION OUTDIR"
+  [ -d "$2/releases/$1" ] || die "no folder $2/releases/$1"
+  write_index "$(realpath "$2")" "$1"
   exit 0
 fi
 
@@ -164,34 +214,7 @@ git archive --format=tar --prefix="resilience-$version/" "$head" |
 
 checksums_and_sign "$dest" "$version" "$sign"
 
-cp -- "$pubkey" "$out/resilience-release.minisign.pub"
-chmod 644 "$out/resilience-release.minisign.pub"
-printf '%s\n' "$version" >"$out/LATEST"
-cat >"$out/README.txt" <<EOF
-Resilience OS: offline-first terminal Linux distribution for x86_64 PCs.
-Source and documentation: https://github.com/raph-dot-img/resilience-os
-
-releases/VERSION/   one folder per version, never changed once published
-LATEST              the newest version, as one line
-
-Each release folder holds:
-  resilience-EDITION-VERSION-x86_64-linux.iso   live system and installer
-  resilience-update-EDITION-VERSION.tar         offline update: extract it to
-                                                the root of a USB stick, then
-                                                Recovery > Update from a USB stick
-  resilience-VERSION-source.tar.zst             source code of this version
-  SHA256SUMS, SHA256SUMS.minisig                checksums, signed
-
-Check a download before using it:
-
-  minisign -V -p resilience-release.minisign.pub -m SHA256SUMS
-  sha256sum -c --ignore-missing SHA256SUMS
-
-The public key resilience-release.minisign.pub is also published in the
-source repository (keys/). Compare the two copies: if they differ, do not
-trust the download. Update bundles are also signed with a separate key that
-installed systems check themselves.
-EOF
+write_index "$out" "$version"
 
 say "Done: $dest"
 ls -l "$dest"
