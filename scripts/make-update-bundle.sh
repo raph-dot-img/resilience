@@ -20,8 +20,10 @@ die() { echo "make-update-bundle: $*" >&2; exit 1; }
 edition=$1 key=$2 out=$3
 case $edition in standard | minimal) ;; *) die "EDITION is standard or minimal" ;; esac
 [ -f "$key" ] && [ -r "$key" ] || die "cannot read the secret key $key"
-if [ "$(stat -c %a "$key")" != 600 ] && [ "$(stat -c %a "$key")" != 400 ]; then
-  die "the secret key $key must be readable by you only (chmod 600)"
+# Yours, and no access for group or others (0600, 0400, or 0700 on a FAT
+# volume such as a VeraCrypt container mounted with fmask=0077).
+if [ "$(stat -c %u "$key")" != "$(id -u)" ] || (( 8#$(stat -c %a "$key") & 8#077 )); then
+  die "the secret key $key must be yours and readable by you only (chmod 600)"
 fi
 root=$(cd "$(dirname "$0")/.." && pwd)
 dest=$(realpath -m "$out")/resilience-update
