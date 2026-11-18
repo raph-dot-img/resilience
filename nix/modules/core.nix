@@ -161,35 +161,45 @@ let
     gpg = "${config.programs.gnupg.package}/bin/gpg";
   };
 
-  systemConfigUnchecked = toml.generate "resilience-system.toml" {
-    edition = cfg.edition;
-    version = cfg.package.version;
-    catalog = "/etc/resilience/apps.toml";
-    handbook_dir = "${cfg.handbookPackage}/share/resilience/handbook";
-    editor = [ (lib.getExe pkgs.nano) ];
-    restricted_editor = [
-      (lib.getExe pkgs.nano)
-      "--restricted"
-    ];
-    shell = [
-      (lib.getExe pkgs.bashInteractive)
-      "-i"
-    ];
-    probe = {
-      targets = cfg.probe.targets;
-      dns_name = cfg.probe.dnsName;
-      timeout_ms = cfg.probe.timeoutMs;
-    };
-    # Removable media and backups (media.nix, ADR 0008), Wi-Fi (ADR 0010).
-    inherit tools;
-    keyboard = {
-      default = config.resilience.keyboard.layout;
-      layouts = map (l: { inherit (l) id label; }) config.resilience.keyboard.layouts;
+  systemConfigUnchecked = toml.generate "resilience-system.toml" (
+    {
+      edition = cfg.edition;
+      inherit (cfg) version;
+      catalog = "/etc/resilience/apps.toml";
+      handbook_dir = "${cfg.handbookPackage}/share/resilience/handbook";
+      editor = [ (lib.getExe pkgs.nano) ];
+      restricted_editor = [
+        (lib.getExe pkgs.nano)
+        "--restricted"
+      ];
+      shell = [
+        (lib.getExe pkgs.bashInteractive)
+        "-i"
+      ];
+      probe = {
+        targets = cfg.probe.targets;
+        dns_name = cfg.probe.dnsName;
+        timeout_ms = cfg.probe.timeoutMs;
+      };
+      # Removable media and backups (media.nix, ADR 0008), Wi-Fi (ADR 0010).
+      inherit tools;
+      keyboard = {
+        default = config.resilience.keyboard.layout;
+        layouts = map (l: { inherit (l) id label; }) config.resilience.keyboard.layouts;
+      }
+      // lib.optionalAttrs (config.resilience.keyboard.stateFile != null) {
+        state_file = config.resilience.keyboard.stateFile;
+      };
     }
-    // lib.optionalAttrs (config.resilience.keyboard.stateFile != null) {
-      state_file = config.resilience.keyboard.stateFile;
-    };
-  };
+    // lib.optionalAttrs (cfg.updates.settings != null) {
+      # Offline updates (ADR 0023): the TUI offers and checks them.
+      updates = cfg.updates.settings;
+    }
+    // {
+      # The licence notice (ADR 0024).
+      licence = cfg.licence.settings;
+    }
+  );
 
   # Fails the system build if a tool path is wrong.
   systemConfig = pkgs.runCommand "resilience-system-checked.toml" { } ''
@@ -212,6 +222,17 @@ in
       ];
       default = "standard";
       description = "Build flavour; selects which optional application groups are enabled by default.";
+    };
+
+    version = mkOption {
+      type = types.strMatching "(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)";
+      default = cfg.package.version;
+      defaultText = literalExpression "config.resilience.package.version";
+      description = ''
+        Release version of this system (MAJOR.MINOR.PATCH). Shown to people
+        and compared by offline updates (ADR 0023): an update must carry a
+        greater one. Only tests set it.
+      '';
     };
 
     package = mkOption {

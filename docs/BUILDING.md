@@ -30,7 +30,7 @@ missing and uses built-in defaults; the catalog will be empty.
 | Output | Command | Result |
 |---|---|---|
 | TUI package (runs `cargo test`) | `nix build .#resilience` | `result/bin/resilience` |
-| Live ISO, Standard | `nix build .#iso` | `result/iso/resilience-standard-0.3.0-x86_64-linux.iso` |
+| Live ISO, Standard | `nix build .#iso` | `result/iso/resilience-standard-0.4.0-x86_64-linux.iso` |
 | Live ISO, Minimal | `nix build .#iso-minimal` | `result/iso/resilience-minimal-…` |
 | Dev VM | `nix run .#vm` | boots on the serial console in your terminal |
 | All checks | `nix flake check -L --max-jobs 1` | see docs/TESTING.md |
@@ -65,7 +65,7 @@ development tooling never does it for you. Double-check the device name:
 
 ```sh
 lsblk                                   # identify the USB stick, e.g. /dev/sdX
-sudo dd if=resilience-standard-0.3.0-x86_64-linux.iso of=/dev/sdX bs=4M status=progress conv=fsync
+sudo dd if=resilience-standard-0.4.0-x86_64-linux.iso of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 ## Resource notes (reference host: 6 cores, 12 GiB)
@@ -89,3 +89,21 @@ nix build .#iso && python3 -I tests/iso/smoke.py result/iso/*.iso /tmp/shots
 ```
 Record the new revision in CHANGELOG.md. Moving to a new NixOS release
 (e.g. 26.11) requires an ADR update and a full test pass.
+
+## Publishing a release on the mirrors
+
+`scripts/make-release.sh [--minimal] [--update-key NIX_KEY] [--sign MINISIGN_KEY] VERSION OUTDIR`
+(at tag `vVERSION`, clean tree) fills `OUTDIR/releases/VERSION/` with the
+ISOs, the offline update bundles (`.tar`, extracted to a stick's root), the
+source archive and `SHA256SUMS`, signed with the minisign release key
+(public key in `keys/`), plus `LATEST`, `README.txt` and the public key at
+the top. Upload `releases/VERSION/` first and `LATEST` last. For folders
+filled by hand (older releases), `--resign DIR` rewrites and signs the sums.
+`--index VERSION OUTDIR` writes only `README.txt`, `LATEST` and the public
+key, for a tree rebuilt from existing releases.
+
+Uploading (the owner's server, through Tor): a key restricted with
+`rrsync` to the mirror folder (`ssh yoga-mirror-claude`), then
+`rsync -rt --partial --ignore-existing --delay-updates --chmod=D755,F644
+OUTDIR/releases/ yoga-mirror-claude:releases/`, and the top files last.
+Published files are never changed: `--ignore-existing` keeps it so.

@@ -1,6 +1,6 @@
 # Architecture
 
-Version 0.3.0. Decisions and their rationale live in `docs/decisions/`.
+Version 0.4.0. Decisions and their rationale live in `docs/decisions/`.
 
 ## 1. Layers
 

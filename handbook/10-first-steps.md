@@ -8,6 +8,14 @@ EVERYTHING HERE WORKS OFFLINE
   in the main menu needs an Internet connection unless its description says
   so.
 
+THE LICENCE, THE FIRST TIME
+  The first time an account opens Resilience (and at every start of the
+  live system), it shows a short summary and the original text of the
+  Hippocratic License 2.1, which covers Resilience's own programs. Press
+  Tab to read the text, Space to tick "I certify that I have read", then
+  Enter. The date and time are recorded on this computer. Other programs
+  on this computer keep their own licences.
+
 MOVING AROUND
   Up / Down       move the highlight
   Enter           open the highlighted item

@@ -43,6 +43,10 @@ mod files_ui;
 mod install_ui;
 #[path = "library.rs"]
 mod library;
+#[path = "licence_ui.rs"]
+mod licence_ui;
+#[path = "update_ui.rs"]
+mod update_ui;
 pub use chat_ui::now_secs as chat_now;
 pub use chat_ui::{ChatInput, ChatRow, NearbyRow};
 #[cfg(test)]
@@ -55,6 +59,10 @@ pub use install_ui::{InstallForm, InstallInput, InstallRow};
 #[cfg(test)]
 pub use library::{ItemPlace, stick_items};
 pub use library::{LibItem, PackRow, PacksScreen};
+pub use licence_ui::LicencePage;
+#[cfg(test)]
+pub use update_ui::update_rows as update_ui_rows;
+pub use update_ui::{UPDATE_APPLY_LABEL, UPDATE_CHECK_LABEL, UpdateRow};
 
 const FAST_REFRESH: Duration = Duration::from_secs(5);
 const SLOW_REFRESH: Duration = Duration::from_secs(30);
@@ -131,14 +139,17 @@ pub enum MediaPurpose {
 pub enum RecoveryItem {
     Health,
     Generations,
+    /// Only when the system can take updates (ADR 0023).
+    Update,
     Report,
     Emergency,
 }
 
 impl RecoveryItem {
-    pub const ALL: [RecoveryItem; 4] = [
+    pub const ALL: [RecoveryItem; 5] = [
         RecoveryItem::Health,
         RecoveryItem::Generations,
+        RecoveryItem::Update,
         RecoveryItem::Report,
         RecoveryItem::Emergency,
     ];
@@ -147,6 +158,7 @@ impl RecoveryItem {
         match self {
             RecoveryItem::Health => "System health & recent failures",
             RecoveryItem::Generations => "System generations (roll back)",
+            RecoveryItem::Update => "Update from a USB stick",
             RecoveryItem::Report => "Export a diagnostic report",
             RecoveryItem::Emergency => "Emergency guide",
         }
@@ -161,6 +173,12 @@ impl RecoveryItem {
                 "Every earlier version of the system is kept. Shows them, how to start one \
                  from the boot menu, and makes one the default (administrator password). \
                  Your personal files are not affected by a system rollback."
+            }
+            RecoveryItem::Update => {
+                "Installs a newer Resilience from an update on a USB stick, after checking \
+                 that it is intact and signed by a Resilience release key (administrator \
+                 password). It starts at the next restart; the current version stays in \
+                 the boot menu. Your files are not affected."
             }
             RecoveryItem::Report => {
                 "Saves a plain-text report (status, failures, generations, interface log) in \
@@ -646,6 +664,22 @@ pub enum View {
         gens: Vec<recovery::Generation>,
         list: ListState,
     },
+    /// The licence notice (ADR 0024), on top of everything until recorded.
+    Licence {
+        page: LicencePage,
+        text: String,
+        scroll: usize,
+        /// The original text was opened.
+        full_seen: bool,
+        /// "I certify that I have read" is ticked.
+        ticked: bool,
+    },
+    /// Removable volumes and the updates on them (ADR 0023).
+    Updates {
+        rows: Vec<UpdateRow>,
+        error: Option<String>,
+        list: ListState,
+    },
     /// Removable volumes, opened for `purpose`.
     Media {
         volumes: Vec<Volume>,
@@ -747,6 +781,12 @@ pub enum Pending {
     /// Make this generation the default at every boot.
     SetDefaultGeneration {
         number: u64,
+    },
+    /// Log out without certifying having read the licence (ADR 0024).
+    DeclineLicence,
+    /// Install the update in this bundle folder (ADR 0023).
+    ApplyUpdate {
+        dir: PathBuf,
     },
     Backup {
         mount: PathBuf,
@@ -972,6 +1012,9 @@ impl App {
             paths: s.paths,
         };
         app.refresh_slow();
+        if let Some(v) = app.licence_view() {
+            app.stack.push(v);
+        }
         for w in s.warnings {
             app.notify(Level::Warn, w);
         }
@@ -1194,7 +1237,8 @@ impl App {
             View::Handbook { .. }
             | View::Pager { .. }
             | View::Status { .. }
-            | View::Help { .. } => HelpTopic::Reader,
+            | View::Help { .. }
+            | View::Licence { .. } => HelpTopic::Reader,
             View::Notes { .. } => HelpTopic::Notes,
             View::Chats { .. } | View::Nearby { .. } | View::Chat { .. } => HelpTopic::Chat,
             View::Network { .. } => HelpTopic::Network,
@@ -1203,7 +1247,9 @@ impl App {
             View::Install { .. } | View::InstallDisks { .. } | View::InstallLayouts { .. } => {
                 HelpTopic::Install
             }
-            View::Recovery { .. } | View::Generations { .. } => HelpTopic::Recovery,
+            View::Recovery { .. } | View::Generations { .. } | View::Updates { .. } => {
+                HelpTopic::Recovery
+            }
             View::Media {
                 purpose: MediaPurpose::ExportKeys,
                 ..
@@ -1227,6 +1273,9 @@ impl App {
         }
         if let Some(modal) = self.modal.take() {
             return self.handle_modal(modal, key);
+        }
+        if matches!(self.view(), View::Licence { .. }) {
+            return self.licence_key(key);
         }
         let typing = matches!(self.view(), View::Search { .. } | View::Files { .. });
         match key.code {
@@ -1305,12 +1354,18 @@ impl App {
         ) {
             return self.install_key(view, key);
         }
+        if matches!(view, View::Updates { .. }) {
+            return self.updates_key(view, key);
+        }
         let mut next: Option<View> = None;
         let mut effect = Effect::None;
         match &mut view {
             // Handled by chat_key and install_key above.
             View::Chats { .. } | View::Nearby { .. } | View::Chat { .. } => {}
             View::Install { .. } | View::InstallDisks { .. } | View::InstallLayouts { .. } => {}
+            View::Updates { .. } => {}
+            // Handled by licence_key in handle_key.
+            View::Licence { .. } => {}
             View::Home { list } => {
                 let cats = self.home_categories();
                 if let Some(i) = digit(key) {
@@ -1444,18 +1499,18 @@ impl App {
                 }
             }
             View::Recovery { list } => {
+                let items = self.recovery_items();
                 let chosen = if let Some(i) = digit(key) {
-                    (i < RecoveryItem::ALL.len()).then(|| {
+                    (i < items.len()).then(|| {
                         list.select(Some(i));
-                        RecoveryItem::ALL[i]
+                        items[i]
                     })
                 } else if is_activate(key) {
-                    list.selected()
-                        .and_then(|i| RecoveryItem::ALL.get(i).copied())
+                    list.selected().and_then(|i| items.get(i).copied())
                 } else if is_back(key) {
                     return (None, Effect::None);
                 } else {
-                    nav(list, RecoveryItem::ALL.len(), key);
+                    nav(list, items.len(), key);
                     None
                 };
                 if let Some(item) = chosen {
@@ -2210,6 +2265,8 @@ impl App {
             Pending::SetMode { .. }
             | Pending::SetTime { .. }
             | Pending::SetDefaultGeneration { .. }
+            | Pending::ApplyUpdate { .. }
+            | Pending::DeclineLicence
             | Pending::JoinWifi { .. }
             | Pending::ForgetWifi { .. }
             | Pending::Backup { .. }
@@ -2461,12 +2518,13 @@ impl App {
 
     fn execute(&mut self, action: Pending) -> Effect {
         let verb = match action {
-            Pending::Logout => return Effect::Quit,
+            Pending::Logout | Pending::DeclineLicence => return Effect::Quit,
             Pending::SetMode { user, to } => return self.set_mode_effect(&user, to),
             Pending::SetTime { utc } => return self.set_time_effect(utc),
             Pending::SetDefaultGeneration { number } => {
                 return self.set_default_generation_effect(number);
             }
+            Pending::ApplyUpdate { dir } => return self.apply_update_effect(&dir),
             Pending::JoinWifi { net } => {
                 self.create_and_join(&net, None);
                 return Effect::None;
@@ -2582,7 +2640,10 @@ impl App {
             }
             self.reload_keys();
         }
-        if label == SET_DEFAULT_GENERATION_LABEL {
+        if label == UPDATE_CHECK_LABEL || label == UPDATE_APPLY_LABEL {
+            self.reload_updates();
+        }
+        if label == SET_DEFAULT_GENERATION_LABEL || label == UPDATE_APPLY_LABEL {
             let fresh = self.load_generations();
             for v in &mut self.stack {
                 if let View::Generations { gens, list } = v {
@@ -3491,6 +3552,7 @@ impl App {
                 list.select((!gens.is_empty()).then_some(0));
                 Some(View::Generations { gens, list })
             }
+            RecoveryItem::Update => self.open_updates(),
             RecoveryItem::Report => {
                 self.export_report();
                 None
@@ -3553,6 +3615,14 @@ impl App {
             );
         }
         t
+    }
+
+    /// The Recovery entries this system offers.
+    pub fn recovery_items(&self) -> Vec<RecoveryItem> {
+        RecoveryItem::ALL
+            .into_iter()
+            .filter(|i| *i != RecoveryItem::Update || self.update_settings().is_some())
+            .collect()
     }
 
     pub fn load_generations(&self) -> Vec<recovery::Generation> {

@@ -102,7 +102,10 @@ Slices 1 to 9 are in `develop`.
 - ⬜ Power profiles (Maximum Efficiency / Balanced / Performance) and measurements on hardware
 
 ## Phase 8 — Updates and installation 🟡
+- ✅ Offline updates (ADR 0023): signed Nix binary cache on a USB stick, `scripts/make-update-bundle.sh`, Recovery → "Update from a USB stick" (check as the user, install with an administrator's password, starts at the next restart, previous version kept); 0.4.0; tested in VMs (`vm-update`) and end to end in QEMU with the real release key (not yet on physical hardware)
+- ✅ Licence notice (ADR 0024, requested 2026-11-18, 0.4.0): summary and original text of the Hippocratic License 2.1 before an account's first use (every start on the live ISO), "I certify that I have read", timestamped root-owned record; `vm-licence`
 - ✅ Text installer (ADR 0022, 0.3.0): one prebuilt system per edition and firmware, accounts/keyboard/encryption chosen at install as state; tested in VMs and by installing from the ISO in QEMU (not yet on physical hardware)
+- ✅ Release publishing (0.4.0): `scripts/make-release.sh`, minisign-signed `SHA256SUMS`, mirror layout `releases/VERSION/` + `LATEST` (GitHub and mirror.canevet.eu)
 Text installer, offline update bundles (`nix copy` + minisign manifest),
 signed pack verification, rollback tests, installation docs.
 
@@ -177,7 +180,53 @@ the netinstall is an addition, never a requirement.
   on stdin), and nothing is downloaded before the user confirms the
   summary with the total size.
 
-## Phase 9 — Audit and release ⬜
+## Phase 9 — Community network ⬜ (requested 2026-11-18)
+An assisted tool that lets a person with little experience join or create
+a network of Resilience machines and share offline resources on it. Builds
+on Phase 6 (mesh, ADR 0021; Reticulum announces, ADR 0018), resource packs
+(ADR 0013) and maps (ADR 0016).
+
+- **An ADR comes first.** This is the first time a Resilience service
+  accepts requests from the network: today nothing listens beyond
+  `127.0.0.1` and the firewall allows nothing by default. The ADR settles
+  the services, ports and discovery. `THREAT_MODEL.md` gets a section on
+  serving to the local network.
+- **The network is open:** anyone in range can join and read what is
+  shared, and the interface says so plainly before anything is shared.
+  Integrity does not depend on trusting the host: packs are checked
+  against the catalog's pinned hashes.
+- **Hosting rules:** off by default; each service is turned on separately
+  through `resilience-admin` (own polkit action, `auth_admin` every time,
+  audit), so only an Administrator can share. The machine always shows
+  what it serves, on which network, and how to stop it.
+- **The assistant, three choices:**
+  - *Join a network:* find nearby networks (Wi-Fi, mesh) and the
+    Resilience machines and services on them;
+  - *Create a network:* a hotspot or the mesh, with plain explanations;
+  - *Share something on this network:* pick services from a short list.
+- **Services built for Resilience, not general-purpose servers:**
+  - *Share my packs:* other machines list and download packs from this
+    one, verified by the catalog hashes (a hostile host cannot plant
+    content);
+  - *Share my library and maps:* kiwix-serve and map packs opened to the
+    local network instead of `127.0.0.1`;
+  - *Shared folder:* read-only at first; receiving uploads from others
+    only later, after its own review;
+  - *Simple web pages:* a folder of static pages served read-only (for
+    notices, local news, guides), readable with lynx.
+- **Name resolution:** by default Resilience's simplified naming, with no
+  DNS server: machines and services announce themselves (Reticulum
+  announces or mDNS) and appear by name in the assistant.
+  **Expert option:** a real DNS server (and DHCP on a hotspot, e.g.
+  dnsmasq) for experienced users, with its own zone and records, behind a
+  clear "advanced" step; it also serves devices that are not Resilience
+  machines.
+- **Tests:** VM tests with two or three machines (join, create, each
+  service, the expert DNS, stopping a service closes its port), and the
+  refusals (a non-Administrator cannot share; a tampered pack from a
+  host is rejected).
+
+## Phase 10 — Audit and release ⬜
 Independent architecture and security reviews, `cargo deny`, license audit,
 SBOM, physical hardware tests, release notes.
 

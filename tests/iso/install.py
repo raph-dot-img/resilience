@@ -138,6 +138,8 @@ def install(a, disk):
     vm = Vm(a, "install", stick)
     try:
         time.sleep(a.boot_wait)
+        vm.shot("01-licence")
+        smoke.accept_licence(vm.mon)
         vm.shot("01-home")
         keys(vm.mon, "/install res")
         time.sleep(1)
@@ -220,6 +222,8 @@ def boot(a, disk):
         keys(vm.mon, PW_USER)
         key(vm.mon, "ret")
         time.sleep(20)
+        vm.shot("14-licence")
+        smoke.accept_licence(vm.mon)
         vm.shot("14-session")
         smoke.keys(vm.mon, "/diagnostics", a.keymap)  # text for the TUI
         time.sleep(1)

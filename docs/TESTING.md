@@ -4,7 +4,7 @@ Every result below is **PASS**, **FAIL**, **BLOCKED** or **NOT TESTED**.
 A test is only PASS if it was actually executed. "VM" means QEMU/KVM on the
 development host — physical hardware: one boot of the live ISO on a ThinkPad L15 Gen 1 (see "ISO boot").
 
-Last full run: 2026-11-18 on `feat/installer` at `84bf3c4` (the installer, ADR 0022): all 21 checks incl. 15 VM tests (new: `vm-install`, `vm-install-uefi`) PASS, built as derivations (see below) with 2 jobs at a time. Previous full run (`nix flake check -L --max-jobs 1 --keep-going`, all 19 checks incl. 13 VM tests): 2026-11-17 on `develop` at `af4b661` (mesh network, ADR 0021), every check PASS in 13 min; `vm-comms`, `vm-mesh` and `comms-messages` were taken from their passing builds of the same derivations in the run just before (at `7039e06`). That run and the one before it each had one failure, both fixed: `vm-crypto` (GnuPG asked a third time for the passphrase while creating a key on the loaded host: `max-cache-ttl 0` expires the creation's cache nonce; the tool now says so and the test answers it) and `vm-modes` (`stty` on tty2 failed with EIO while its getty started; every test's `tty_text` now retries it). Earlier full run: 2026-11-17 on `feat/comms-files` at `73754e8` (multi-line messages, ADR 0020 files), every check PASS in 17 min; `vm-comms` and `comms-messages` were taken from their passing builds of the same derivations earlier that day (vm-comms 318 s), the other 10 VM tests ran. Earlier full run: 2026-11-17 on `feat/comms` at `ba62020` (ADR 0019), every check PASS in 36 min. Previous full run 2026-11-16/17 (slice 3 + messaging on in standard): `vm-crypto` failed on the first pass (it pressed `3` for Security, which slice 9's Maps & navigation had moved to `5`); fixed in `7f1a0ac`, then PASS. ISO last built and boot-tested 2026-11-17 from `develop` at `af4b661` (see "ISO boot"; bit-for-bit reproducibility not verified).
+Last full run: 2026-11-18 on `develop` for release 0.4.0 (version bump `f1bfa51`): 22 of 23 checks PASS in 44 min, one build at a time; `vm-update` FAILED (the update installed, but the test still expected `from=0.3.0` in the audit line); fixed in `8bfa6bd` (the test reads the running version), then `vm-update` PASS alone; the other 22 derivations are unchanged by that fix, so all 23 checks PASS at `8bfa6bd`. Previous: 2026-11-18 on `develop` at `0217f4d` (offline updates ADR 0023, licence notice ADR 0024, the owner's release key in `nix/release-keys.nix`): all 23 checks incl. 17 VM tests (new: `vm-update`, `vm-licence`) PASS, built as derivations with 2 jobs at a time, 27 min. Previous: 2026-11-18 on `feat/installer` at `84bf3c4` (the installer, ADR 0022): all 21 checks incl. 15 VM tests (new: `vm-install`, `vm-install-uefi`) PASS, built as derivations (see below) with 2 jobs at a time. Previous full run (`nix flake check -L --max-jobs 1 --keep-going`, all 19 checks incl. 13 VM tests): 2026-11-17 on `develop` at `af4b661` (mesh network, ADR 0021), every check PASS in 13 min; `vm-comms`, `vm-mesh` and `comms-messages` were taken from their passing builds of the same derivations in the run just before (at `7039e06`). That run and the one before it each had one failure, both fixed: `vm-crypto` (GnuPG asked a third time for the passphrase while creating a key on the loaded host: `max-cache-ttl 0` expires the creation's cache nonce; the tool now says so and the test answers it) and `vm-modes` (`stty` on tty2 failed with EIO while its getty started; every test's `tty_text` now retries it). Earlier full run: 2026-11-17 on `feat/comms-files` at `73754e8` (multi-line messages, ADR 0020 files), every check PASS in 17 min; `vm-comms` and `comms-messages` were taken from their passing builds of the same derivations earlier that day (vm-comms 318 s), the other 10 VM tests ran. Earlier full run: 2026-11-17 on `feat/comms` at `ba62020` (ADR 0019), every check PASS in 36 min. Previous full run 2026-11-16/17 (slice 3 + messaging on in standard): `vm-crypto` failed on the first pass (it pressed `3` for Security, which slice 9's Maps & navigation had moved to `5`); fixed in `7f1a0ac`, then PASS. ISO last built and boot-tested 2026-11-17 from `develop` at `af4b661` (see "ISO boot"; bit-for-bit reproducibility not verified).
 
 ## How to run
 
@@ -15,7 +15,7 @@ Last full run: 2026-11-18 on `feat/installer` at `84bf3c4` (the installer, ADR 0
 | Screen dump for review | `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` | ~2 s |
 | Evaluate everything | `nix flake check --no-build` | ~30 s |
 | Everything incl. VM tests | `nix flake check --no-build`, then each check's `drvPath` evaluated alone and all built with one `nix build --no-link --keep-going -L DRV^*...` | ~1 h |
-| One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-backup`, `vm-wifi`, `vm-generations`, `vm-packs`, `vm-documents`, `vm-crypto`, `vm-boot-offline`) | ~1–2 min |
+| One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-backup`, `vm-wifi`, `vm-generations`, `vm-packs`, `vm-documents`, `vm-crypto`, `vm-boot-offline`, `vm-update`) | ~1–2 min |
 | ISO boot smoke test | `nix build .#iso -o result-iso && python3 -I tests/iso/smoke.py result-iso/iso/*.iso /tmp/shots [--uefi OVMF.fd]` | ~2 min |
 
 Do not run a building `nix flake check` on the 12 GB development host:
@@ -281,6 +281,67 @@ the last ones from the interface.
 | A system without `resilience.comms.enable` contains no Reticulum code | PASS once, by hand (2026-11-17): the live-minimal toplevel's derivation closure has no `reticulum`/`rns`/`lxmf` path (live-standard and dev-vm, which use the standard profile, have 7); not a flake check |
 | The standard live ISO (comms on by default) | PASS (2026-11-17, see "ISO boot") |
 
+### VM: `vm-update` — offline updates (ADR 0023), systemd-boot on UEFI, driven through the TUI
+
+The VM runs 0.3.0 and trusts a test-only release key
+(`tests/vm/update-snakeoil-key.nix`, public on purpose; an evaluation
+invariant forbids it on every real system). One hot-plugged USB stick holds
+the good update (0.99.0 of this edition and variant, its whole closure,
+signed) at the top, and four refused bundles under `refusals/` (signed
+manifests only): an older version, another edition, the good manifest
+signed by another key (made when the test is built), and the good manifest
+with one byte changed after signing. The new system is never in the VM's
+store before the update.
+
+| Check | Result |
+|---|---|
+| `[updates]` in system.toml and admin.toml; the key is not in nix.conf; no new system in the store | PASS (2026-11-18) |
+| Helper: as alice exit 77, no argument → usage; `pkcheck` on the TUI process → challenge; `pkaction`: auth_admin for any/inactive/active | PASS (2026-11-18) |
+| `check-update` as alice: good → intact, authentic, "can be installed"; tampered → Intact NO (exit 2); other key → Authentic NO, Intact yes (exit 2); nothing imported | PASS (2026-11-18) |
+| `apply-update` refusals (exit 2, reason shown): older ("not newer than the running 0.3.0"), other edition, other key, tampered, a copy outside `/run/media`, a missing folder; 6 refusals audited, no `result=ok`; profile still `system-1-link` and the new system not in the store after each | PASS (2026-11-18) |
+| TUI (Ultra-Stable, Recovery → Update from a USB stick): stick listed "not open", Enter opens it (udisks) → "update 0.99.0", claim shown as unchecked; Enter → INSTALL AN UPDATE; carol's password → "Resilience 0.99.0 is installed"; profile → `system-2-link` = the new system; running system unchanged; audit `caller=alice … from=0.3.0 … to=0.99.0 result=ok` + journal | PASS (2026-11-18) |
+| Reboot: 0.99.0 runs (marker, system.toml version, booted system), generation 1 and its boot entry kept, system `running` | PASS (2026-11-18) |
+| The same bundle again → refused "not newer than the running 0.99.0" (no replay) | PASS (2026-11-18) |
+| Wrong administrator password, Ctrl-C during the import, a full disk, symbolic links on an ext4 stick, GRUB/BIOS, a real bundle from `make-update-bundle.sh` with a real release key, physical hardware | NOT TESTED |
+
+### Real release key — offline update from the ISO-installed system (manual, QEMU, screenshots reviewed)
+
+The owner's release key `resilience-release` (`nix/release-keys.nix`), not
+a test key. Standard ISO from `develop` at `83cdebc` (SHA-256
+`2d7ec78de4c6eb13c740406d52d835f47d0379c1bc54306119128285964fed88`),
+installed with `tests/iso/install.py --uefi` (OVMF 202602, no encryption).
+Bundle: `scripts/make-update-bundle.sh standard <secret key>` run in a
+throw-away worktree whose installed systems say version 0.3.1 and carry a
+marker file (never committed): 1.5 GB, every path verified with the public
+key by the script; copied with mtools to a FAT32 image attached as a USB stick.
+
+| Check | Result |
+|---|---|
+| Installed 0.3.0 offers Recovery → "[3] Update from a USB stick" (a key is built in) | PASS (2026-11-18) |
+| Stick "UPDATESTICK 2.1 GiB not open" → Enter → "update 0.3.1", "The stick says Resilience standard 0.3.1", shown as unchecked | PASS (2026-11-18) |
+| `c` (check-update as `user`): Intact yes, Authentic (signed by a release key) yes, Complete yes, "can be installed" | PASS (2026-11-18) |
+| Enter → INSTALL AN UPDATE (Cancel default) → `y` → polkit `org.resilience.admin.apply-update` for `administrator`, password → signature checked again, only the 6 missing store paths copied, "Resilience 0.3.1 is installed. It starts at the next restart" | PASS (2026-11-18) |
+| Restart (ACPI power-down, start): header STANDARD v0.3.1, OPERATIONAL, no failed service, running system = the one from the stick; System generations: 2 "started, default", 1 kept | PASS (2026-11-18) |
+| Going back: generation 1 → Make default → administrator password → restart → v0.3.0 running, generation 2 still in the boot menu | PASS (2026-11-18) |
+
+Note: the status screen's "userland v0.3.0" on 0.3.1 comes from the trial
+(only `resilience.version` was raised, not the package); a real release
+raises both.
+
+
+### VM: `vm-licence` — the licence notice (ADR 0024), driven through the TUI
+
+| Check | Result |
+|---|---|
+| system.toml's `[licence]` hash is the SHA-256 of the shown file (the Hippocratic License 2.1), admin.toml has the same; no record yet | PASS (2026-11-18) |
+| First session (alice, Ultra-Stable, autologin): the summary and an unticked box; `/`, F1, F5 reach nothing; Esc asks to log out and the default keeps the notice; Enter before opening the text records nothing | PASS (2026-11-18) |
+| polkit: `record-licence` allowed to the console session without a password; implicit any: no | PASS (2026-11-18) |
+| Helper: as alice exit 77; an all-zero hash ("not the licence text of this system"), upper case, `abc`, `../x` refused (exit 2); 4 refusals audited; no record | PASS (2026-11-18) |
+| Tab → original text; Space ticks; Enter → main menu and "is recorded"; the record is one line `time=… user=alice uid=… sha256=<hash> licence="Hippocratic License" version=2.1`, root 0644; audit `op=record-licence caller=alice … result=ok` + journal; alice cannot append to or remove it | PASS (2026-11-18) |
+| Logging out and in again opens on the main menu, no notice | PASS (2026-11-18) |
+| carol declines on tty2: logged out, no record for carol | PASS (2026-11-18) |
+| A changed licence text asking everyone again (unit-tested only), the live ISO asking at every start (state in memory; not run), physical hardware | NOT TESTED in VM |
+
 ### VM: `vm-mesh` — mesh network (ADR 0021), three machines in a chain and one with simulated Wi-Fi
 
 alpha (vlan 1) ── beta (vlans 1 and 2) ── gamma (vlan 2): alpha and gamma
@@ -315,6 +376,7 @@ the same disk booted with SeaBIOS. The installed system is the real
 | The disk boots (GRUB on BIOS); the initrd loads the French layout and keeps it after udev restarts the console setup; the passphrase typed on the keyboard unlocks the disk; `/` on `/dev/mapper/root`; login prompts use the French layout (`dumpkeys`) | PASS (2026-11-17) |
 | Local accounts: shell `/run/current-system/sw/bin/resilience-session`; `user` Stable, `administrator` Advanced (wheel) as overrides of Ultra-Stable in `resilience-admin list`; no autologin; user namespaces on | PASS (2026-11-17) |
 | `user` logs in on tty1 with the password typed during the installation; the interface starts (MODE: STABLE) | PASS (2026-11-17) |
+| First login on the installed system: the licence notice (ADR 0024); Tab, Space, Enter → main menu; a record line for `user` | PASS (2026-11-18, BIOS variant; `vm-install-uefi` not rerun) |
 | Minimal edition; installing next to another system (not offered) | NOT TESTED |
 
 Found and fixed by this test: the initrd keymap unit could not start (its
@@ -373,6 +435,8 @@ press (the passwords wait at `passwd`): any key wakes it.
 | `feat/comms` build with the message store (ADR 0019, `9d3ebd2`): BIOS 2048 MiB, UEFI 2048 MiB, BIOS 1024 MiB: Local messages shows `[OK] Messaging is running` and "Messages for people who are away wait in a message store on this network" (the machine's store started and wrote its address); system OPERATIONAL, no failed service, no OOM or failed unit on the serial console; 351 MiB used of 964 MiB after boot at 1 GiB | PASS (2026-11-17) |
 | Milestone build from `develop` at `af4b661` (mesh network, ADR 0021; 1.55 GB): BIOS 2048 MiB, UEFI 2048 MiB (OVMF), BIOS 1024 MiB — TUI, system OPERATIONAL with no failed service, diagnostics, status, Local messages `[OK] Messaging is running` with the message store; ~610 MiB of 964 MiB available at 1 GiB; no OOM or failed unit on the serial console | PASS (2026-11-17) |
 | Release 0.2.0 build from `release/0.2.0` (the Phase 6 milestone of `main` with the version raised; `resilience-standard-0.2.0-x86_64-linux.iso`, 1,554,186,240 bytes, SHA-256 `6507ee52025eef134ed39848d3c06fc40dce6d95681bfd379eaab7defa130f30`): BIOS 2048 MiB, UEFI 2048 MiB (OVMF 202608), BIOS 1024 MiB — TUI shows v0.2.0, system OPERATIONAL with no failed service, status, network, Local messages running | PASS (2026-11-17) |
+| Release 0.1.0 rebuilt from tag `v0.1.0` for the owner's mirror (`resilience-standard-0.1.0-x86_64-linux.iso`, 1,478,590,464 bytes, SHA-256 `d8e0335cf94555cc8722d1f851d46cfafe0b8c78e3dac1efb856a88ece3e2f6f`): BIOS 2048 MiB — TUI shows v0.1.0, system OPERATIONAL, no failed service. The tags `v0.2.0` and `v0.3.0` give the same ISOs (same SHA-256) as the release builds below | PASS (2026-11-18) |
+| `develop` at `83cdebc` (offline updates, licence notice, the owner's release key; `resilience-standard-0.3.0-x86_64-linux.iso` still says 0.3.0, SHA-256 `2d7ec78de4c6eb13c740406d52d835f47d0379c1bc54306119128285964fed88`): BIOS 2048 MiB, UEFI 2048 MiB (OVMF 202602), BIOS 1024 MiB — the licence notice first, then (after `smoke.py` accepts it) v0.3.0, OPERATIONAL, no failed service, Local messages running | PASS (2026-11-18) |
 | Release 0.3.0 build from `release/0.3.0` at `c6c1fb5` (the installer; `resilience-standard-0.3.0-x86_64-linux.iso`, 1,647,968,256 bytes, SHA-256 `dbbc44bef7999b7eaa7d6ef54fd5c3044fa027970470a60795b00434fd3788e4`): BIOS 2048 MiB, UEFI 2048 MiB (OVMF 202602, GRUB 2.12), BIOS 1024 MiB — TUI shows v0.3.0, system OPERATIONAL, no failed service, status, network, Local messages running with the message store | PASS (2026-11-18) |
 
 ### Keyboard layout (ADR 0017), in vm-boot-offline
@@ -432,7 +496,7 @@ modest machine running the live ISO has little room for files.
 | 9 | Cryptographic operations | PASS (vm-crypto) |
 | 10 | Access local files (file manager) | NOT TESTED in VM (mc launch untested) |
 | 11 | Import a resource pack from USB | PASS (vm-packs, QEMU usb-storage) |
-| 12 | Verify an offline update bundle | BLOCKED — Phase 8 |
+| 12 | Verify an offline update bundle | PASS in VM (vm-update: signed bundle on a USB stick, checked, installed through the TUI, refusals); a real release key and physical hardware NOT TESTED |
 | 13 | Communicate across a local network | PASS between two VMs (vm-comms), and across a relay with no shared network (vm-mesh, cables and simulated Wi-Fi); physical network NOT TESTED |
 | — | Installer, rollback to previous generation | BLOCKED — no installer yet |
 | — | Recovery section with real generations; diagnostic report on a real system | NOT TESTED in VM (unit/TUI tests with fake profiles only) |

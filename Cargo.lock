@@ -627,7 +627,7 @@ dependencies = [
 
 [[package]]
 name = "resilience-admin"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libc",
  "resilience-core",
@@ -635,14 +635,14 @@ dependencies = [
 
 [[package]]
 name = "resilience-backup"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "resilience-core",
 ]
 
 [[package]]
 name = "resilience-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libc",
  "serde",
@@ -654,7 +654,7 @@ dependencies = [
 
 [[package]]
 name = "resilience-crypto"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libc",
  "resilience-core",
@@ -662,7 +662,7 @@ dependencies = [
 
 [[package]]
 name = "resilience-install"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libc",
  "resilience-core",
@@ -670,7 +670,7 @@ dependencies = [
 
 [[package]]
 name = "resilience-library"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libc",
  "resilience-core",
@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "resilience-maps"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libc",
  "miniz_oxide",
@@ -691,7 +691,7 @@ dependencies = [
 
 [[package]]
 name = "resilience-tui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libc",
  "ratatui",
