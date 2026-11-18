@@ -259,5 +259,15 @@ in
         target.send_chars(PW_USER + "\n")
         target.wait_until_succeeds("pgrep -u user -x resilience", timeout=60)
         wait_tty(target, "MODE: STABLE")
+
+    with subtest("first login: the licence notice (ADR 0024), then the menu"):
+        wait_tty(target, "HIPPOCRATIC LICENSE 2.1: SUMMARY")
+        target.send_key("tab")
+        wait_tty(target, "ORIGINAL TEXT")
+        target.send_chars(" ")
+        wait_tty(target, r"\[x\] I certify")
+        target.send_key("ret")
+        wait_tty(target, "MAIN MENU")
+        target.succeed("grep -q '^time=.* user=user ' /var/lib/resilience/licence-acceptances.log")
   '';
 }

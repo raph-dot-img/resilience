@@ -22,9 +22,9 @@ use resilience_core::network::{LinkLevel, ProbeOutcome};
 use resilience_core::status::format_uptime;
 
 use crate::app::{
-    App, ChatInput, ChatRow, Entry, InstallForm, InstallInput, InstallRow, Level, LibItem, MODES,
-    MediaPurpose, Modal, NearbyRow, PackRow, PacksScreen, SearchHit, UpdateRow, View,
-    category_description, level_tag,
+    App, ChatInput, ChatRow, Entry, InstallForm, InstallInput, InstallRow, Level, LibItem,
+    LicencePage, MODES, MediaPurpose, Modal, NearbyRow, PackRow, PacksScreen, SearchHit, UpdateRow,
+    View, category_description, level_tag,
 };
 use crate::help;
 use crate::theme::Theme;
@@ -192,6 +192,9 @@ fn footer_hints(view: &View) -> &'static str {
         View::Recovery { .. } => "Number/Enter Open  Esc Back  F1 Help",
         View::Generations { .. } => "Enter Make default  r Refresh  Esc Back  F1 Help",
         View::Updates { .. } => "Enter Open/Install  c Check  r Refresh  Esc Back  F1 Help",
+        View::Licence { .. } => {
+            "Tab Summary/Text  Up/Down Scroll  Space Tick  Enter Confirm  q Log out"
+        }
         View::Media { .. } => "Enter Open  e Eject  r Refresh  Esc Back  F1 Help",
         View::Wifi { .. } => "Enter Join  d Disconnect  f Forget  r Scan  w Wi-Fi on  Esc Back",
         View::Backups { .. } => "Enter Back up/Restore  c Check  e Eject  Esc Back  F1 Help",
@@ -375,6 +378,13 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         View::ChooseMode { row, list } => draw_choose_mode(f, app, area, row, list),
         View::Recovery { list } => draw_recovery(f, app, area, list),
         View::Generations { gens, list } => draw_generations(f, app, area, gens, list),
+        View::Licence {
+            page,
+            text,
+            scroll,
+            full_seen,
+            ticked,
+        } => draw_licence(f, app, area, *page, text, scroll, *full_seen, *ticked),
         View::Updates { rows, error, list } => {
             draw_updates(f, app, area, rows, error.as_deref(), list);
         }
@@ -1449,6 +1459,58 @@ fn generation_marks(g: &recovery::Generation) -> String {
         marks.push("default");
     }
     marks.join(", ")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_licence(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    page: LicencePage,
+    text: &str,
+    scroll: &mut usize,
+    full_seen: bool,
+    ticked: bool,
+) {
+    let t = app.theme;
+    let title = app
+        .sys
+        .licence
+        .as_ref()
+        .map(|l| l.title())
+        .unwrap_or_else(|| "licence".into());
+    let [body, bottom] = Layout::vertical([Constraint::Min(3), Constraint::Length(4)]).areas(area);
+    let (heading, content) = match page {
+        LicencePage::Summary => (
+            format!("{}: SUMMARY (1/2)", title.to_uppercase()),
+            resilience_core::licence::SUMMARY,
+        ),
+        LicencePage::Full => (
+            format!("{}: ORIGINAL TEXT (2/2)", title.to_uppercase()),
+            text,
+        ),
+    };
+    let lines: Vec<Line> = content.lines().map(|l| Line::from(l.to_string())).collect();
+    draw_scroll(f, &t, body, &heading, lines, scroll);
+    let mark = if ticked { "[x]" } else { "[ ]" };
+    let hint = if !full_seen {
+        "Press Tab to read the original text, then Space to tick and Enter to confirm."
+    } else if !ticked {
+        "Space ticks the box; Enter confirms; q logs out."
+    } else {
+        "Enter confirms; the date and time are recorded on this computer."
+    };
+    let style = if full_seen { t.base } else { t.dim };
+    let p = Paragraph::new(vec![
+        Line::styled(
+            format!("{mark} I certify that I have read the {title}"),
+            style,
+        ),
+        Line::styled(hint, t.dim),
+    ])
+    .wrap(Wrap { trim: false })
+    .block(block("BEFORE YOU START", &t));
+    f.render_widget(p, bottom);
 }
 
 fn draw_updates(

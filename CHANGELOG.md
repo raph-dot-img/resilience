@@ -6,6 +6,18 @@ Git tags: `vX.Y.Z` on the commit of each release.
 
 ## [Unreleased]
 
+### Added
+- Offline updates (ADR 0023): a signed update on a USB stick, checked
+  (integrity and authenticity, as the user) and installed from Recovery →
+  "Update from a USB stick" with an administrator's password; it starts
+  at the next restart and the previous version stays in the boot menu.
+  Bundles are made with `scripts/make-update-bundle.sh`. No release key
+  exists yet, so no system takes updates until the owner makes one.
+- Licence notice (ADR 0024): before an account first uses the interface
+  (and at every start of the live ISO), a plain summary and the original
+  text of the Hippocratic License 2.1; the person certifies having read
+  it, and the time is recorded in a root-owned file.
+
 ## [0.3.0] — 2026-11-18 — Text installer
 
 Resilience can now be installed on a whole disk from the live system.

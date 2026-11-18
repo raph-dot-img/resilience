@@ -20,6 +20,7 @@ pub mod handbook;
 pub mod install;
 pub mod keyboard;
 pub mod launch;
+pub mod licence;
 pub mod manpage;
 pub mod maps;
 pub mod media;

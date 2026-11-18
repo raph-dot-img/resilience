@@ -4,9 +4,9 @@
 #   `set-mode`, `set-time` (ADR 0009) and `set-default-generation` (ADR 0011)
 #   require an administrator's password every time (auth_admin, never
 #   auth_admin_keep), whoever asks. The exceptions are `set-keymap`
-#   (ADR 0017: one of the listed console keyboard layouts) and `set-mesh`
-#   (ADR 0021: the Wi-Fi mesh on or off), allowed without a password to the
-#   active local session only.
+#   (ADR 0017: one of the listed console keyboard layouts), `set-mesh`
+#   (ADR 0021: the Wi-Fi mesh on or off) and `record-licence` (ADR 0024),
+#   allowed without a password to the active local session only.
 # * Configuration the helper trusts is generated here and root-owned
 #   (/etc/resilience/admin.toml); it never reads the caller's environment.
 # * Mode changes persist in /var/lib/resilience/modes.toml and are
@@ -60,6 +60,10 @@ let
     // lib.optionalAttrs (cfg.updates.settings != null) {
       # ADR 0023: `apply-update`.
       updates = cfg.updates.settings;
+    }
+    // {
+      # ADR 0024: `record-licence`.
+      licence = cfg.licence.settings;
     }
     // lib.optionalAttrs (cfg.interface.autologinUser != null) {
       autologin_user = cfg.interface.autologinUser;
@@ -120,6 +124,17 @@ let
           <annotate key="org.freedesktop.policykit.exec.argv1">apply-update</annotate>
         </action>
       ''}
+      <action id="org.resilience.admin.record-licence">
+        <description>Record that you read the licence of Resilience</description>
+        <message>Recording that you read the licence is allowed to the person at the console</message>
+        <defaults>
+          <allow_any>no</allow_any>
+          <allow_inactive>no</allow_inactive>
+          <allow_active>yes</allow_active>
+        </defaults>
+        <annotate key="org.freedesktop.policykit.exec.path">${helper}</annotate>
+        <annotate key="org.freedesktop.policykit.exec.argv1">record-licence</annotate>
+      </action>
       <action id="org.resilience.admin.set-keymap">
         <description>Load a console keyboard layout of this system</description>
         <message>Loading a keyboard layout is allowed to the person at the console</message>

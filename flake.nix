@@ -90,7 +90,23 @@
           systems = lib.genAttrs names (n: installedSystems.${n}.config.system.build.toplevel);
         };
 
-      vmTest = file: pkgs.testers.runNixOSTest (import file { inherit self; });
+      # VM tests that are about something else start without the licence
+      # notice (ADR 0024); vm-licence and the installed system of
+      # vm-install go through it.
+      noLicenceNotice =
+        { options, lib, ... }:
+        {
+          config = lib.optionalAttrs (options ? resilience) {
+            resilience.licence.prompt = lib.mkDefault false;
+          };
+        };
+      runVmTest =
+        test:
+        pkgs.testers.runNixOSTest {
+          imports = [ test ];
+          defaults = noLicenceNotice;
+        };
+      vmTest = file: runVmTest (import file { inherit self; });
 
       # Map packs (ADR 0016 §2), for build machines: not in any system.
       maps = pkgs.callPackage ./nix/maps { };
@@ -167,7 +183,7 @@
         vm-documents = vmTest ./tests/vm/documents.nix;
         vm-crypto = vmTest ./tests/vm/crypto.nix;
         vm-install = vmTest ./tests/vm/install.nix;
-        vm-install-uefi = pkgs.testers.runNixOSTest (
+        vm-install-uefi = runVmTest (
           import ./tests/vm/install.nix {
             inherit self;
             firmware = "uefi";
@@ -177,6 +193,7 @@
         vm-comms = vmTest ./tests/vm/comms.nix;
         vm-mesh = vmTest ./tests/vm/mesh.nix;
         vm-update = vmTest ./tests/vm/update.nix;
+        vm-licence = vmTest ./tests/vm/licence.nix;
         # The messaging program with the real Reticulum and LXMF, no VM.
         comms-messages = pkgs.callPackage ./nix/packages/resilience-messages/check.nix {
           inherit reticulum messages;

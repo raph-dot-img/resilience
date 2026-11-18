@@ -103,6 +103,7 @@ Slices 1 to 9 are in `develop`.
 
 ## Phase 8 — Updates and installation 🟡
 - ✅ Offline updates (ADR 0023): signed Nix binary cache on a USB stick, `scripts/make-update-bundle.sh`, Recovery → "Update from a USB stick" (check as the user, install with an administrator's password, starts at the next restart, previous version kept); tested in VMs (`vm-update`), not yet with a real release key or on physical hardware
+- ✅ Licence notice (ADR 0024, requested 2026-11-18): summary and original text of the Hippocratic License 2.1 before an account's first use (every start on the live ISO), "I certify that I have read", timestamped root-owned record; `vm-licence`
 - ✅ Text installer (ADR 0022, 0.3.0): one prebuilt system per edition and firmware, accounts/keyboard/encryption chosen at install as state; tested in VMs and by installing from the ISO in QEMU (not yet on physical hardware)
 Text installer, offline update bundles (`nix copy` + minisign manifest),
 signed pack verification, rollback tests, installation docs.

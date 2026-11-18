@@ -15,6 +15,7 @@
     ./mesh.nix
     ./installer.nix
     ./updates.nix
+    ./licence.nix
     ./boot.nix
     ./power.nix
     ./applications
