@@ -89,3 +89,13 @@ nix build .#iso && python3 -I tests/iso/smoke.py result/iso/*.iso /tmp/shots
 ```
 Record the new revision in CHANGELOG.md. Moving to a new NixOS release
 (e.g. 26.11) requires an ADR update and a full test pass.
+
+## Publishing a release on the mirrors
+
+`scripts/make-release.sh [--minimal] [--update-key NIX_KEY] [--sign MINISIGN_KEY] VERSION OUTDIR`
+(at tag `vVERSION`, clean tree) fills `OUTDIR/releases/VERSION/` with the
+ISOs, the offline update bundles (`.tar`, extracted to a stick's root), the
+source archive and `SHA256SUMS`, signed with the minisign release key
+(public key in `keys/`), plus `LATEST`, `README.txt` and the public key at
+the top. Upload `releases/VERSION/` first and `LATEST` last. For folders
+filled by hand (older releases), `--resign DIR` rewrites and signs the sums.
