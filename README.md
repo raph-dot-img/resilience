@@ -2,6 +2,15 @@
 
 **An offline-first, terminal-only operating system for x86_64 PCs, based on NixOS.**
 
+> [!WARNING]
+> **A personal project made for fun. Do not rely on it in a real emergency.**
+> Most of Resilience (code, tests and documentation) was written by an AI
+> (Claude, through Claude Code), directed and reviewed by one person. It has
+> not been audited, has run almost only in virtual machines, and nobody
+> supports it. If you truly need to stay informed, communicate or keep data
+> safe without the Internet, use tools that are maintained and proven for
+> that purpose.
+
 Resilience OS is designed to stay useful — information, productivity, local
 communication, security tools — during a long or complete loss of Internet
 connectivity. It boots straight into a keyboard-driven text interface that
