@@ -378,10 +378,13 @@ impl App {
                  install packs or update this computer.\n",
             );
         }
-        s.push_str(
-            "\nYou will type the passwords (and the passphrase) yourself in the next \
-             steps; they are never shown.",
-        );
+        s.push_str(if form.encrypt {
+            "\nYou will type the passphrase and the passwords yourself in the next \
+             steps; they are never shown."
+        } else {
+            "\nYou will type the passwords yourself in the next steps; they are never \
+             shown."
+        });
         s
     }
 

@@ -324,6 +324,11 @@ it concurrently with VM tests.
   `drive_add`/`device_add usb-storage` (new ids per plug), see vm-backup.
 - The age round-trip unit test needs age in PATH (Nix build has it; on the
   host prepend the store path of `nixpkgs#age`, otherwise it prints SKIPPED).
+- Installing from the ISO: `python3 -I tests/iso/install.py ISO WORKDIR
+  [--uefi OVMF.fd] [--encrypt] [--keymap fr]` (ISO as a USB stick, new
+  qcow2 disk in WORKDIR: put it on a real disk such as ~/.cache, never a
+  tmpfs; it keeps the disk, delete it). OVMF: `nix build --inputs-from .
+  nixpkgs#OVMF.fd`. QEMU 10's `info blockstats` is a table per device.
 - ISO: `python3 -I tests/iso/smoke.py ISO OUTDIR [--uefi OVMF.fd] [--keymap us|fr]`
   takes screenshots; look at them (the Read tool displays PNGs). `--keymap`
   is the ISO's layout (default us): QEMU sends physical keys.
@@ -436,8 +441,9 @@ Slices 1 to 5 done (ADR, installed configurations, `resilience-core/src/
 install.rs` + `crates/resilience-install`, TUI `install_ui.rs`, `vm-install`
 BIOS + LUKS + French layout PASS, handbook `12-installing.md`,
 docs/INSTALLATION.md); `vm-install-uefi` (OVMF, no encryption, systemd-boot
-fallback path) PASS. Open: ISO build with the installer and a QEMU
-install from the ISO, full flake check, then merge into develop.
+fallback path) PASS; the ISO with the installer built and installed from
+in QEMU as a USB stick (`tests/iso/install.py`: BIOS + LUKS + fr, UEFI +
+plain) PASS (2026-11-18). Open: full flake check, then merge into develop.
 VM-test lessons: `Machine.sleep` waits for the root shell (use time.sleep
 before the installed disk is unlocked); a second machine on the same disk
 needs `target.state_dir = installer.state_dir`; never run the test driver

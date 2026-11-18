@@ -337,6 +337,27 @@ never writes firmware variables). Installed system:
 | The disk boots through OVMF's fallback path `EFI/BOOT/BOOTX64.EFI` (systemd-boot) with no boot entry in the firmware; `/` on `/dev/vda3` (no mapper device); `/boot` = `/dev/vda2` with NixOS loader entries; login prompts in the French layout | PASS (2026-11-18) |
 | Accounts and modes as in `vm-install`; `user` logs in on tty1, MODE: STABLE | PASS (2026-11-18) |
 
+### Install from the live ISO (`tests/iso/install.py`, screenshots reviewed)
+
+The standard ISO built from `feat/installer` (1,647,968,256 bytes; the
+four prebuilt installed systems add ~94 MB) attached to QEMU as a **USB
+stick** (snapshot, never written), a new empty 20 GiB qcow2 disk as
+`vda`, no network device, 2 GiB RAM. Keys are sent as physical keys.
+
+| Run | Result |
+|---|---|
+| Disk list: `/dev/sda` (the stick, "QEMU HARDDISK 1.6 GB, usb") "in use", `/dev/fd0` "too small", `/dev/vda` chosen by default; summary names the disk, BIOS / legacy (GRUB) or UEFI (systemd-boot), encryption, keyboard, the two accounts | PASS (2026-11-18) |
+| BIOS (SeaBIOS), encryption on, French layout: passphrase into cryptsetup (×3), copy ~3.9 GB, passwords into passwd, grub-install, "Resilience is installed"; the disk then starts through GRUB, the passphrase typed at the initrd prompt unlocks it, `user` logs in on tty1, the interface shows MODE: STABLE, 14.7 GiB free | PASS (2026-11-18, ~4 min to install) |
+| UEFI (OVMF 202602, pinned nixpkgs, `-bios OVMF.fd`, no stored boot entry), no encryption, US layout: systemd-boot copied to `EFI/BOOT/BOOTX64.EFI`, activation "0 override(s) applied", steps 1/10 to 10/10; the disk starts, `user` logs in, MODE: STABLE, network diagnostics open | PASS (2026-11-18, ~2.5 min to install) |
+| Physical hardware | NOT TESTED |
+
+Found by the first run and fixed: `modes.toml` was written before the
+accounts existed, so the activation inside `nixos-install` printed
+"gpasswd: user 'administrator' does not exist / apply-state failed"; the
+last step was numbered 12/11; the summary mentioned a passphrase with
+encryption off. The console blanks after 10 minutes without a key
+press (the passwords wait at `passwd`): any key wakes it.
+
 ### ISO boot (`tests/iso/smoke.py`, screenshots reviewed by a human/agent)
 
 | Firmware | Result |
