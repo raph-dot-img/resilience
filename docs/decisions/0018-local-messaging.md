@@ -194,7 +194,7 @@ its local network.
   docs/OFFLINE_OPERATIONS.md.
 - A system with the module carries the Reticulum License's conditions in
   addition to those of Resilience's own licence. A licence audit
-  (Phase 9) must list `rns` and `lxmf` apart.
+  (Phase 10) must list `rns` and `lxmf` apart.
 - Python code enters the project (the per-user program). It is kept
   small and tested with the real libraries.
 - Not tested yet: more than two machines, Wi-Fi with client isolation
