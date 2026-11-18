@@ -12,7 +12,8 @@ human (or a reviewer) can check what was displayed.
 "us" by default): QEMU sends physical keys, so the text typed has to be
 translated to the keys that produce it in that layout.
 
-Steps: boot (GRUB default entry), wait, screenshot; press '/' and type
+Steps: boot (GRUB default entry), wait, screenshot of the licence notice,
+accept it (Tab, Space, Enter); screenshot; press '/' and type
 'diagnostics', Enter, screenshot; Esc Esc; F5 screenshot; Esc, '/messages'
 screenshot, Enter, screenshot (Local messages on the standard edition).
 """
@@ -58,6 +59,15 @@ def keys(sock_path, text, keymap="us"):
         time.sleep(0.05)
 
 
+def accept_licence(mon):
+    """The licence notice (ADR 0024): Tab opens the original text, Space
+    ticks "I certify that I have read", Enter confirms."""
+    for k in ("tab", "spc", "ret"):
+        monitor(mon, "sendkey " + k)
+        time.sleep(1)
+    time.sleep(2)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("iso")
@@ -101,6 +111,8 @@ def main():
         time.sleep(8)
         shot("01-bootloader")
         time.sleep(a.boot_wait)
+        shot("02-licence")
+        accept_licence(mon)
         shot("02-home")
         keys(mon, "/diagnostics", a.keymap)
         time.sleep(1)
