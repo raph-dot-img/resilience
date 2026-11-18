@@ -5,6 +5,7 @@
 #   installed-<edition>-<uefi|bios>-<plain|luks>
 { boot, encrypted }:
 {
+  config,
   lib,
   modulesPath,
   ...
@@ -63,6 +64,13 @@ assert lib.elem boot [
   users.mutableUsers = true;
   resilience.localAccounts = true;
   resilience.keyboard.stateFile = "/var/lib/resilience/keyboard";
+
+  # Offline updates (ADR 0023): a bundle's manifest names the new system of
+  # each variant; the release key's public part is built in.
+  resilience.updates = {
+    variant = "installed-${config.resilience.edition}-${boot}-${if encrypted then "luks" else "plain"}";
+    trustedKeys = import ../release-keys.nix;
+  };
 
   hardware.enableRedistributableFirmware = true;
   hardware.cpu.intel.updateMicrocode = true;

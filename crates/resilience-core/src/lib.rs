@@ -32,6 +32,7 @@ pub mod packs;
 pub mod proc;
 pub mod recovery;
 pub mod status;
+pub mod update;
 pub mod wifi;
 
 /// Version of the Resilience userland, taken from the Cargo workspace.

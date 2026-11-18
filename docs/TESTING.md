@@ -15,7 +15,7 @@ Last full run: 2026-11-18 on `feat/installer` at `84bf3c4` (the installer, ADR 0
 | Screen dump for review | `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` | ~2 s |
 | Evaluate everything | `nix flake check --no-build` | ~30 s |
 | Everything incl. VM tests | `nix flake check --no-build`, then each check's `drvPath` evaluated alone and all built with one `nix build --no-link --keep-going -L DRV^*...` | ~1 h |
-| One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-backup`, `vm-wifi`, `vm-generations`, `vm-packs`, `vm-documents`, `vm-crypto`, `vm-boot-offline`) | ~1–2 min |
+| One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-backup`, `vm-wifi`, `vm-generations`, `vm-packs`, `vm-documents`, `vm-crypto`, `vm-boot-offline`, `vm-update`) | ~1–2 min |
 | ISO boot smoke test | `nix build .#iso -o result-iso && python3 -I tests/iso/smoke.py result-iso/iso/*.iso /tmp/shots [--uefi OVMF.fd]` | ~2 min |
 
 Do not run a building `nix flake check` on the 12 GB development host:
@@ -281,6 +281,29 @@ the last ones from the interface.
 | A system without `resilience.comms.enable` contains no Reticulum code | PASS once, by hand (2026-11-17): the live-minimal toplevel's derivation closure has no `reticulum`/`rns`/`lxmf` path (live-standard and dev-vm, which use the standard profile, have 7); not a flake check |
 | The standard live ISO (comms on by default) | PASS (2026-11-17, see "ISO boot") |
 
+### VM: `vm-update` — offline updates (ADR 0023), systemd-boot on UEFI, driven through the TUI
+
+The VM runs 0.3.0 and trusts a test-only release key
+(`tests/vm/update-snakeoil-key.nix`, public on purpose; an evaluation
+invariant forbids it on every real system). One hot-plugged USB stick holds
+the good update (0.99.0 of this edition and variant, its whole closure,
+signed) at the top, and four refused bundles under `refusals/` (signed
+manifests only): an older version, another edition, the good manifest
+signed by another key (made when the test is built), and the good manifest
+with one byte changed after signing. The new system is never in the VM's
+store before the update.
+
+| Check | Result |
+|---|---|
+| `[updates]` in system.toml and admin.toml; the key is not in nix.conf; no new system in the store | PASS (2026-11-18) |
+| Helper: as alice exit 77, no argument → usage; `pkcheck` on the TUI process → challenge; `pkaction`: auth_admin for any/inactive/active | PASS (2026-11-18) |
+| `check-update` as alice: good → intact, authentic, "can be installed"; tampered → Intact NO (exit 2); other key → Authentic NO, Intact yes (exit 2); nothing imported | PASS (2026-11-18) |
+| `apply-update` refusals (exit 2, reason shown): older ("not newer than the running 0.3.0"), other edition, other key, tampered, a copy outside `/run/media`, a missing folder; 6 refusals audited, no `result=ok`; profile still `system-1-link` and the new system not in the store after each | PASS (2026-11-18) |
+| TUI (Ultra-Stable, Recovery → Update from a USB stick): stick listed "not open", Enter opens it (udisks) → "update 0.99.0", claim shown as unchecked; Enter → INSTALL AN UPDATE; carol's password → "Resilience 0.99.0 is installed"; profile → `system-2-link` = the new system; running system unchanged; audit `caller=alice … from=0.3.0 … to=0.99.0 result=ok` + journal | PASS (2026-11-18) |
+| Reboot: 0.99.0 runs (marker, system.toml version, booted system), generation 1 and its boot entry kept, system `running` | PASS (2026-11-18) |
+| The same bundle again → refused "not newer than the running 0.99.0" (no replay) | PASS (2026-11-18) |
+| Wrong administrator password, Ctrl-C during the import, a full disk, symbolic links on an ext4 stick, GRUB/BIOS, a real bundle from `make-update-bundle.sh` with a real release key, physical hardware | NOT TESTED |
+
 ### VM: `vm-mesh` — mesh network (ADR 0021), three machines in a chain and one with simulated Wi-Fi
 
 alpha (vlan 1) ── beta (vlans 1 and 2) ── gamma (vlan 2): alpha and gamma
@@ -433,7 +456,7 @@ modest machine running the live ISO has little room for files.
 | 9 | Cryptographic operations | PASS (vm-crypto) |
 | 10 | Access local files (file manager) | NOT TESTED in VM (mc launch untested) |
 | 11 | Import a resource pack from USB | PASS (vm-packs, QEMU usb-storage) |
-| 12 | Verify an offline update bundle | BLOCKED — Phase 8 |
+| 12 | Verify an offline update bundle | PASS in VM (vm-update: signed bundle on a USB stick, checked, installed through the TUI, refusals); a real release key and physical hardware NOT TESTED |
 | 13 | Communicate across a local network | PASS between two VMs (vm-comms), and across a relay with no shared network (vm-mesh, cables and simulated Wi-Fi); physical network NOT TESTED |
 | — | Installer, rollback to previous generation | BLOCKED — no installer yet |
 | — | Recovery section with real generations; diagnostic report on a real system | NOT TESTED in VM (unit/TUI tests with fake profiles only) |

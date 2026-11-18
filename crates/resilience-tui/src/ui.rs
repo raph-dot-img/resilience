@@ -23,7 +23,7 @@ use resilience_core::status::format_uptime;
 
 use crate::app::{
     App, ChatInput, ChatRow, Entry, InstallForm, InstallInput, InstallRow, Level, LibItem, MODES,
-    MediaPurpose, Modal, NearbyRow, PackRow, PacksScreen, RecoveryItem, SearchHit, View,
+    MediaPurpose, Modal, NearbyRow, PackRow, PacksScreen, SearchHit, UpdateRow, View,
     category_description, level_tag,
 };
 use crate::help;
@@ -189,8 +189,9 @@ fn footer_hints(view: &View) -> &'static str {
         View::Search { .. } => "Type to search  Up/Down Select  Enter Open  Esc Back",
         View::Users { .. } => "Enter Change mode  r Refresh  Esc Back  F1 Help",
         View::ChooseMode { .. } => "Up/Down Choose  Enter Continue  Esc Cancel",
-        View::Recovery { .. } => "1-4/Enter Open  Esc Back  F1 Help",
+        View::Recovery { .. } => "Number/Enter Open  Esc Back  F1 Help",
         View::Generations { .. } => "Enter Make default  r Refresh  Esc Back  F1 Help",
+        View::Updates { .. } => "Enter Open/Install  c Check  r Refresh  Esc Back  F1 Help",
         View::Media { .. } => "Enter Open  e Eject  r Refresh  Esc Back  F1 Help",
         View::Wifi { .. } => "Enter Join  d Disconnect  f Forget  r Scan  w Wi-Fi on  Esc Back",
         View::Backups { .. } => "Enter Back up/Restore  c Check  e Eject  Esc Back  F1 Help",
@@ -374,6 +375,9 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         View::ChooseMode { row, list } => draw_choose_mode(f, app, area, row, list),
         View::Recovery { list } => draw_recovery(f, app, area, list),
         View::Generations { gens, list } => draw_generations(f, app, area, gens, list),
+        View::Updates { rows, error, list } => {
+            draw_updates(f, app, area, rows, error.as_deref(), list);
+        }
         View::Wifi {
             overview,
             error,
@@ -1420,14 +1424,15 @@ fn draw_keys(
 
 fn draw_recovery(f: &mut Frame, app: &App, area: Rect, list: &mut ListState) {
     let t = app.theme;
-    let items: Vec<ListItem> = RecoveryItem::ALL
+    let all = app.recovery_items();
+    let items: Vec<ListItem> = all
         .iter()
         .enumerate()
         .map(|(i, r)| ListItem::new(format!("[{}] {}", i + 1, r.name())))
         .collect();
     let [l, d] = two_panes(area);
     draw_list(f, &t, l, "RECOVERY & DIAGNOSTICS", items, list, "");
-    if let Some(r) = list.selected().and_then(|i| RecoveryItem::ALL.get(i)) {
+    if let Some(r) = list.selected().and_then(|i| all.get(i)) {
         details(f, &t, d, vec![Line::from(r.description())]);
     }
 }
@@ -1444,6 +1449,112 @@ fn generation_marks(g: &recovery::Generation) -> String {
         marks.push("default");
     }
     marks.join(", ")
+}
+
+fn draw_updates(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    rows: &[UpdateRow],
+    error: Option<&str>,
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    let title = "UPDATE FROM A USB STICK";
+    if let Some(e) = error {
+        let p = Paragraph::new(format!(
+            "The list of USB sticks could not be read.\n\n{e}\n\nPress r to try again."
+        ))
+        .wrap(Wrap { trim: false })
+        .style(t.error)
+        .block(block(title, &t));
+        f.render_widget(p, area);
+        return;
+    }
+    let items: Vec<ListItem> = rows
+        .iter()
+        .map(|r| {
+            let state = match (&r.volume.mountpoint, &r.claim) {
+                _ if r.volume.problem.is_some() => "unusable".to_string(),
+                (None, _) => "not open".to_string(),
+                (Some(_), Some(Ok(p))) => format!("update {}", p.version),
+                (Some(_), Some(Err(_))) => "unreadable update".to_string(),
+                (Some(_), None) => "no update".to_string(),
+            };
+            ListItem::new(format!(
+                "{:<14.14} {:>9} {state}",
+                r.volume.display_name(),
+                human_bytes(r.volume.size)
+            ))
+        })
+        .collect();
+    let [l, d] = two_panes(area);
+    draw_list(
+        f,
+        &t,
+        l,
+        title,
+        items,
+        list,
+        "No USB stick or memory card found. Plug in the stick with the update, wait a \
+         few seconds, then press r.",
+    );
+    let running = app
+        .update_settings()
+        .map(|u| format!("{} {}", u.edition, u.version))
+        .unwrap_or_default();
+    let mut lines = match list.selected().and_then(|i| rows.get(i)) {
+        Some(r) => {
+            let mut lines = vec![
+                kv(&t, "Stick", r.volume.display_name()),
+                kv(&t, "This computer", format!("Resilience {running}")),
+            ];
+            match (&r.volume.problem, &r.volume.mountpoint, &r.claim) {
+                (Some(p), _, _) => lines.push(Line::from(Span::styled(
+                    format!("[!!] Cannot be used: {p}."),
+                    t.warn,
+                ))),
+                (None, None, _) => {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from("Enter opens it and looks for an update on it."));
+                }
+                (None, Some(_), Some(Ok(p))) => {
+                    lines.push(kv(
+                        &t,
+                        "The stick says",
+                        format!("Resilience {} {}", p.edition, p.version),
+                    ));
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(
+                        "This is what the stick claims; it is not checked yet. c checks \
+                         that every file is intact and signed by a Resilience release key, \
+                         without installing anything. Enter installs it (administrator \
+                         password); everything is checked again first.",
+                    ));
+                }
+                (None, Some(_), Some(Err(e))) => lines.push(Line::from(Span::styled(
+                    format!("[!!] The update on this stick cannot be read: {e}."),
+                    t.warn,
+                ))),
+                (None, Some(_), None) => {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(
+                        "No update on this stick. An update is a folder named \
+                         resilience-update at the top of the stick.",
+                    ));
+                }
+            }
+            lines
+        }
+        None => Vec::new(),
+    };
+    lines.push(Line::from(""));
+    lines.push(Line::from(
+        "An update installs a newer Resilience; it starts at the next restart. Your \
+         files, accounts, messages and resource packs are kept, and the current version \
+         stays in the boot menu.",
+    ));
+    details(f, &t, d, lines);
 }
 
 fn draw_generations(
