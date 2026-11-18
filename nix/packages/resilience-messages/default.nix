@@ -7,7 +7,7 @@
   reticulum,
 }:
 
-runCommand "resilience-messages-0.2.0"
+runCommand "resilience-messages-0.3.0"
   {
     meta = {
       description = "Per-user local messaging program of Resilience OS (needs Reticulum and LXMF)";
