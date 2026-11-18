@@ -77,6 +77,18 @@ pub fn lines(topic: HelpTopic, mode: Mode) -> Vec<String> {
             "  on a screen you trust. Changes are recorded in the audit log.",
             "  A mode is a set of real permissions of the account, not a display setting.",
         ],
+        HelpTopic::Install => &[
+            "== INSTALL RESILIENCE ==",
+            "  Up/Down                Choose a line",
+            "  Enter                  Change it: disk, encryption, keyboard, account name",
+            "  m                      Next security mode of the selected account",
+            "  f                      Full name of the selected account",
+            "  a                      Add an account",
+            "  d                      Remove the selected account",
+            "  The last line, Install, shows a summary. Nothing is changed until you type",
+            "  the disk's name there. The whole disk is erased. You then type the passwords",
+            "  (and the encryption passphrase) yourself; they are never shown.",
+        ],
         HelpTopic::Recovery => &[
             "== RECOVERY ==",
             "  1-4 / Enter            Open the selected item",

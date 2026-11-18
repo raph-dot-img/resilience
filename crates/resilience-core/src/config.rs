@@ -219,7 +219,11 @@ impl SystemConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|| SYSTEM_CONFIG_PATH.into());
         match fs::read_to_string(&path) {
-            Ok(text) => Ok((Self::parse(&text, &path)?, path, true)),
+            Ok(text) => {
+                let mut cfg = Self::parse(&text, &path)?;
+                cfg.keyboard.read_state();
+                Ok((cfg, path, true))
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 Ok((Self::default(), path, false))
             }

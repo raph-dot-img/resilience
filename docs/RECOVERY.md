@@ -15,7 +15,7 @@ SYSTEM MANAGEMENT → **Recovery & diagnostics** works in every mode and changes
 | Emergency guide | handbook page 40-recovery |
 
 *Tested: TUI unit tests (rendering, report permissions, no overwrite). Not
-tested on an installed system with several generations (no installer yet).*
+tested on an installed system with several generations.*
 
 ## The interface stopped
 

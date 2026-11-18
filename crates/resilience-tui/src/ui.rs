@@ -22,8 +22,9 @@ use resilience_core::network::{LinkLevel, ProbeOutcome};
 use resilience_core::status::format_uptime;
 
 use crate::app::{
-    App, ChatInput, ChatRow, Entry, Level, LibItem, MODES, MediaPurpose, Modal, NearbyRow, PackRow,
-    PacksScreen, RecoveryItem, SearchHit, View, category_description, level_tag,
+    App, ChatInput, ChatRow, Entry, InstallForm, InstallInput, InstallRow, Level, LibItem, MODES,
+    MediaPurpose, Modal, NearbyRow, PackRow, PacksScreen, RecoveryItem, SearchHit, View,
+    category_description, level_tag,
 };
 use crate::help;
 use crate::theme::Theme;
@@ -182,6 +183,9 @@ fn footer_hints(view: &View) -> &'static str {
         }
         View::Network { .. } => "p Probe Internet  r Refresh  Esc Back",
         View::Settings { .. } => "Enter Apply  Esc Back",
+        View::Install { .. } => "Enter Change  m Mode  f Full name  a Add  d Remove  Esc  F1 Help",
+        View::InstallDisks { .. } => "Enter Choose this disk  r Refresh  Esc Back",
+        View::InstallLayouts { .. } => "Enter Choose  Esc Back",
         View::Search { .. } => "Type to search  Up/Down Select  Enter Open  Esc Back",
         View::Users { .. } => "Enter Change mode  r Refresh  Esc Back  F1 Help",
         View::ChooseMode { .. } => "Up/Down Choose  Enter Continue  Esc Cancel",
@@ -342,6 +346,29 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
             list,
         } => draw_chat(f, app, area, peer, name, records, list),
         View::Settings { list } => draw_settings(f, app, area, list),
+        View::Install { form, list } => draw_install(f, app, area, form, list),
+        View::InstallDisks { disks, error, list } => {
+            draw_install_disks(f, app, area, disks, error.as_deref(), list)
+        }
+        View::InstallLayouts { list } => {
+            let t = app.theme;
+            let items: Vec<ListItem> = app
+                .install_form()
+                .map(|fm| fm.cfg.keymaps.clone())
+                .unwrap_or_default()
+                .iter()
+                .map(|k| ListItem::new(app.sys.keyboard.label(k).to_string()))
+                .collect();
+            draw_list(
+                f,
+                &t,
+                area,
+                "KEYBOARD OF THE INSTALLED SYSTEM",
+                items,
+                list,
+                "",
+            );
+        }
         View::Search { query, hits, list } => draw_search(f, app, area, query, hits, list),
         View::Users { rows, error, list } => draw_users(f, app, area, rows, error.as_deref(), list),
         View::ChooseMode { row, list } => draw_choose_mode(f, app, area, row, list),
@@ -1050,6 +1077,141 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect, list: &mut ListState) {
             .style(t.base)
             .wrap(Wrap { trim: true })
             .block(block("ACCOUNT", &t)),
+        info,
+    );
+}
+
+// ----- installer (ADR 0022) -------------------------------------------------
+
+fn draw_install(f: &mut Frame, app: &App, area: Rect, form: &InstallForm, list: &mut ListState) {
+    let t = app.theme;
+    let items: Vec<ListItem> = form
+        .rows()
+        .into_iter()
+        .map(|r| {
+            ListItem::new(match r {
+                InstallRow::Disk => match &form.disk {
+                    Some(d) => format!("Disk        {}  {}", d.path, d.describe()),
+                    None => "Disk        (choose the disk to install on)".to_string(),
+                },
+                InstallRow::Encrypt => format!(
+                    "Encryption  {}",
+                    if form.encrypt {
+                        "ON: a passphrase is asked at every start"
+                    } else {
+                        "off: anyone with the disk can read it"
+                    }
+                ),
+                InstallRow::Keyboard => {
+                    format!("Keyboard    {}", app.sys.keyboard.label(&form.keymap))
+                }
+                InstallRow::Account(i) => {
+                    let a = &form.accounts[i];
+                    format!(
+                        "Account     {:<16} {:<13} {}",
+                        a.name,
+                        a.mode.label(),
+                        a.description
+                    )
+                }
+                InstallRow::AddAccount => "            + Add an account".to_string(),
+                InstallRow::Install => "Install...".to_string(),
+            })
+        })
+        .collect();
+    let rows = items.len() as u16;
+    let [top, info] =
+        Layout::vertical([Constraint::Length(rows + 2), Constraint::Min(0)]).areas(area);
+    draw_list(
+        f,
+        &t,
+        top,
+        "INSTALL RESILIENCE ON THIS COMPUTER",
+        items,
+        list,
+        "",
+    );
+    let mut lines = vec![
+        Line::from(format!(
+            "Resilience {} will be installed for {}. The whole disk is erased; nothing \
+             happens before the summary and your confirmation.",
+            form.cfg.edition,
+            form.firmware.label()
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Accounts: an everyday account and an administrator who only authorises \
+             changes are proposed. Ultra-Stable: the safest, for children or kiosks; \
+             Stable: everyday use; Advanced: administrator (sudo). Passwords are asked \
+             during the installation.",
+            t.dim,
+        )),
+    ];
+    if !resilience_core::install::has_administrator(&form.accounts) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "[!!] No Advanced account: nobody could change modes, install packs or update.",
+            t.warn,
+        )));
+    }
+    f.render_widget(
+        Paragraph::new(lines)
+            .style(t.base)
+            .wrap(Wrap { trim: true })
+            .block(block("ABOUT", &t)),
+        info,
+    );
+}
+
+fn draw_install_disks(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    disks: &[resilience_core::install::Disk],
+    error: Option<&str>,
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    let items: Vec<ListItem> = disks
+        .iter()
+        .map(|d| {
+            let line = format!("{:<14} {}", d.path, d.describe());
+            match &d.problem {
+                None => ListItem::new(line),
+                Some(why) => ListItem::new(format!("{line}  [--] {why}")).style(t.dim),
+            }
+        })
+        .collect();
+    let [top, info] = Layout::vertical([Constraint::Min(5), Constraint::Length(9)]).areas(area);
+    let empty = error.unwrap_or("No disk found.");
+    draw_list(f, &t, top, "CHOOSE THE DISK", items, list, empty);
+    let mut lines = Vec::new();
+    if let Some(d) = list.selected().and_then(|i| disks.get(i)) {
+        lines.push(Line::from(format!("{}  {}", d.path, d.describe())));
+        if d.parts.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "Empty: no partitions found.",
+                t.dim,
+            )));
+        }
+        for p in d.parts.iter().take(5) {
+            lines.push(Line::from(format!(
+                "  {} {} {} {}",
+                p.path,
+                resilience_core::install::human_size(p.size),
+                p.fstype,
+                p.label
+            )));
+        }
+        if d.parts.len() > 5 {
+            lines.push(Line::from(format!("  ... and {} more", d.parts.len() - 5)));
+        }
+    }
+    f.render_widget(
+        Paragraph::new(lines)
+            .style(t.base)
+            .wrap(Wrap { trim: true })
+            .block(block("ON THIS DISK NOW (ALL ERASED)", &t)),
         info,
     );
 }
@@ -2264,6 +2426,52 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
                 ))),
             }
             ("COMPARE WITH A CHECKSUM", l, t.base)
+        }
+        Modal::InstallText {
+            field,
+            value,
+            error,
+        } => {
+            let (title, prompt, hint): (&str, String, &str) = match field {
+                InstallInput::Name(_) => (
+                    "ACCOUNT NAME",
+                    "Login name (lowercase letters, digits, - and _):".into(),
+                    "Enter OK, Esc cancel",
+                ),
+                InstallInput::FullName(_) => (
+                    "FULL NAME",
+                    "Full name or description (may stay empty):".into(),
+                    "Enter OK, Esc cancel",
+                ),
+                InstallInput::Confirm => (
+                    "ERASE THIS DISK AND INSTALL?",
+                    format!(
+                        "{}\n\nTo go on, type the disk's name ({}):",
+                        app.install_summary(),
+                        app.install_form()
+                            .and_then(|fm| fm.disk.as_ref())
+                            .map(|d| d.name().to_string())
+                            .unwrap_or_default()
+                    ),
+                    "Enter install, Esc go back",
+                ),
+            };
+            let mut l: Vec<Line> = prompt.lines().map(|x| Line::from(x.to_string())).collect();
+            l.push(Line::from(vec![
+                Span::styled(format!("> {value}"), t.accent),
+                Span::styled("█", t.base),
+            ]));
+            l.push(Line::from(""));
+            match error {
+                Some(e) => l.push(Line::from(Span::styled(format!("[!!] {e}"), t.error))),
+                None => l.push(Line::from(Span::styled(hint, t.dim))),
+            }
+            let style = if matches!(field, InstallInput::Confirm) {
+                t.warn
+            } else {
+                t.base
+            };
+            (title, l, style)
         }
         Modal::SetTime { value, zone, error } => {
             let mut l = vec![

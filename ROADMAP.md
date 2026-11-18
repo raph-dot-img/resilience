@@ -96,12 +96,13 @@ Slices 1 to 9 are in `develop`.
 - ✅ Mesh network without a router: BATMAN-adv over Wi-Fi ad hoc, turned on from Communications by the person at the console, local messages relayed across it (ADR 0021); Yggdrasil evaluated and not adopted
 - ⏸ Internet messengers (Tox, SimpleX Chat, signal-cli documented as unofficial; spec §14A): deferred by the owner on 2026-11-17, to be done later
 
-## Phase 7 — Radio and additional applications 🟡
+## Phase 7 — Radio and additional applications ⏸ (SDR postponed by the owner on 2026-11-17 until the hardware is bought)
 - ✅ First offline games (nudoku, solitaire, ninvaders, moon-buggy, NetHack)
-- ⬜ Receive-only SDR tools with hardware detection and legal notices
+- ⏸ Receive-only SDR tools with hardware detection and legal notices (postponed: no SDR hardware yet)
 - ⬜ Power profiles (Maximum Efficiency / Balanced / Performance) and measurements on hardware
 
-## Phase 8 — Updates and installation ⬜
+## Phase 8 — Updates and installation 🟡
+- ✅ Text installer (ADR 0022, 0.3.0): one prebuilt system per edition and firmware, accounts/keyboard/encryption chosen at install as state; tested in VMs and by installing from the ISO in QEMU (not yet on physical hardware)
 Text installer, offline update bundles (`nix copy` + minisign manifest),
 signed pack verification, rollback tests, installation docs.
 

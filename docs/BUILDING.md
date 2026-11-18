@@ -30,7 +30,7 @@ missing and uses built-in defaults; the catalog will be empty.
 | Output | Command | Result |
 |---|---|---|
 | TUI package (runs `cargo test`) | `nix build .#resilience` | `result/bin/resilience` |
-| Live ISO, Standard | `nix build .#iso` | `result/iso/resilience-standard-0.2.0-x86_64-linux.iso` |
+| Live ISO, Standard | `nix build .#iso` | `result/iso/resilience-standard-0.3.0-x86_64-linux.iso` |
 | Live ISO, Minimal | `nix build .#iso-minimal` | `result/iso/resilience-minimal-…` |
 | Dev VM | `nix run .#vm` | boots on the serial console in your terminal |
 | All checks | `nix flake check -L --max-jobs 1` | see docs/TESTING.md |
@@ -65,7 +65,7 @@ development tooling never does it for you. Double-check the device name:
 
 ```sh
 lsblk                                   # identify the USB stick, e.g. /dev/sdX
-sudo dd if=resilience-standard-0.2.0-x86_64-linux.iso of=/dev/sdX bs=4M status=progress conv=fsync
+sudo dd if=resilience-standard-0.3.0-x86_64-linux.iso of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 ## Resource notes (reference host: 6 cores, 12 GiB)

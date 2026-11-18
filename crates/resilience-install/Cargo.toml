@@ -1,0 +1,18 @@
+[package]
+name = "resilience-install"
+description = "Installs Resilience OS on a disk from the live system (ADR 0022)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "resilience-install"
+path = "src/main.rs"
+
+[dependencies]
+resilience-core.workspace = true
+libc.workspace = true
+
+[lints]
+workspace = true

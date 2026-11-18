@@ -51,6 +51,9 @@ let
         inherit (u) description;
       }) cfg.users;
     }
+    // lib.optionalAttrs cfg.localAccounts {
+      local_accounts_file = "/var/lib/resilience/accounts.toml";
+    }
     // lib.optionalAttrs cfg.mesh.enable {
       mesh_unit = "resilience-mesh.service";
     }
@@ -126,7 +129,23 @@ let
   '';
 in
 {
+  options.resilience.localAccounts = lib.mkOption {
+    type = lib.types.bool;
+    default = false;
+    description = ''
+      Installed systems (ADR 0022): accounts created on the machine and
+      listed in /var/lib/resilience/accounts.toml are managed like declared
+      ones, with Ultra-Stable as their base mode. Needs mutable users.
+    '';
+  };
+
   config = {
+    assertions = [
+      {
+        assertion = !cfg.localAccounts || config.users.mutableUsers;
+        message = "resilience.localAccounts needs users.mutableUsers = true.";
+      }
+    ];
     security.polkit.enable = true;
     # Administrators for polkit's auth_admin are exactly the Advanced accounts.
     security.polkit.adminIdentities = [ "unix-group:wheel" ];

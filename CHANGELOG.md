@@ -6,6 +6,35 @@ Git tags: `vX.Y.Z` on the commit of each release.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-11-18 — Text installer
+
+Resilience can now be installed on a whole disk from the live system.
+Tested in virtual machines only.
+
+### Added
+- *Install Resilience on this computer* (ADR 0022, Phase 8): a text
+  installer on the live system. Whole disk, GPT, encryption (LUKS2) on by
+  default, keyboard layout, accounts and their modes; nothing is changed
+  before the disk's name is typed. Copies one of four prebuilt installed
+  systems per edition (UEFI/systemd-boot or BIOS/GRUB, with or without
+  encryption) offline. Accounts created on the machine are managed by
+  `resilience-admin` like declared ones. VM tests `vm-install` (BIOS,
+  encryption, French layout) and `vm-install-uefi` (UEFI, no encryption);
+  `tests/iso/install.py` installs from the ISO in QEMU.
+
+### Changed
+- Systems installed by the installer keep user namespaces and the Nix
+  sandbox on, whatever the accounts' modes (ADR 0012: their accounts are
+  not known when the system is built).
+- The full check is run as separate evaluations plus one build on the
+  development host (`nix flake check` ran out of memory there; see
+  docs/TESTING.md).
+
+### Fixed
+- `/run/current-system/sw/bin/resilience-session`, listed in
+  `/etc/shells` and passed as `SHELL` to pkexec, did not exist: the
+  session package is now installed system-wide.
+
 ## [0.2.0] — 2026-11-17 — Phases 2 to 6 (local part)
 
 Accounts and security modes, backups, clock, Wi-Fi, generations, resource
