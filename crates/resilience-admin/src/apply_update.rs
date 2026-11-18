@@ -3,6 +3,10 @@
 //! media. Nix checks hashes and signatures (release keys from admin.toml
 //! only); this code decides what to import and makes the new system the one
 //! started next, never the running one.
+//!
+//! `resilience-admin check-update DIR` (any user, read-only) checks the
+//! same bundle without importing anything and reports integrity and
+//! authenticity separately (ADR 0023 point 4).
 
 use crate::{Failure, Result, audit, caller, err, hold_interrupts, is_root, lock};
 use resilience_core::admin::AdminConfig;
@@ -12,6 +16,7 @@ use std::fs;
 use std::io::Read;
 use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 /// A bundle has a few thousand files; anything far beyond is not one.
@@ -77,6 +82,99 @@ fn scan(dir: &Path) -> std::result::Result<(), String> {
     Ok(())
 }
 
+/// The bundle folder a caller named, if it is one the helper accepts.
+fn bundle_dir(requested: &str) -> std::result::Result<PathBuf, String> {
+    let dir = fs::canonicalize(requested).map_err(|_| "the update folder cannot be found")?;
+    if !update::bundle_dir_allowed(&dir) || !dir.is_dir() {
+        return Err(format!(
+            "updates are installed from a folder on a USB stick or disk mounted under {}",
+            update::MEDIA_ROOT
+        ));
+    }
+    Ok(dir)
+}
+
+/// Run Nix as the caller (no privilege), output on the terminal. Not in its
+/// own process group: Ctrl-C stops the check and Nix together.
+fn nix_as_user(argv: &[String]) -> Option<i32> {
+    let (program, args) = argv.split_first()?;
+    let mut c = Command::new(program);
+    c.args(args)
+        .env_clear()
+        .env("PATH", "/run/current-system/sw/bin");
+    if let Ok(h) = std::env::var("HOME") {
+        c.env("HOME", h);
+    }
+    c.stdin(std::process::Stdio::null()).status().ok()?.code()
+}
+
+/// `check-update DIR`: read-only, as the caller. Nothing is imported.
+pub fn check_update(requested: &str) -> Result<()> {
+    let cfg = AdminConfig::load().map_err(err)?;
+    let Some(up) = cfg.updates.clone().filter(UpdateSettings::usable) else {
+        return Err(Failure::Refused(update::Refusal::Unusable.to_string()));
+    };
+    let dir = bundle_dir(requested).map_err(Failure::Refused)?;
+    scan(&dir).map_err(|e| Failure::Refused(format!("not a valid update: {e}")))?;
+    let pointer = read_small(&dir.join(update::POINTER_FILE), update::MAX_TOML)
+        .and_then(|t| update::parse_pointer(&t))
+        .map_err(|e| {
+            Failure::Refused(format!(
+                "not a valid update ({}): {e}",
+                update::POINTER_FILE
+            ))
+        })?;
+    println!(
+        "The stick says: Resilience {} {} (not yet checked).",
+        pointer.edition, pointer.version
+    );
+    println!(
+        "This computer runs: Resilience {} {}.",
+        up.edition, up.version
+    );
+    println!();
+    println!("Checking every file of the update against its signed hash.");
+    println!("This reads the whole update and can take several minutes...");
+    let present = nix_as_user(&update::present_argv(&up, &dir, &pointer.manifest)) == Some(0);
+    let r = update::CheckResult::from_exit(nix_as_user(&update::verify_argv(&up, &dir)));
+    println!();
+    let yes_no = |b: bool| if b { "yes" } else { "NO" };
+    println!(
+        "Intact (no file damaged or changed):      {}",
+        yes_no(r.intact && !r.failed)
+    );
+    println!(
+        "Authentic (signed by a release key):      {}",
+        yes_no(r.authentic && !r.failed)
+    );
+    println!(
+        "Complete (holds the update's manifest):   {}",
+        yes_no(present)
+    );
+    if !(r.good() && present) {
+        return Err(Failure::Refused(
+            "this update must not be installed: it is damaged, not signed by a \
+             Resilience release key, incomplete, or the stick could not be read"
+                .into(),
+        ));
+    }
+    let running = update::Version::parse(&up.version);
+    if pointer.edition != up.edition {
+        println!();
+        println!(
+            "It is for the {} edition, not this computer's: it would be refused.",
+            pointer.edition
+        );
+    } else if running.is_some_and(|v| pointer.version <= v) {
+        println!();
+        println!("It is not newer than the running version: it would be refused.");
+    } else {
+        println!();
+        println!("The update is intact and authentic. It can be installed.");
+    }
+    Ok(())
+}
+
 pub fn apply_update(requested: &str) -> Result<()> {
     if !is_root() {
         return Err(Failure::Permission);
@@ -110,14 +208,7 @@ pub fn apply_update(requested: &str) -> Result<()> {
     let _lock = lock(&cfg)?;
 
     // 1. Where the bundle is.
-    let dir: PathBuf = fs::canonicalize(requested)
-        .map_err(|_| refuse("the update folder cannot be found".into()))?;
-    if !update::bundle_dir_allowed(&dir) || !dir.is_dir() {
-        return Err(refuse(format!(
-            "updates are installed from a folder on a USB stick or disk mounted under {}",
-            update::MEDIA_ROOT
-        )));
-    }
+    let dir = bundle_dir(requested).map_err(refuse)?;
     scan(&dir).map_err(|e| refuse(format!("not a valid update: {e}")))?;
 
     // 2. The unsigned pointer: only says which store path is the manifest.

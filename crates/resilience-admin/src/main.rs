@@ -17,6 +17,7 @@
 //! resilience-admin set-default-generation N   root (pkexec / sudo), ADR 0011
 //! resilience-admin set-keymap LAYOUT     root (pkexec, no password), ADR 0017
 //! resilience-admin set-mesh on|off       root (pkexec, no password), ADR 0021
+//! resilience-admin check-update DIR      any user, read-only, ADR 0023
 //! resilience-admin apply-update DIR      root (pkexec / sudo), ADR 0023
 //! resilience-admin apply-state           root (system activation)
 //! ```
@@ -53,6 +54,7 @@ Usage:
                                          Start system generation N at every boot
   resilience-admin set-keymap LAYOUT     Load a console keyboard layout of this system
   resilience-admin set-mesh on|off       Turn the Wi-Fi mesh on or off (ADR 0021)
+  resilience-admin check-update DIR      Check the update in DIR without installing it
   resilience-admin apply-update DIR      Install the update in DIR (USB stick, ADR 0023)
   resilience-admin apply-state           Re-apply recorded modes (system use)
 MODE is one of: ultra-stable, stable, advanced";
@@ -67,6 +69,7 @@ fn main() -> ExitCode {
         ["set-default-generation", n] => set_default_generation(n),
         ["set-keymap", id] => set_keymap(id),
         ["set-mesh", state] => set_mesh(state),
+        ["check-update", dir] => apply_update::check_update(dir),
         ["apply-update", dir] => apply_update::apply_update(dir),
         ["apply-state"] => apply_state(),
         ["--version"] => {
