@@ -304,6 +304,31 @@ store before the update.
 | The same bundle again → refused "not newer than the running 0.99.0" (no replay) | PASS (2026-11-18) |
 | Wrong administrator password, Ctrl-C during the import, a full disk, symbolic links on an ext4 stick, GRUB/BIOS, a real bundle from `make-update-bundle.sh` with a real release key, physical hardware | NOT TESTED |
 
+### Real release key — offline update from the ISO-installed system (manual, QEMU, screenshots reviewed)
+
+The owner's release key `resilience-release` (`nix/release-keys.nix`), not
+a test key. Standard ISO from `develop` at `83cdebc` (SHA-256
+`2d7ec78de4c6eb13c740406d52d835f47d0379c1bc54306119128285964fed88`),
+installed with `tests/iso/install.py --uefi` (OVMF 202602, no encryption).
+Bundle: `scripts/make-update-bundle.sh standard <secret key>` run in a
+throw-away worktree whose installed systems say version 0.3.1 and carry a
+marker file (never committed): 1.5 GB, every path verified with the public
+key by the script; copied with mtools to a FAT32 image attached as a USB stick.
+
+| Check | Result |
+|---|---|
+| Installed 0.3.0 offers Recovery → "[3] Update from a USB stick" (a key is built in) | PASS (2026-11-18) |
+| Stick "UPDATESTICK 2.1 GiB not open" → Enter → "update 0.3.1", "The stick says Resilience standard 0.3.1", shown as unchecked | PASS (2026-11-18) |
+| `c` (check-update as `user`): Intact yes, Authentic (signed by a release key) yes, Complete yes, "can be installed" | PASS (2026-11-18) |
+| Enter → INSTALL AN UPDATE (Cancel default) → `y` → polkit `org.resilience.admin.apply-update` for `administrator`, password → signature checked again, only the 6 missing store paths copied, "Resilience 0.3.1 is installed. It starts at the next restart" | PASS (2026-11-18) |
+| Restart (ACPI power-down, start): header STANDARD v0.3.1, OPERATIONAL, no failed service, running system = the one from the stick; System generations: 2 "started, default", 1 kept | PASS (2026-11-18) |
+| Going back: generation 1 → Make default → administrator password → restart → v0.3.0 running, generation 2 still in the boot menu | PASS (2026-11-18) |
+
+Note: the status screen's "userland v0.3.0" on 0.3.1 comes from the trial
+(only `resilience.version` was raised, not the package); a real release
+raises both.
+
+
 ### VM: `vm-licence` — the licence notice (ADR 0024), driven through the TUI
 
 | Check | Result |
@@ -411,6 +436,7 @@ press (the passwords wait at `passwd`): any key wakes it.
 | Milestone build from `develop` at `af4b661` (mesh network, ADR 0021; 1.55 GB): BIOS 2048 MiB, UEFI 2048 MiB (OVMF), BIOS 1024 MiB — TUI, system OPERATIONAL with no failed service, diagnostics, status, Local messages `[OK] Messaging is running` with the message store; ~610 MiB of 964 MiB available at 1 GiB; no OOM or failed unit on the serial console | PASS (2026-11-17) |
 | Release 0.2.0 build from `release/0.2.0` (the Phase 6 milestone of `main` with the version raised; `resilience-standard-0.2.0-x86_64-linux.iso`, 1,554,186,240 bytes, SHA-256 `6507ee52025eef134ed39848d3c06fc40dce6d95681bfd379eaab7defa130f30`): BIOS 2048 MiB, UEFI 2048 MiB (OVMF 202608), BIOS 1024 MiB — TUI shows v0.2.0, system OPERATIONAL with no failed service, status, network, Local messages running | PASS (2026-11-17) |
 | Release 0.1.0 rebuilt from tag `v0.1.0` for the owner's mirror (`resilience-standard-0.1.0-x86_64-linux.iso`, 1,478,590,464 bytes, SHA-256 `d8e0335cf94555cc8722d1f851d46cfafe0b8c78e3dac1efb856a88ece3e2f6f`): BIOS 2048 MiB — TUI shows v0.1.0, system OPERATIONAL, no failed service. The tags `v0.2.0` and `v0.3.0` give the same ISOs (same SHA-256) as the release builds below | PASS (2026-11-18) |
+| `develop` at `83cdebc` (offline updates, licence notice, the owner's release key; `resilience-standard-0.3.0-x86_64-linux.iso` still says 0.3.0, SHA-256 `2d7ec78de4c6eb13c740406d52d835f47d0379c1bc54306119128285964fed88`): BIOS 2048 MiB, UEFI 2048 MiB (OVMF 202602), BIOS 1024 MiB — the licence notice first, then (after `smoke.py` accepts it) v0.3.0, OPERATIONAL, no failed service, Local messages running | PASS (2026-11-18) |
 | Release 0.3.0 build from `release/0.3.0` at `c6c1fb5` (the installer; `resilience-standard-0.3.0-x86_64-linux.iso`, 1,647,968,256 bytes, SHA-256 `dbbc44bef7999b7eaa7d6ef54fd5c3044fa027970470a60795b00434fd3788e4`): BIOS 2048 MiB, UEFI 2048 MiB (OVMF 202602, GRUB 2.12), BIOS 1024 MiB — TUI shows v0.3.0, system OPERATIONAL, no failed service, status, network, Local messages running with the message store | PASS (2026-11-18) |
 
 ### Keyboard layout (ADR 0017), in vm-boot-offline
