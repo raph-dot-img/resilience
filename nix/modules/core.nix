@@ -195,6 +195,10 @@ let
       # Offline updates (ADR 0023): the TUI offers and checks them.
       updates = cfg.updates.settings;
     }
+    // {
+      # The licence notice (ADR 0024).
+      licence = cfg.licence.settings;
+    }
   );
 
   # Fails the system build if a tool path is wrong.

@@ -17,6 +17,7 @@
 //! resilience-admin set-default-generation N   root (pkexec / sudo), ADR 0011
 //! resilience-admin set-keymap LAYOUT     root (pkexec, no password), ADR 0017
 //! resilience-admin set-mesh on|off       root (pkexec, no password), ADR 0021
+//! resilience-admin record-licence SHA256  root (pkexec, no password), ADR 0024
 //! resilience-admin check-update DIR      any user, read-only, ADR 0023
 //! resilience-admin apply-update DIR      root (pkexec / sudo), ADR 0023
 //! resilience-admin apply-state           root (system activation)
@@ -54,6 +55,7 @@ Usage:
                                          Start system generation N at every boot
   resilience-admin set-keymap LAYOUT     Load a console keyboard layout of this system
   resilience-admin set-mesh on|off       Turn the Wi-Fi mesh on or off (ADR 0021)
+  resilience-admin record-licence SHA256 Record that you read the licence (ADR 0024)
   resilience-admin check-update DIR      Check the update in DIR without installing it
   resilience-admin apply-update DIR      Install the update in DIR (USB stick, ADR 0023)
   resilience-admin apply-state           Re-apply recorded modes (system use)
@@ -69,6 +71,7 @@ fn main() -> ExitCode {
         ["set-default-generation", n] => set_default_generation(n),
         ["set-keymap", id] => set_keymap(id),
         ["set-mesh", state] => set_mesh(state),
+        ["record-licence", hash] => record_licence(hash),
         ["check-update", dir] => apply_update::check_update(dir),
         ["apply-update", dir] => apply_update::apply_update(dir),
         ["apply-state"] => apply_state(),
@@ -378,6 +381,70 @@ fn set_mode(user: &str, mode: &str) -> Result<()> {
 /// console has one keymap for all its consoles; it is not saved here (the
 /// TUI loads each account's choice at login, and the system's layout is
 /// loaded again before every login prompt).
+/// ADR 0024: append "this account certified it read this licence text,
+/// at this time" to the root-owned record. The hash must be the one of the
+/// text this system shows, so a record always names the exact text.
+fn record_licence(requested: &str) -> Result<()> {
+    use resilience_core::licence;
+    if !is_root() {
+        return Err(Failure::Permission);
+    }
+    let cfg = AdminConfig::load().map_err(err)?;
+    let (uid, by) = caller();
+    let uid_s = uid.to_string();
+    let base = [
+        ("op", "record-licence"),
+        ("caller", by.as_str()),
+        ("caller_uid", uid_s.as_str()),
+        ("sha256", requested),
+    ];
+    let outcome = |extra: &[(&str, &str)]| {
+        let mut f = base.to_vec();
+        f.extend_from_slice(extra);
+        audit(&cfg, &f);
+    };
+    let refuse = |reason: &str| {
+        outcome(&[("result", "refused"), ("reason", reason)]);
+        Failure::Refused(reason.into())
+    };
+    let Some(l) = cfg.licence.clone() else {
+        return Err(refuse("this system has no licence notice"));
+    };
+    if !licence::valid_sha256(requested) {
+        return Err(refuse("not a SHA-256 hash"));
+    }
+    if requested != l.sha256 {
+        return Err(refuse(
+            "this is not the licence text of this system (it may have been updated); \
+             read it again",
+        ));
+    }
+    let _lock = lock(&cfg)?;
+    let now = admin::now_rfc3339();
+    let line = admin::audit_line(&now, &licence::record_fields(&by, &uid_s, &l));
+    let written = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .mode(0o644)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&l.record)
+        .and_then(|mut f| {
+            f.write_all(line.as_bytes())?;
+            f.sync_all()
+        });
+    if let Err(e) = written {
+        let reason = format!("{}: {e}", l.record.display());
+        outcome(&[("result", "error"), ("reason", &reason)]);
+        return Err(err(reason));
+    }
+    outcome(&[("result", "ok")]);
+    println!(
+        "Recorded: {by} read the {} on {now} (this computer's clock).",
+        l.title()
+    );
+    Ok(())
+}
+
 fn set_keymap(requested: &str) -> Result<()> {
     if !is_root() {
         return Err(Failure::Permission);

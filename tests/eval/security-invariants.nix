@@ -56,6 +56,8 @@ let
           );
         "the minimal edition has no local messaging" =
           c.resilience.edition != "minimal" || !c.resilience.comms.enable;
+        # ADR 0024: every real system shows the licence notice.
+        "the licence notice is shown" = c.resilience.licence.prompt;
         # ADR 0023: the vm-update test key is public; no system trusts it.
         "updates trust no test key" =
           !(lib.any (

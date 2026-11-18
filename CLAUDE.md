@@ -79,7 +79,7 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
               vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-install,
-              vm-install-uefi, vm-maps, vm-comms, vm-mesh, vm-update,
+              vm-install-uefi, vm-maps, vm-comms, vm-mesh, vm-update, vm-licence,
               security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world,
               comms-messages (the messaging program with real Reticulum + LXMF, no VM)
 
@@ -100,7 +100,9 @@ crates/resilience-core  library: status, network (passive + on-demand probe),
                         style, labels: pure, ADR 0016)
 crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR 0007):
                         list | set-mode USER MODE | set-time UTC |
-                        set-default-generation N | set-keymap LAYOUT | set-mesh on|off | apply-state
+                        set-default-generation N | set-keymap LAYOUT | set-mesh on|off |
+                        apply-update DIR | record-licence SHA256 | apply-state; check-update DIR
+                        (any user, read-only)
 crates/resilience-backup binary `resilience-backup` (UNPRIVILEGED, ADR 0008):
                         create MOUNT | check FILE | restore FILE
 crates/resilience-library binaries (ADR 0013): `resilience-library` (as the user: list |
@@ -613,6 +615,8 @@ Phase 5 (maps) is parked.
 - 0019 Store-and-forward: a message store (LXMF propagation node, our own `resilience-messages node`, no delivery address) on every machine with messaging; clients go direct first, a copy to the store after 2 min
 - 0020 Files in local messages: one per message ≤ 900 KB, sent as a copy, received under the message id (64 MB/account), saved on request into ~/Received
 - 0021 Mesh network: BATMAN-adv over Wi-Fi ad hoc (IBSS; 802.11s is missing on Intel cards), off until turned on at the console via helper `set-mesh` (allow_active=yes), bat0 link-local only; Yggdrasil not adopted
+- 0023 Offline updates: signed Nix binary cache on a USB stick (release key in nix/release-keys.nix, passed per import, never in nix.conf), helper `apply-update` (auth_admin, newer version of this edition and variant only, switch-to-configuration boot), `check-update` as the user, TUI Recovery → Update from a USB stick
+- 0024 Licence notice: before an account's first use of the TUI, Hippocratic License 2.1 summary + original text, "I certify that I have read" → helper `record-licence SHA256` (allow_active=yes) appends to /var/lib/resilience/licence-acceptances.log (root 0644); `resilience.licence.prompt` off only in VM tests (flake wrapper, mkDefault); live ISO asks at every start
 - 0022 Installer: prebuilt generic installed systems (per edition, UEFI/BIOS, plain/LUKS), accounts as local accounts in modes.toml, keyboard in /var/lib/resilience/keyboard (+ initrd secret), `resilience-install` via polkit allow_active on the live ISO only
 
 ## 18. How to continue safely

@@ -43,6 +43,8 @@ mod files_ui;
 mod install_ui;
 #[path = "library.rs"]
 mod library;
+#[path = "licence_ui.rs"]
+mod licence_ui;
 #[path = "update_ui.rs"]
 mod update_ui;
 pub use chat_ui::now_secs as chat_now;
@@ -57,6 +59,7 @@ pub use install_ui::{InstallForm, InstallInput, InstallRow};
 #[cfg(test)]
 pub use library::{ItemPlace, stick_items};
 pub use library::{LibItem, PackRow, PacksScreen};
+pub use licence_ui::LicencePage;
 #[cfg(test)]
 pub use update_ui::update_rows as update_ui_rows;
 pub use update_ui::{UPDATE_APPLY_LABEL, UPDATE_CHECK_LABEL, UpdateRow};
@@ -661,6 +664,16 @@ pub enum View {
         gens: Vec<recovery::Generation>,
         list: ListState,
     },
+    /// The licence notice (ADR 0024), on top of everything until recorded.
+    Licence {
+        page: LicencePage,
+        text: String,
+        scroll: usize,
+        /// The original text was opened.
+        full_seen: bool,
+        /// "I certify that I have read" is ticked.
+        ticked: bool,
+    },
     /// Removable volumes and the updates on them (ADR 0023).
     Updates {
         rows: Vec<UpdateRow>,
@@ -769,6 +782,8 @@ pub enum Pending {
     SetDefaultGeneration {
         number: u64,
     },
+    /// Log out without certifying having read the licence (ADR 0024).
+    DeclineLicence,
     /// Install the update in this bundle folder (ADR 0023).
     ApplyUpdate {
         dir: PathBuf,
@@ -997,6 +1012,9 @@ impl App {
             paths: s.paths,
         };
         app.refresh_slow();
+        if let Some(v) = app.licence_view() {
+            app.stack.push(v);
+        }
         for w in s.warnings {
             app.notify(Level::Warn, w);
         }
@@ -1219,7 +1237,8 @@ impl App {
             View::Handbook { .. }
             | View::Pager { .. }
             | View::Status { .. }
-            | View::Help { .. } => HelpTopic::Reader,
+            | View::Help { .. }
+            | View::Licence { .. } => HelpTopic::Reader,
             View::Notes { .. } => HelpTopic::Notes,
             View::Chats { .. } | View::Nearby { .. } | View::Chat { .. } => HelpTopic::Chat,
             View::Network { .. } => HelpTopic::Network,
@@ -1254,6 +1273,9 @@ impl App {
         }
         if let Some(modal) = self.modal.take() {
             return self.handle_modal(modal, key);
+        }
+        if matches!(self.view(), View::Licence { .. }) {
+            return self.licence_key(key);
         }
         let typing = matches!(self.view(), View::Search { .. } | View::Files { .. });
         match key.code {
@@ -1342,6 +1364,8 @@ impl App {
             View::Chats { .. } | View::Nearby { .. } | View::Chat { .. } => {}
             View::Install { .. } | View::InstallDisks { .. } | View::InstallLayouts { .. } => {}
             View::Updates { .. } => {}
+            // Handled by licence_key in handle_key.
+            View::Licence { .. } => {}
             View::Home { list } => {
                 let cats = self.home_categories();
                 if let Some(i) = digit(key) {
@@ -2242,6 +2266,7 @@ impl App {
             | Pending::SetTime { .. }
             | Pending::SetDefaultGeneration { .. }
             | Pending::ApplyUpdate { .. }
+            | Pending::DeclineLicence
             | Pending::JoinWifi { .. }
             | Pending::ForgetWifi { .. }
             | Pending::Backup { .. }
@@ -2493,7 +2518,7 @@ impl App {
 
     fn execute(&mut self, action: Pending) -> Effect {
         let verb = match action {
-            Pending::Logout => return Effect::Quit,
+            Pending::Logout | Pending::DeclineLicence => return Effect::Quit,
             Pending::SetMode { user, to } => return self.set_mode_effect(&user, to),
             Pending::SetTime { utc } => return self.set_time_effect(utc),
             Pending::SetDefaultGeneration { number } => {

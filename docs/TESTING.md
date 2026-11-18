@@ -304,6 +304,19 @@ store before the update.
 | The same bundle again → refused "not newer than the running 0.99.0" (no replay) | PASS (2026-11-18) |
 | Wrong administrator password, Ctrl-C during the import, a full disk, symbolic links on an ext4 stick, GRUB/BIOS, a real bundle from `make-update-bundle.sh` with a real release key, physical hardware | NOT TESTED |
 
+### VM: `vm-licence` — the licence notice (ADR 0024), driven through the TUI
+
+| Check | Result |
+|---|---|
+| system.toml's `[licence]` hash is the SHA-256 of the shown file (the Hippocratic License 2.1), admin.toml has the same; no record yet | PASS (2026-11-18) |
+| First session (alice, Ultra-Stable, autologin): the summary and an unticked box; `/`, F1, F5 reach nothing; Esc asks to log out and the default keeps the notice; Enter before opening the text records nothing | PASS (2026-11-18) |
+| polkit: `record-licence` allowed to the console session without a password; implicit any: no | PASS (2026-11-18) |
+| Helper: as alice exit 77; an all-zero hash ("not the licence text of this system"), upper case, `abc`, `../x` refused (exit 2); 4 refusals audited; no record | PASS (2026-11-18) |
+| Tab → original text; Space ticks; Enter → main menu and "is recorded"; the record is one line `time=… user=alice uid=… sha256=<hash> licence="Hippocratic License" version=2.1`, root 0644; audit `op=record-licence caller=alice … result=ok` + journal; alice cannot append to or remove it | PASS (2026-11-18) |
+| Logging out and in again opens on the main menu, no notice | PASS (2026-11-18) |
+| carol declines on tty2: logged out, no record for carol | PASS (2026-11-18) |
+| A changed licence text asking everyone again (unit-tested only), the live ISO asking at every start (state in memory; not run), physical hardware | NOT TESTED in VM |
+
 ### VM: `vm-mesh` — mesh network (ADR 0021), three machines in a chain and one with simulated Wi-Fi
 
 alpha (vlan 1) ── beta (vlans 1 and 2) ── gamma (vlan 2): alpha and gamma
@@ -338,6 +351,7 @@ the same disk booted with SeaBIOS. The installed system is the real
 | The disk boots (GRUB on BIOS); the initrd loads the French layout and keeps it after udev restarts the console setup; the passphrase typed on the keyboard unlocks the disk; `/` on `/dev/mapper/root`; login prompts use the French layout (`dumpkeys`) | PASS (2026-11-17) |
 | Local accounts: shell `/run/current-system/sw/bin/resilience-session`; `user` Stable, `administrator` Advanced (wheel) as overrides of Ultra-Stable in `resilience-admin list`; no autologin; user namespaces on | PASS (2026-11-17) |
 | `user` logs in on tty1 with the password typed during the installation; the interface starts (MODE: STABLE) | PASS (2026-11-17) |
+| First login on the installed system: the licence notice (ADR 0024); Tab, Space, Enter → main menu; a record line for `user` | PASS (2026-11-18, BIOS variant; `vm-install-uefi` not rerun) |
 | Minimal edition; installing next to another system (not offered) | NOT TESTED |
 
 Found and fixed by this test: the initrd keymap unit could not start (its

@@ -4525,3 +4525,180 @@ fn a_stick_without_an_update_only_explains() {
     assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
     assert!(matches!(&a.modal, Some(Modal::Message { .. })));
 }
+
+// ----- the licence notice (ADR 0024) -------------------------------------
+
+/// The notice on, with a fake pkexec that appends a record line (or, when
+/// `refuse` exists, fails like the helper refusing).
+fn licence_app(tag: &str) -> App {
+    use std::os::unix::fs::PermissionsExt;
+    let mut a = app(Mode::UltraStable, tag);
+    let dir = a.home.join("sys");
+    let text = dir.join("LICENSE");
+    std::fs::write(
+        &text,
+        "Hippocratic License Version Number: 2.1.\nPurpose. ...\nEND-OF-LICENCE-TEXT\n",
+    )
+    .expect("w");
+    let record = dir.join("licence-acceptances.log");
+    let script = dir.join("pkexec");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> {d}/pkexec.log\n\
+             if [ -e {d}/refuse ]; then echo 'Refused: this is not the licence text of this system.' >&2; exit 2; fi\n\
+             echo \"time=2026-11-18T20:00:00Z user=tester uid=1000 sha256=$3 licence=\\\"Hippocratic License\\\" version=2.1\" >> {r}\n",
+            d = dir.display(),
+            r = record.display()
+        ),
+    )
+    .expect("write");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let admin = std::fs::read_to_string(&a.paths.admin_config).expect("admin.toml");
+    std::fs::write(
+        &a.paths.admin_config,
+        admin.replace("/run/wrappers/bin/pkexec", &script.display().to_string()),
+    )
+    .expect("admin.toml");
+    a.sys.licence = Some(resilience_core::licence::LicenceSettings {
+        name: "Hippocratic License".into(),
+        version: "2.1".into(),
+        file: text,
+        sha256: "ab".repeat(32),
+        record,
+        prompt: true,
+    });
+    let v = a.licence_view().expect("the notice is needed");
+    a.stack.push(v);
+    a
+}
+
+#[test]
+fn the_licence_notice_blocks_everything_until_read_ticked_and_recorded() {
+    let mut a = licence_app("licence");
+    for (w, h) in [(80, 24), (60, 20), (40, 12), (120, 40)] {
+        assert_console_glyphs(&render(&mut a, w, h));
+    }
+    let s = render(&mut a, 100, 30);
+    assert!(s.contains("HIPPOCRATIC LICENSE 2.1: SUMMARY"), "{s}");
+    assert!(
+        s.contains("[ ] I certify that I have read the Hippocratic License 2.1"),
+        "{s}"
+    );
+    // Nothing else is reachable: search, help, status, Esc to the menu.
+    for k in [
+        KeyCode::Char('/'),
+        KeyCode::F(1),
+        KeyCode::F(5),
+        KeyCode::Char('?'),
+    ] {
+        press(&mut a, k);
+        assert!(
+            matches!(a.view(), View::Licence { .. }),
+            "{k:?}: {:?}",
+            a.view()
+        );
+        assert!(a.modal.is_none());
+    }
+    // Ticking or confirming before opening the text only explains.
+    press(&mut a, KeyCode::Char(' '));
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(a.view(), View::Licence { ticked: false, .. }));
+    assert!(
+        a.notices
+            .iter()
+            .any(|n| n.text.contains("Read the original text first"))
+    );
+    assert!(!a.home.join("sys/pkexec.log").exists());
+    // The original text, then the box.
+    press(&mut a, KeyCode::Tab);
+    let s = render(&mut a, 100, 30);
+    assert!(
+        s.contains("ORIGINAL TEXT (2/2)") && s.contains("END-OF-LICENCE-TEXT"),
+        "{s}"
+    );
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        a.notices
+            .iter()
+            .any(|n| n.text.contains("Tick the box first"))
+    );
+    press(&mut a, KeyCode::Char(' '));
+    assert!(render(&mut a, 100, 30).contains("[x] I certify"));
+    // Esc asks before logging out; the safe choice is the default.
+    press(&mut a, KeyCode::Esc);
+    assert!(matches!(
+        &a.modal,
+        Some(Modal::Confirm {
+            action: Pending::DeclineLicence,
+            yes_focused: false,
+            ..
+        })
+    ));
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    assert!(matches!(a.view(), View::Licence { ticked: true, .. }));
+    // Enter records it through the helper: the notice is gone.
+    assert_eq!(press(&mut a, KeyCode::Enter), Effect::None);
+    let calls = std::fs::read_to_string(a.home.join("sys/pkexec.log")).expect("log");
+    assert_eq!(
+        calls,
+        format!(
+            "/store/bin/resilience-admin record-licence {}\n",
+            "ab".repeat(32)
+        )
+    );
+    assert!(matches!(a.view(), View::Home { .. }), "{:?}", a.view());
+    assert!(!a.licence_needed());
+    assert!(a.licence_view().is_none());
+}
+
+#[test]
+fn a_refused_record_keeps_the_notice_and_declining_logs_out() {
+    let mut a = licence_app("licence-refused");
+    std::fs::write(a.home.join("sys/refuse"), "").expect("w");
+    press(&mut a, KeyCode::Tab);
+    press(&mut a, KeyCode::Char('x'));
+    press(&mut a, KeyCode::Enter);
+    assert!(
+        matches!(&a.modal, Some(Modal::Message { title, body, error: true }) if title == "NOT RECORDED" && body.contains("not the licence text")),
+        "{:?}",
+        a.modal
+    );
+    a.modal = None;
+    assert!(matches!(a.view(), View::Licence { .. }));
+    assert!(a.licence_needed());
+    press(&mut a, KeyCode::Char('q'));
+    press(&mut a, KeyCode::Char('y'));
+    // 'y' on the confirmation logs out.
+    let mut b = licence_app("licence-decline");
+    press(&mut b, KeyCode::Char('q'));
+    assert_eq!(press(&mut b, KeyCode::Char('y')), Effect::Quit);
+}
+
+#[test]
+fn the_notice_is_not_shown_once_recorded_or_when_off() {
+    let mut a = licence_app("licence-other");
+    // Another account's record, or another text's, does not count.
+    let l = a.sys.licence.clone().expect("licence");
+    std::fs::write(
+        &l.record,
+        format!(
+            "time=x user=bob uid=1001 sha256={}\ntime=x user=tester uid=1000 sha256={}\n",
+            l.sha256,
+            "cd".repeat(32)
+        ),
+    )
+    .expect("w");
+    assert!(a.licence_needed());
+    std::fs::write(
+        &l.record,
+        format!("time=x user=tester uid=1000 sha256={}\n", l.sha256),
+    )
+    .expect("w");
+    assert!(!a.licence_needed());
+    std::fs::remove_file(&l.record).expect("rm");
+    if let Some(l) = a.sys.licence.as_mut() {
+        l.prompt = false;
+    }
+    assert!(!a.licence_needed());
+}
