@@ -102,7 +102,7 @@ Slices 1 to 9 are in `develop`.
 - ⬜ Power profiles (Maximum Efficiency / Balanced / Performance) and measurements on hardware
 
 ## Phase 8 — Updates and installation 🟡
-- 🟡 Text installer (ADR 0022): one prebuilt system per edition and firmware, accounts/keyboard/encryption chosen at install as state; in progress on `feat/installer`
+- ✅ Text installer (ADR 0022, 0.3.0): one prebuilt system per edition and firmware, accounts/keyboard/encryption chosen at install as state; tested in VMs and by installing from the ISO in QEMU (not yet on physical hardware)
 Text installer, offline update bundles (`nix copy` + minisign manifest),
 signed pack verification, rollback tests, installation docs.
 

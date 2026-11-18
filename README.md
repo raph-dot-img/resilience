@@ -10,7 +10,7 @@ works at 80×24, without colour, and on modest hardware.
 ```
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║█▀█ █▀▀ █▀ █ █   █ █▀▀ █▄ █ █▀▀ █▀▀                                   12:49:23║
-║█▀▄ ██▄ ▄█ █ █▄▄ █ ██▄ █ ▀█ █▄▄ ██▄                            STANDARD v0.2.0║
+║█▀▄ ██▄ ▄█ █ █▄▄ █ ██▄ █ ▀█ █▄▄ ██▄                            STANDARD v0.3.0║
 ║OS :: AUTONOMOUS INFORMATION SYSTEM                         MODE: ULTRA-STABLE║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ┌ STATUS ────────────────────────────┐┌ MAIN MENU ─────────────────────────────┐
@@ -21,10 +21,11 @@ works at 80×24, without colour, and on modest hardware.
 │STORAGE [OK] 7.5 GiB FREE           ││  [5] SYSTEM MANAGEMENT                 │
 ```
 
-> **Status: early prototype (v0.2.0).** It boots and is usable in a
+> **Status: early prototype (v0.3.0).** It boots and is usable in a
 > virtual machine (x86_64). It has booted once on physical hardware (a ThinkPad
 > L15 Gen 1) and has otherwise run only in virtual machines. It runs as a live
-> system only: there is no installer yet. Maps cover the world overview and
+> system and has a text installer (whole disk, optional encryption), tested
+> in virtual machines only. Maps cover the world overview and
 > packs you build; local messaging and the mesh have been tested between
 > virtual machines only; radio tools do not exist yet.
 > See [ROADMAP.md](ROADMAP.md) and [docs/TESTING.md](docs/TESTING.md) for
