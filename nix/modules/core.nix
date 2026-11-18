@@ -161,8 +161,8 @@ let
     gpg = "${config.programs.gnupg.package}/bin/gpg";
   };
 
-  systemConfigUnchecked =
-    toml.generate "resilience-system.toml" {
+  systemConfigUnchecked = toml.generate "resilience-system.toml" (
+    {
       edition = cfg.edition;
       inherit (cfg) version;
       catalog = "/etc/resilience/apps.toml";
@@ -194,7 +194,8 @@ let
     // lib.optionalAttrs (cfg.updates.settings != null) {
       # Offline updates (ADR 0023): the TUI offers and checks them.
       updates = cfg.updates.settings;
-    };
+    }
+  );
 
   # Fails the system build if a tool path is wrong.
   systemConfig = pkgs.runCommand "resilience-system-checked.toml" { } ''

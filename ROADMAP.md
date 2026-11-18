@@ -102,6 +102,7 @@ Slices 1 to 9 are in `develop`.
 - ⬜ Power profiles (Maximum Efficiency / Balanced / Performance) and measurements on hardware
 
 ## Phase 8 — Updates and installation 🟡
+- ✅ Offline updates (ADR 0023): signed Nix binary cache on a USB stick, `scripts/make-update-bundle.sh`, Recovery → "Update from a USB stick" (check as the user, install with an administrator's password, starts at the next restart, previous version kept); tested in VMs (`vm-update`), not yet with a real release key or on physical hardware
 - ✅ Text installer (ADR 0022, 0.3.0): one prebuilt system per edition and firmware, accounts/keyboard/encryption chosen at install as state; tested in VMs and by installing from the ISO in QEMU (not yet on physical hardware)
 Text installer, offline update bundles (`nix copy` + minisign manifest),
 signed pack verification, rollback tests, installation docs.

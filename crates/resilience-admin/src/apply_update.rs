@@ -258,8 +258,12 @@ pub fn apply_update(requested: &str) -> Result<()> {
         outcome(&[("to", &to), ("result", "error"), ("reason", reason)]);
         return Err(err(reason));
     }
-    let announced = read_small(&target.join("etc/resilience/system.toml"), 1 << 20)
+    // In a system, etc/resilience/system.toml is a chain of symbolic links
+    // inside the store: resolve it, and read it only if it stays there.
+    let announced = fs::canonicalize(target.join("etc/resilience/system.toml"))
         .ok()
+        .filter(|p| p.starts_with("/nix/store/"))
+        .and_then(|p| read_small(&p, 1 << 20).ok())
         .and_then(|t| update::announced(&t));
     if announced != Some((manifest.edition.clone(), manifest.version)) {
         let reason = "the new system does not announce the edition and version of its manifest";

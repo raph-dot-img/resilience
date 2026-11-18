@@ -79,7 +79,7 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
               vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-install,
-              vm-install-uefi, vm-maps, vm-comms, vm-mesh,
+              vm-install-uefi, vm-maps, vm-comms, vm-mesh, vm-update,
               security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world,
               comms-messages (the messaging program with real Reticulum + LXMF, no VM)
 

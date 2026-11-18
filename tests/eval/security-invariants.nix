@@ -34,15 +34,16 @@ let
           c.networking.firewall.allowedTCPPorts == [ ]
           && c.networking.firewall.allowedTCPPortRanges == [ ]
           && c.networking.firewall.allowedUDPPortRanges == [ ]
-          && lib.sort lib.lessThan c.networking.firewall.allowedUDPPorts == (
-            if c.resilience.comms.enable then
-              [
-                29716
-                42671
-              ]
-            else
-              [ ]
-          );
+          &&
+            lib.sort lib.lessThan c.networking.firewall.allowedUDPPorts == (
+              if c.resilience.comms.enable then
+                [
+                  29716
+                  42671
+                ]
+              else
+                [ ]
+            );
         "local messaging runs unprivileged and offers no remote access" =
           !c.resilience.comms.enable
           || (
@@ -55,6 +56,11 @@ let
           );
         "the minimal edition has no local messaging" =
           c.resilience.edition != "minimal" || !c.resilience.comms.enable;
+        # ADR 0023: the vm-update test key is public; no system trusts it.
+        "updates trust no test key" =
+          !(lib.any (
+            k: lib.hasInfix "snakeoil" k || k == (import ../vm/update-snakeoil-key.nix).public
+          ) c.resilience.updates.trustedKeys);
         # ADR 0021: the mesh exists only with local messaging, starts only
         # when someone at the console asks, and bat0 is never managed by
         # NetworkManager (no DHCP, no default route through the mesh).
@@ -123,7 +129,8 @@ let
         "installed systems have no autologin and keep root locked" =
           !c.resilience.localAccounts
           || (autologin == null && c.resilience.users == { } && root.hashedPassword == "!");
-        "the session shell listed in /etc/shells is installed" = lib.elem c.resilience.sessionPackage c.environment.systemPackages;
+        "the session shell listed in /etc/shells is installed" =
+          lib.elem c.resilience.sessionPackage c.environment.systemPackages;
         "the installer exists on live systems only" =
           !(c.resilience.installer.enable && c.resilience.localAccounts);
         # ADR 0013: packs are written by an unprivileged system account only.
@@ -132,14 +139,16 @@ let
         "gpg-agent keeps no passphrase in its cache" =
           c.programs.gnupg.agent.settings.default-cache-ttl or null == 0
           && c.programs.gnupg.agent.settings.max-cache-ttl or null == 0;
-        "no cryptography program runs with privileges" = !(lib.any (
-          n: lib.elem n [
-            "resilience-crypto"
-            "age"
-            "minisign"
-            "gpg"
-          ]
-        ) (lib.attrNames c.security.wrappers));
+        "no cryptography program runs with privileges" =
+          !(lib.any (
+            n:
+            lib.elem n [
+              "resilience-crypto"
+              "age"
+              "minisign"
+              "gpg"
+            ]
+          ) (lib.attrNames c.security.wrappers));
         "pack store is an unprivileged system account" =
           !c.resilience.packs.enable
           || (

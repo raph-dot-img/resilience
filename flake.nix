@@ -176,6 +176,7 @@
         vm-maps = vmTest ./tests/vm/maps.nix;
         vm-comms = vmTest ./tests/vm/comms.nix;
         vm-mesh = vmTest ./tests/vm/mesh.nix;
+        vm-update = vmTest ./tests/vm/update.nix;
         # The messaging program with the real Reticulum and LXMF, no VM.
         comms-messages = pkgs.callPackage ./nix/packages/resilience-messages/check.nix {
           inherit reticulum messages;
