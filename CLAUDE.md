@@ -379,9 +379,11 @@ Conventional commits (`feat:`, `fix:`, `security:`, `test:`, `docs:`,
 `chore:`, `refactor:`). Branches: `develop` is the development branch (work
 happens there, or on `feat/<topic>` branches created from `develop` and merged
 back into it); `main` only receives `develop` at tested milestones. Both are
-on `origin` (GitHub); push only when the user asks.
+on `origin` (GitHub). Push `develop` and `feat/<topic>` branches often,
+after each coherent commit (owner, 2026-11-18); merging into `main`,
+pushing `main` and pushing release tags only when the owner says so.
 Never commit ISOs, disk images, `result*` links, large archives, keys or
-secrets (see `.gitignore`). Never force-push, never push unless asked, never
+secrets (see `.gitignore`). Never force-push, never push `main` or tags unless asked, never
 run destructive git operations without explicit authorization.
 Commit trailers: `Co-Authored-By: Claude …` as instructed by the session.
 
@@ -534,7 +536,7 @@ media and backups (0008), clock (0009), Wi-Fi (0010), default generation
 files and manual pages (0014); Phase 4 guided cryptography (0015).
 See docs/TESTING.md for what has actually been executed and passed.
 
-Git state (2026-11-18): release **0.3.0** is `main`, tagged `v0.3.0`, pushed; `develop` holds 0.4.0 work (not pushed). Before: release **0.2.0** (Phases 2 to 6, local part) is `main` = `develop`, tagged `v0.2.0` (and `v0.1.0` on `3a3c629`), pushed; the 0.2.0 ISO boot-tested in QEMU. The installer (`feat/installer`) was merged into `develop` on 2026-11-18 after all 21 checks passed (not pushed); meant for 0.3.0. Earlier: `main` = `develop` at the Phase 6 milestone, merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
+Git state (2026-11-18): release **0.3.0** is `main`, tagged `v0.3.0`, pushed; `develop` holds 0.4.0 work (pushed). Before: release **0.2.0** (Phases 2 to 6, local part) is `main` = `develop`, tagged `v0.2.0` (and `v0.1.0` on `3a3c629`), pushed; the 0.2.0 ISO boot-tested in QEMU. The installer (`feat/installer`) was merged into `develop` on 2026-11-18 after all 21 checks passed (not pushed); meant for 0.3.0. Earlier: `main` = `develop` at the Phase 6 milestone, merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
 `feat/maps-overview`, `feat/comms` (Phase 6 slices 1 to 4, ADR 0018 and
 0019) and `feat/comms-files` (slices 5 and 6, ADR 0020) merged, on origin;
 both comms branches are fully merged (new Phase 6 work: a new
