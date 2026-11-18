@@ -446,8 +446,10 @@ needlessly. Watch `free -h` during VM tests.
 ## 14. Current implementation status (2026-11-18)
 
 **Now: release 0.4.0 (offline updates ADR 0023, licence notice ADR 0024,
-the owner's release key, `scripts/make-release.sh`) is being prepared on
-`develop`.** Release flow: version bump + CHANGELOG on `develop`, full
+the owner's release key, `scripts/make-release.sh`) is released
+(2026-11-18): `main` merged and pushed, tag `v0.4.0` on `82f3152`, release
+folder signed by the owner, ISO boot-tested (BIOS, UEFI); next work: ask
+the owner.** Release flow: version bump + CHANGELOG on `develop`, full
 test run, `make-release.sh --update-key NIXKEY --sign MINISIGNKEY V OUT` at
 tag `vV` (the owner signs in their own terminal; secret keys under
 `~/.resilience-keys`, later a VeraCrypt container), merge into `main`, tag
@@ -536,7 +538,7 @@ media and backups (0008), clock (0009), Wi-Fi (0010), default generation
 files and manual pages (0014); Phase 4 guided cryptography (0015).
 See docs/TESTING.md for what has actually been executed and passed.
 
-Git state (2026-11-18): release **0.3.0** is `main`, tagged `v0.3.0`, pushed; `develop` holds 0.4.0 work (pushed). Before: release **0.2.0** (Phases 2 to 6, local part) is `main` = `develop`, tagged `v0.2.0` (and `v0.1.0` on `3a3c629`), pushed; the 0.2.0 ISO boot-tested in QEMU. The installer (`feat/installer`) was merged into `develop` on 2026-11-18 after all 21 checks passed (not pushed); meant for 0.3.0. Earlier: `main` = `develop` at the Phase 6 milestone, merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
+Git state (2026-11-18): release **0.4.0** is `main` = `develop`, tag `v0.4.0`, pushed (0.3.0: tag `v0.3.0` on its merge commit). Before: release **0.2.0** (Phases 2 to 6, local part) is `main` = `develop`, tagged `v0.2.0` (and `v0.1.0` on `3a3c629`), pushed; the 0.2.0 ISO boot-tested in QEMU. The installer (`feat/installer`) was merged into `develop` on 2026-11-18 after all 21 checks passed (not pushed); meant for 0.3.0. Earlier: `main` = `develop` at the Phase 6 milestone, merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
 `feat/maps-overview`, `feat/comms` (Phase 6 slices 1 to 4, ADR 0018 and
 0019) and `feat/comms-files` (slices 5 and 6, ADR 0020) merged, on origin;
 both comms branches are fully merged (new Phase 6 work: a new
