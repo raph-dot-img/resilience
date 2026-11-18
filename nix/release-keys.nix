@@ -3,6 +3,6 @@
 # The secret key never enters this repository or any Nix store: the owner
 # keeps it offline and signs bundles with scripts/make-update-bundle.sh.
 #
-# Empty: no release key has been made yet, so installed systems built from
-# this tree cannot take updates (the TUI does not offer them).
-[ ]
+# resilience-release: made by the owner on 2026-11-18. Systems built before
+# this key was added (0.3.0 and earlier) cannot take updates.
+[ "resilience-release:XNN+4i+Lxe69mUB0KLjui4U+gGNs5qhm2Q7v1yFR4R4=" ]
