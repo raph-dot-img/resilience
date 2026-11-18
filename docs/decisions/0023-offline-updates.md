@@ -80,7 +80,11 @@ Established mechanisms available offline on every Resilience system:
    match its hash and bit 2 when a path lacks a trusted signature;
    `nix copy` from a cache signed by another key fails with "lacks a
    signature by a trusted key", and from a tampered NAR with a hash
-   mismatch, registering nothing in either case.
+   mismatch, registering nothing in either case. `nix store verify --all` on an
+   empty folder succeeds (nothing to check), so the check also requires
+   the manifest named by the pointer to be in the cache (`nix path-info
+   --store`). Paths with spaces (stick labels) work percent-encoded in
+   the `file://` URL.
 
 5. **Applying: one new helper operation, `resilience-admin apply-update
    DIR`** (polkit `org.resilience.admin.apply-update`, auth_admin, like

@@ -183,7 +183,7 @@ in
          █▀█ █▀▀ █▀ █ █   █ █▀▀ █▄ █ █▀▀ █▀▀
          █▀▄ ██▄ ▄█ █ █▄▄ █ ██▄ █ ▀█ █▄▄ ██▄  OS
         \e[0m
-         Resilience OS ${config.resilience.package.version} (${config.resilience.edition}) - \l'';
+         Resilience OS ${config.resilience.version} (${config.resilience.edition}) - \l'';
       helpLine = lib.mkForce ''
         Log in to start the Resilience interface. Alt+F1 ... Alt+F6 switch consoles.
       '';

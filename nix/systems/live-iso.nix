@@ -11,7 +11,7 @@
 }:
 
 let
-  version = config.resilience.package.version;
+  version = config.resilience.version;
 in
 {
   imports = [

@@ -54,6 +54,8 @@ pub struct SystemConfig {
     pub tools: ToolPaths,
     /// Console keyboard layouts (default and choices).
     pub keyboard: crate::keyboard::KeyboardConfig,
+    /// Offline updates (ADR 0023): only on installed systems.
+    pub updates: Option<crate::update::UpdateSettings>,
 }
 
 /// Programs used for removable media and backups. Absolute store paths on
@@ -155,6 +157,7 @@ impl Default for SystemConfig {
             probe: ProbeSettings::default(),
             tools: ToolPaths::default(),
             keyboard: crate::keyboard::KeyboardConfig::default(),
+            updates: None,
         }
     }
 }

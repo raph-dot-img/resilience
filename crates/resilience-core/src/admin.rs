@@ -115,6 +115,9 @@ pub struct AdminConfig {
     /// systemctl, for `set-mesh` (ADR 0021).
     #[serde(default)]
     pub systemctl: Option<PathBuf>,
+    /// Offline updates (ADR 0023): `apply-update`, installed systems only.
+    #[serde(default)]
+    pub updates: Option<crate::update::UpdateSettings>,
     /// The mesh unit `set-mesh` starts and stops; absent: no mesh here.
     #[serde(default)]
     pub mesh_unit: Option<String>,
@@ -669,6 +672,7 @@ mod tests {
             loadkeys: None,
             keymaps: Vec::new(),
             systemctl: None,
+            updates: None,
             mesh_unit: None,
             local_accounts_file: None,
             users: users

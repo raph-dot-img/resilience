@@ -14,6 +14,7 @@
     ./comms.nix
     ./mesh.nix
     ./installer.nix
+    ./updates.nix
     ./boot.nix
     ./power.nix
     ./applications

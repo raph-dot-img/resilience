@@ -77,6 +77,19 @@
         };
       };
 
+      # The manifest of an offline update bundle of an edition (ADR 0023):
+      # the new toplevel of each of its installed variants.
+      updateManifest =
+        edition:
+        let
+          names = lib.filter (n: lib.hasPrefix "installed-${edition}-" n) (lib.attrNames installedSystems);
+        in
+        pkgs.callPackage ./nix/lib/update-manifest.nix { } {
+          inherit edition;
+          version = installedSystems.${lib.head names}.config.resilience.version;
+          systems = lib.genAttrs names (n: installedSystems.${n}.config.system.build.toplevel);
+        };
+
       vmTest = file: pkgs.testers.runNixOSTest (import file { inherit self; });
 
       # Map packs (ADR 0016 §2), for build machines: not in any system.
@@ -124,6 +137,10 @@
         iso = self.nixosConfigurations.live-standard.config.system.build.isoImage;
         iso-minimal = self.nixosConfigurations.live-minimal.config.system.build.isoImage;
         vm = self.nixosConfigurations.dev-vm.config.system.build.vm;
+        # Offline update manifests (ADR 0023); bundles are made and signed
+        # with scripts/make-update-bundle.sh.
+        update-manifest-standard = updateManifest "standard";
+        update-manifest-minimal = updateManifest "minimal";
       };
 
       # `nix build .#mapPacks.<id>` -> result/map-osm-<id>_<YYYY-MM>.mbtiles.

@@ -57,6 +57,10 @@ let
     // lib.optionalAttrs cfg.mesh.enable {
       mesh_unit = "resilience-mesh.service";
     }
+    // lib.optionalAttrs (cfg.updates.settings != null) {
+      # ADR 0023: `apply-update`.
+      updates = cfg.updates.settings;
+    }
     // lib.optionalAttrs (cfg.interface.autologinUser != null) {
       autologin_user = cfg.interface.autologinUser;
     }
@@ -103,6 +107,19 @@ let
         <annotate key="org.freedesktop.policykit.exec.path">${helper}</annotate>
         <annotate key="org.freedesktop.policykit.exec.argv1">set-default-generation</annotate>
       </action>
+      ${lib.optionalString (cfg.updates.settings != null) ''
+        <action id="org.resilience.admin.apply-update">
+          <description>Install a Resilience update from removable media</description>
+          <message>Installing an update requires an administrator password</message>
+          <defaults>
+            <allow_any>auth_admin</allow_any>
+            <allow_inactive>auth_admin</allow_inactive>
+            <allow_active>auth_admin</allow_active>
+          </defaults>
+          <annotate key="org.freedesktop.policykit.exec.path">${helper}</annotate>
+          <annotate key="org.freedesktop.policykit.exec.argv1">apply-update</annotate>
+        </action>
+      ''}
       <action id="org.resilience.admin.set-keymap">
         <description>Load a console keyboard layout of this system</description>
         <message>Loading a keyboard layout is allowed to the person at the console</message>
