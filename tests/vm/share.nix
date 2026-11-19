@@ -3,6 +3,8 @@
 # read-only, only GET/HEAD, only catalog packs, only world-readable
 # files; kiwix-serve behind it; the other interface sees nothing; off
 # closes the port; the NetworkManager connection going down stops it.
+# Discovery (slice 3): near's account hears the server's Reticulum
+# announce, with the addresses of the shared interface only.
 #
 #   near ── vlan 1 ── server ── vlan 2 ── far
 { self }:
@@ -60,6 +62,8 @@ in
       resilience.interface.autologinUser = "alice";
       users.users.carol.initialPassword = "carol-pw";
       resilience.share.enable = true;
+      # Discovery (ADR 0025 §4) goes through local messaging.
+      resilience.comms.enable = true;
       # The server never hashes: only the names in the catalog matter.
       resilience.packs.catalog = lib.mkForce [
         {
@@ -76,7 +80,23 @@ in
         }
       ];
     };
-  nodes.near = client;
+  # A Resilience machine whose account hears the server's announce.
+  nodes.near =
+    { lib, pkgs, ... }:
+    {
+      imports = [
+        self.nixosModules.default
+        ../../nix/systems/common.nix
+        ../../nix/profiles/minimal.nix
+      ];
+      virtualisation.memorySize = 1024;
+      virtualisation.cores = 1;
+      users.users.root.hashedPassword = lib.mkForce null;
+      resilience.users.alice.mode = "ultra-stable";
+      resilience.interface.autologinUser = "alice";
+      resilience.comms.enable = true;
+      environment.systemPackages = [ pkgs.curl ];
+    };
   nodes.far =
     { lib, ... }:
     {
@@ -159,6 +179,23 @@ in
         users = server.succeed("ps -o user= -C nginx").split()
         assert users and "root" not in users, users
 
+    with subtest("discovery: near's account hears the server, with eth1's addresses"):
+        near.wait_for_unit("resilience-reticulum.service")
+        server.wait_for_unit("resilience-share-announce@eth1.service")
+        shares = "/home/alice/.local/share/resilience/messages/shares.json"
+        near.wait_until_succeeds(f"grep -q 'Test shelter' {shares}", timeout=180)
+        import json
+        heard = json.loads(near.succeed(f"cat {shares}"))
+        assert len(heard) == 1, heard
+        entry = list(heard.values())[0]
+        assert entry["services"] == ["packs", "library", "files", "pages"], entry
+        assert entry["port"] == 80, entry
+        assert ip1 in entry["addresses"], entry
+        assert ip2 not in entry["addresses"], entry
+        assert all(a == ip1 or a.startswith("fe80:") for a in entry["addresses"]), entry
+        # The announcer runs as a dynamic user.
+        server.succeed("systemctl show -p DynamicUser --value resilience-share-announce@eth1.service | grep -qx yes")
+
     with subtest("packs: catalog files only, the exact bytes"):
         index = near.succeed(f"curl -sf http://{ip1}/")
         assert ZIM in index and "notlisted" not in index, index
@@ -205,6 +242,7 @@ in
         server.fail("systemctl is-active resilience-share@eth1.service")
         server.fail("systemctl is-active resilience-share-web@eth1.service")
         server.fail("systemctl is-active resilience-share-library@eth1.service")
+        server.fail("systemctl is-active resilience-share-announce@eth1.service")
         server.fail("test -e /run/resilience-share/state.toml")
         assert server.succeed("iptables -S resilience-share").strip() == "-N resilience-share"
         assert get(near, f"http://{ip1}/") == "000", get(near, f"http://{ip1}/")

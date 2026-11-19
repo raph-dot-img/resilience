@@ -53,13 +53,32 @@ Files (ADR 0020): one per message, at most 900 KB, in LXMF's
 FIELD_FILE_ATTACHMENTS. Received files are kept under the message id,
 never under the name that came with them, within 64 MB per account.
 
+Community network (ADR 0025): a machine that shares resources announces
+itself with the aspect `resilience.share`; each account's program keeps
+what it heard, checked and bounded, in:
+
+    shares.json     written here: {DESTINATION: {"name", "services",
+                    "port", "addresses", "heard", "identity"}}, at most 64
+                    machines heard in the last hour. Names and addresses
+                    are claims.
+
+  resilience-messages share --dir DIR --state FILE   the announcer of a
+      machine that shares: announces the name, services, port and
+      addresses of /run/resilience-share/state.toml while sharing is on.
+      Run by the system as an unprivileged user, only while sharing.
+
 Usage: resilience-messages run [--dir DIR] [--client-config FILE] [--local-store FILE]
        resilience-messages node --dir DIR [--client-config FILE] [--address-file FILE] [--limit-mb N]
+       resilience-messages share --dir DIR [--client-config FILE] [--state FILE]
 """
 
+import fcntl
+import ipaddress
 import json
 import os
 import re
+import socket
+import struct
 import shutil
 import signal
 import stat
@@ -123,6 +142,25 @@ SAVE_KEYS_EVERY = 600
 # network comes or goes, ADR 0021), so that the others hear us at once.
 ANNOUNCE_AFTER_START = (30, 90)
 REANNOUNCE_AFTER_RESTART = (10, 30, 90)
+# Community network (ADR 0025).
+SHARE_ASPECTS = ("resilience", "share")
+SHARE_FORMAT = 1
+SHARE_SERVICES = ("packs", "library", "files", "pages")
+SHARE_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9 -]{0,30}[A-Za-z0-9])?")
+SHARE_INTERFACE = re.compile(r"[A-Za-z][A-Za-z0-9_.]{0,14}")
+SHARE_STATE = "/run/resilience-share/state.toml"
+MAX_SHARE_APP_DATA = 400
+MAX_SHARE_ADDRESSES = 8
+MAX_SHARES = 64
+SHARE_HEARD_FOR = 3600
+SHARE_ANNOUNCE_EVERY = 600
+SHARE_CHECK_EVERY = 10
+# Only addresses of a local network are ever recorded or announced: a
+# hostile announce cannot point anyone at the Internet.
+LOCAL_NETWORKS = [
+    ipaddress.ip_network(n)
+    for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "fe80::/10", "fc00::/7")
+]
 
 
 def write_json(path, value, mode=0o600):
@@ -365,6 +403,100 @@ class Store:
             return fallback
 
 
+def local_address(text):
+    """`text` if it is an IP address of a local network (ADR 0025 §4)."""
+    if not isinstance(text, str) or len(text) > 45:
+        return None
+    try:
+        a = ipaddress.ip_address(text)
+    except ValueError:
+        return None
+    if any(a in n for n in LOCAL_NETWORKS):
+        return a.compressed
+    return None
+
+
+def share_app_data(name, services, port, addresses):
+    import RNS.vendor.umsgpack as msgpack
+
+    return msgpack.packb([SHARE_FORMAT, name, list(services), port, list(addresses)])
+
+
+def parse_share_app_data(data):
+    """The announce of a sharing machine, checked; None if anything is off."""
+    if not isinstance(data, (bytes, bytearray)) or not 0 < len(data) <= MAX_SHARE_APP_DATA:
+        return None
+    try:
+        import RNS.vendor.umsgpack as msgpack
+
+        v = msgpack.unpackb(bytes(data))
+    except Exception:
+        return None
+    if not isinstance(v, list) or len(v) != 5 or v[0] != SHARE_FORMAT:
+        return None
+    _, name, services, port, addresses = v
+    if not isinstance(name, str) or not SHARE_NAME.fullmatch(name):
+        return None
+    if not isinstance(services, list) or not services or len(services) > len(SHARE_SERVICES):
+        return None
+    if any(s not in SHARE_SERVICES for s in services) or len(set(services)) != len(services):
+        return None
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        return None
+    if not isinstance(addresses, list) or not 0 < len(addresses) <= MAX_SHARE_ADDRESSES:
+        return None
+    checked = [local_address(a) for a in addresses]
+    if any(a is None for a in checked):
+        return None
+    return {"name": name, "services": services, "port": port, "addresses": checked}
+
+
+def interface_addresses(interface, if_inet6="/proc/net/if_inet6"):
+    """The local-network addresses of `interface`: its IPv4 address (if
+    any) and its IPv6 link-local and unique-local addresses."""
+    out = []
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            req = struct.pack("256s", interface.encode("ascii")[:15])
+            # SIOCGIFADDR
+            got = fcntl.ioctl(s.fileno(), 0x8915, req)
+            out.append(socket.inet_ntoa(got[20:24]))
+    except OSError:
+        pass
+    try:
+        with open(if_inet6, encoding="ascii") as f:
+            lines = f.read(1 << 16).splitlines()
+    except (OSError, UnicodeDecodeError):
+        lines = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) == 6 and parts[5] == interface and len(parts[0]) == 32:
+            try:
+                out.append(str(ipaddress.IPv6Address(bytes.fromhex(parts[0]))))
+            except ValueError:
+                continue
+    return [a for a in (local_address(x) for x in out) if a][:MAX_SHARE_ADDRESSES]
+
+
+def read_share_state(path):
+    """The sharing state written by the share unit, checked, or None."""
+    import tomllib
+
+    try:
+        with open(path, "rb") as f:
+            data = tomllib.loads(f.read(4096).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None
+    name, services, interface = data.get("name"), data.get("services"), data.get("interface")
+    if not isinstance(name, str) or not SHARE_NAME.fullmatch(name):
+        return None
+    if not isinstance(interface, str) or not SHARE_INTERFACE.fullmatch(interface):
+        return None
+    if not isinstance(services, list) or not services or any(s not in SHARE_SERVICES for s in services):
+        return None
+    return {"name": name, "services": services, "interface": interface}
+
+
 def read_address(path):
     """A 32-hex-digit address from a small file, or None."""
     try:
@@ -487,6 +619,43 @@ class Stores:
         return fresh[0][0]
 
 
+class Shares:
+    """Machines that share resources on the network (ADR 0025), as heard."""
+
+    aspect_filter = "resilience.share"
+    receive_path_responses = False
+
+    def __init__(self, path):
+        self.path = path
+        self.lock = threading.Lock()
+        heard = read_json(path, 1 << 20)
+        self.heard = heard if isinstance(heard, dict) else {}
+        self.dirty = False
+
+    def received_announce(self, destination_hash, announced_identity, app_data):
+        info = parse_share_app_data(app_data)
+        if info is None:
+            return
+        info["heard"] = int(time.time())
+        info["identity"] = announced_identity.hash.hex() if announced_identity else ""
+        key = destination_hash.hex()
+        with self.lock:
+            if key not in self.heard and len(self.heard) >= MAX_SHARES:
+                del self.heard[min(self.heard, key=lambda k: self.heard[k].get("heard", 0))]
+            self.heard[key] = info
+            self.dirty = True
+
+    def save(self, now):
+        with self.lock:
+            old = [k for k, v in self.heard.items()
+                   if not isinstance(v, dict) or now - v.get("heard", 0) > SHARE_HEARD_FOR]
+            for k in old:
+                del self.heard[k]
+            if self.dirty or old:
+                write_json(self.path, self.heard)
+                self.dirty = False
+
+
 class Messenger:
     def __init__(self, store, client_config, local_store=LOCAL_STORE):
         import LXMF
@@ -535,6 +704,10 @@ class Messenger:
         self.local_store_file = local_store
         self.stores = Stores(LXMF)
         RNS.Transport.register_announce_handler(self.stores)
+        # Community network (ADR 0025).
+        self.shares = Shares(store.path("shares.json"))
+        RNS.Transport.register_announce_handler(self.shares)
+        self.next_shares_save = 0.0
         self.store_in_use = None
         self.store_is_local = False
         self.to_store = {}
@@ -866,6 +1039,9 @@ class Messenger:
                 self.peers_dirty = False
             self.prune()
         self.collect(now)
+        if now >= self.next_shares_save:
+            self.shares.save(now)
+            self.next_shares_save = now + 5
         stamp = config_stamp(self.client_config)
         if stamp is not None and stamp != self.instance_stamp:
             self.instance_stamp = stamp
@@ -991,18 +1167,77 @@ class Node:
                 last_saved = now
 
 
+class Beacon:
+    """The announcer of a machine that shares (ADR 0025 §4).
+
+    Its destination accepts no links and proves nothing: it exists only to
+    be announced, with the name, services, port and addresses of the
+    sharing state. Nothing is announced while sharing is off.
+    """
+
+    def __init__(self, root, client_config, state_file):
+        import RNS
+
+        self.RNS = RNS
+        self.router = None
+        self.stop = threading.Event()
+        os.makedirs(root, mode=0o700, exist_ok=True)
+        attach(RNS, os.path.join(root, "reticulum"), client_config)
+        self.client_config = client_config
+        self.state_file = state_file
+        identity = load_identity(RNS, os.path.join(root, "identity"))
+        self.dest = RNS.Destination(identity, RNS.Destination.IN, RNS.Destination.SINGLE, *SHARE_ASPECTS)
+        self.dest.set_proof_strategy(RNS.Destination.PROVE_NONE)
+        try:
+            self.dest.accepts_links(False)
+        except Exception:
+            pass
+        print(f"announcing sharing as {self.dest.hash.hex()}", flush=True)
+
+    def app_data(self):
+        state = read_share_state(self.state_file)
+        if state is None:
+            return None
+        addresses = interface_addresses(state["interface"])
+        if not addresses:
+            return None
+        data = share_app_data(state["name"], state["services"], 80, addresses)
+        return data if len(data) <= MAX_SHARE_APP_DATA else None
+
+    def run(self):
+        last = 0.0
+        sent = None
+        reannounce = [time.time() + d for d in ANNOUNCE_AFTER_START]
+        stamp = config_stamp(self.client_config)
+        while not self.stop.wait(SHARE_CHECK_EVERY if last else 1):
+            now = time.time()
+            if config_stamp(self.client_config) != stamp:
+                stamp = config_stamp(self.client_config)
+                reannounce = [now + d for d in REANNOUNCE_AFTER_RESTART]
+            data = self.app_data()
+            if data is None:
+                continue
+            due = now - last > SHARE_ANNOUNCE_EVERY or data != sent
+            if reannounce and now >= reannounce[0]:
+                reannounce.pop(0)
+                due = True
+            if due:
+                self.dest.announce(app_data=data)
+                last, sent = now, data
+
+
 def default_dir():
     base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
     return os.path.join(base, "resilience", "messages")
 
 
 def usage():
-    sys.stderr.write("\n".join(__doc__.strip().splitlines()[-2:]) + "\n")
+    sys.stderr.write("\n".join(__doc__.strip().splitlines()[-3:]) + "\n")
     return 64
 
 
 def main(argv):
-    if len(argv) < 2 or argv[1] not in ("run", "node"):
+    if len(argv) < 2 or argv[1] not in ("run", "node", "share"):
         return usage()
     mode = argv[1]
     opts = {
@@ -1011,9 +1246,11 @@ def main(argv):
         "--local-store": LOCAL_STORE,
         "--address-file": None,
         "--limit-mb": str(NODE_STORAGE_MB),
+        "--state": SHARE_STATE,
     }
     allowed = {"run": ("--dir", "--client-config", "--local-store"),
-               "node": ("--dir", "--client-config", "--address-file", "--limit-mb")}[mode]
+               "node": ("--dir", "--client-config", "--address-file", "--limit-mb"),
+               "share": ("--dir", "--client-config", "--state")}[mode]
     args = argv[2:]
     while args:
         if args[0] in allowed and len(args) > 1:
@@ -1040,12 +1277,18 @@ def main(argv):
             sys.stderr.write("--limit-mb must be a number of megabytes from 1 to 100000\n")
             return 64
         worker = Node(opts["--dir"], client, opts["--address-file"], limit)
+    elif mode == "share":
+        worker = Beacon(opts["--dir"], client, opts["--state"])
     else:
         worker = Messenger(Store(opts["--dir"]), client, opts["--local-store"])
     # After LXMF's own handlers: stop cleanly, then let LXMF save its state.
     signal.signal(signal.SIGTERM, lambda *_: worker.stop.set())
     signal.signal(signal.SIGINT, lambda *_: worker.stop.set())
     worker.run()
+    if worker.router is None:
+        save_keys(worker.RNS)
+        sys.stdout.flush()
+        os._exit(0)
     shut_down(worker.RNS, worker.router)
 
 

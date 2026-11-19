@@ -28,6 +28,7 @@ let
   inherit (lib) mkOption types;
   cfg = config.resilience.share;
   packsCfg = config.resilience.packs;
+  comms = config.resilience.comms;
   stateDir = "/run/resilience-share";
   sharedDir = "/var/lib/resilience/shared";
   libraryPort = 81;
@@ -458,7 +459,8 @@ in
       wants = [
         "resilience-share-web@%i.service"
         "resilience-share-library@%i.service"
-      ];
+      ]
+      ++ lib.optional comms.enable "resilience-share-announce@%i.service";
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
@@ -493,6 +495,60 @@ in
         # kiwix-serve checks its address with getifaddrs (netlink).
         RestrictAddressFamilies = hardening.RestrictAddressFamilies ++ [ "AF_NETLINK" ];
         MemoryMax = "512M";
+      };
+    };
+
+    # Discovery (ADR 0025 §4): while sharing, announce it on the machine's
+    # Reticulum instance. Talks only to the instance's local socket; the
+    # IPv4 socket is for asking the kernel the interface's address
+    # (SIOCGIFADDR), and IPAddressDeny keeps it off the network.
+    systemd.services."resilience-share-announce@" = lib.mkIf comms.enable {
+      description = "Announces sharing on %i to nearby machines (Reticulum, ADR 0025)";
+      after = [
+        "resilience-share@%i.service"
+        "resilience-reticulum.service"
+      ];
+      bindsTo = [ "resilience-share@%i.service" ];
+      serviceConfig = {
+        ExecStart = lib.concatStringsSep " " [
+          "${comms.messagesPackage}/bin/resilience-messages share"
+          "--dir /var/lib/resilience-share-announce"
+          "--client-config ${comms.clientConfig}"
+          "--state ${stateDir}/state.toml"
+        ];
+        DynamicUser = true;
+        StateDirectory = "resilience-share-announce";
+        StateDirectoryMode = "0700";
+        UMask = "0077";
+        NoNewPrivileges = true;
+        CapabilityBoundingSet = "";
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+        RestrictNamespaces = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        LockPersonality = true;
+        SystemCallArchitectures = "native";
+        SystemCallFilter = [
+          "@system-service"
+          "~@privileged"
+        ];
+        RestrictAddressFamilies = [
+          "AF_UNIX"
+          "AF_INET"
+        ];
+        IPAddressDeny = "any";
+        MemoryMax = "128M";
+        Restart = "on-failure";
+        RestartSec = 10;
       };
     };
 

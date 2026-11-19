@@ -359,6 +359,13 @@ second radio in a network namespace playing the other computer.
 | Wi-Fi (delta): `set-mesh on` with no device configured takes the first card (wlan0): type IBSS, joined cell `02:52:45:53:4d:31`; a BATMAN-adv neighbour (the other radio); ping6 to it over `bat0` | PASS (2026-11-17) |
 | Wi-Fi: `set-mesh off` → no `bat0`, the card back to type managed and to its NetworkManager state | PASS (2026-11-17) |
 
+### Check: `comms-messages`, community network part (ADR 0025 slice 3)
+
+| Scenario | Result |
+|---|---|
+| Parsers: local addresses only (public, loopback, documentation, CGNAT refused), 17 malformed announces refused (bad name, service, duplicate, port 0 or boolean, no or 9 addresses, a public address, other format version, a map, bad msgpack, empty, over 400 bytes), the sharing state file checked, machines older than an hour dropped | PASS (2026-11-19) |
+| Without a sharing state the announcer announces nothing; with one, Bob's program records the machine with its name, services, port, addresses and identity (0600); announces with a public address or markup in the name are not recorded | PASS (2026-11-19) |
+
 ### VM: `vm-share` — community network, server side (ADR 0025 slice 2), one server between two networks
 
 near (vlan 1) ── server (vlans 1 and 2, eth1/eth2) ── far (vlan 2). The
@@ -379,6 +386,7 @@ in the catalog, and files in the shared folder: public (0644), private
 | `set-share off`: the three units inactive, `state.toml` gone, the `resilience-share` chain empty, no answer on eth1 | PASS (2026-11-19) |
 | Only `packs` shared: `/library/` and `/files/` give 404, no library unit; sharing on eth2 then replaces eth1 (eth1 no longer answers) | PASS (2026-11-19) |
 | `nmcli device disconnect eth2`: the dispatcher stops sharing, state gone, chain empty | PASS (2026-11-19) |
+| Discovery (slice 3; server and near with local messaging): near's account records the server in `shares.json` with its name, the four services, port 80 and only eth1's addresses (IPv4 and link-local), not eth2's; the announcer runs as a dynamic user and stops with sharing | PASS (2026-11-19) |
 | The helper reports a failing library unit (kiwix-serve exits after the start job) | NOT TESTED (the helper only sees systemctl's start job; the unit restarts and is visible in the journal) |
 | Real Wi-Fi cards (IBSS on iwlwifi and others), radio range, several hops over the air, battery use | NOT TESTED |
 

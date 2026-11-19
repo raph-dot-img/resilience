@@ -301,6 +301,109 @@ impl ShareState {
     }
 }
 
+/// Machines heard sharing on the network are kept this long (seconds).
+pub const HEARD_FOR: u64 = 3600;
+/// At most this many machines are shown.
+pub const MAX_HEARD: usize = 64;
+
+/// An IP address of a local network (ADR 0025 §4): IPv4 private and
+/// link-local ranges, IPv6 link-local and unique-local. Anything else is
+/// refused, so this feature can never reach the Internet.
+pub fn is_local_address(a: &std::net::IpAddr) -> bool {
+    match a {
+        std::net::IpAddr::V4(v) => v.is_private() || v.is_link_local(),
+        std::net::IpAddr::V6(v) => {
+            let first = v.segments()[0];
+            (first & 0xffc0) == 0xfe80 || (first & 0xfe00) == 0xfc00
+        }
+    }
+}
+
+/// A machine heard sharing, from the account's `shares.json` (written by
+/// its messaging program). Everything in it is a claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeardShare {
+    /// Its Reticulum destination (32 hexadecimal digits).
+    pub destination: String,
+    pub name: String,
+    pub services: Vec<Service>,
+    pub port: u16,
+    pub addresses: Vec<std::net::IpAddr>,
+    /// When it was last heard (Unix seconds).
+    pub heard: u64,
+    /// The announcing identity (32 hexadecimal digits), to tell machines
+    /// with the same name apart.
+    pub identity: String,
+}
+
+fn hex32(s: &str) -> bool {
+    s.len() == 32 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Parse `shares.json`, keeping only well-formed entries heard in the last
+/// hour with local addresses only, most recently heard first.
+pub fn parse_heard(text: &str, now: u64) -> Vec<HeardShare> {
+    #[derive(Deserialize)]
+    struct Raw {
+        name: String,
+        services: Vec<String>,
+        port: u16,
+        addresses: Vec<String>,
+        heard: u64,
+        #[serde(default)]
+        identity: String,
+    }
+    let Ok(map) =
+        serde_json::from_str::<std::collections::BTreeMap<String, serde_json::Value>>(text)
+    else {
+        return Vec::new();
+    };
+    let mut out: Vec<HeardShare> = map
+        .into_iter()
+        .filter(|(k, _)| hex32(k))
+        .filter_map(|(k, v)| {
+            let r: Raw = serde_json::from_value(v).ok()?;
+            if !valid_name(&r.name) || r.port == 0 || r.heard > now + 60 {
+                return None;
+            }
+            if now.saturating_sub(r.heard) > HEARD_FOR {
+                return None;
+            }
+            let mut services = Vec::new();
+            for s in &r.services {
+                let v = Service::parse(s)?;
+                if services.contains(&v) {
+                    return None;
+                }
+                services.push(v);
+            }
+            if services.is_empty() || r.addresses.is_empty() || r.addresses.len() > 8 {
+                return None;
+            }
+            let addresses = r
+                .addresses
+                .iter()
+                .map(|a| a.parse::<std::net::IpAddr>().ok().filter(is_local_address))
+                .collect::<Option<Vec<_>>>()?;
+            if !(r.identity.is_empty() || hex32(&r.identity)) {
+                return None;
+            }
+            Some(HeardShare {
+                destination: k,
+                name: r.name,
+                services,
+                port: r.port,
+                addresses,
+                heard: r.heard,
+                identity: r.identity,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| b.heard.cmp(&a.heard).then(a.name.cmp(&b.name)));
+    out.truncate(MAX_HEARD);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -526,5 +629,64 @@ mod tests {
         assert_eq!(s.services, ["packs"]);
         assert!(ShareState::parse("interface = \"lo\"\nname = \"x\"\nservices = []\n").is_none());
         assert!(ShareState::parse("garbage").is_none());
+    }
+
+    #[test]
+    fn local_addresses_only() {
+        for ok in [
+            "10.1.2.3",
+            "172.16.0.1",
+            "172.31.255.255",
+            "192.168.1.5",
+            "169.254.1.1",
+            "fe80::1",
+            "fd12::3",
+            "fc00::1",
+        ] {
+            assert!(is_local_address(&ok.parse().expect(ok)), "{ok}");
+        }
+        for bad in [
+            "8.8.8.8",
+            "127.0.0.1",
+            "172.32.0.1",
+            "100.64.0.1",
+            "0.0.0.0",
+            "255.255.255.255",
+            "::1",
+            "2001:db8::1",
+            "::ffff:192.168.1.5",
+            "ff02::1",
+        ] {
+            assert!(!is_local_address(&bad.parse().expect(bad)), "{bad}");
+        }
+    }
+
+    #[test]
+    fn heard_machines() {
+        let d1 = "0123456789abcdef0123456789abcdef";
+        let d2 = "fedcba9876543210fedcba9876543210";
+        let text = format!(
+            r#"{{
+              "{d1}": {{"name": "School library", "services": ["packs", "library"], "port": 80,
+                        "addresses": ["192.168.1.5", "fe80::1"], "heard": 4000, "identity": "{d2}"}},
+              "{d2}": {{"name": "Town hall", "services": ["pages"], "port": 80,
+                        "addresses": ["10.0.0.2"], "heard": 4500}},
+              "badkey": {{"name": "x", "services": ["packs"], "port": 80, "addresses": ["10.0.0.1"], "heard": 4500}},
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {{"name": "Free", "services": ["packs"], "port": 80, "addresses": ["8.8.8.8"], "heard": 4500}},
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {{"name": "<b>", "services": ["packs"], "port": 80, "addresses": ["10.0.0.1"], "heard": 4500}},
+              "cccccccccccccccccccccccccccccccc": {{"name": "Old", "services": ["packs"], "port": 80, "addresses": ["10.0.0.1"], "heard": 1}},
+              "dddddddddddddddddddddddddddddddd": {{"name": "Shell", "services": ["shell"], "port": 80, "addresses": ["10.0.0.1"], "heard": 4500}},
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {{"name": "Twice", "services": ["packs", "packs"], "port": 80, "addresses": ["10.0.0.1"], "heard": 4500}},
+              "ffffffffffffffffffffffffffffffff": {{"name": "Future", "services": ["packs"], "port": 80, "addresses": ["10.0.0.1"], "heard": 99999}}
+            }}"#
+        );
+        let got = parse_heard(&text, 5000);
+        let names: Vec<&str> = got.iter().map(|h| h.name.as_str()).collect();
+        assert_eq!(names, ["Town hall", "School library"]);
+        assert_eq!(got[1].services, [Service::Packs, Service::Library]);
+        assert_eq!(got[1].addresses.len(), 2);
+        assert_eq!(got[1].identity, d2);
+        assert!(parse_heard("garbage", 0).is_empty());
+        assert!(parse_heard("[]", 0).is_empty());
     }
 }

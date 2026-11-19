@@ -80,7 +80,10 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            /run/resilience-share, state.toml), resilience-share-web@IF (nginx,
    │                            DynamicUser, GET/HEAD), resilience-share-library@IF (kiwix-serve
    │                            127.0.0.1:81); NM dispatcher stops it when IF's connection changes;
-   │                            shared folders /var/lib/resilience/shared/{files,pages} root:wheel 2775
+   │                            shared folders /var/lib/resilience/shared/{files,pages} root:wheel 2775;
+   │                            with comms: resilience-share-announce@IF (`resilience-messages share`,
+   │                            DynamicUser, IPAddressDeny=any) announces aspect resilience.share;
+   │                            each account's program writes heard machines to shares.json
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
    ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
    ├─ packages: resilience, resilience-session, resilience-handbook, resilience-world-map, iso, iso-minimal, vm
@@ -460,7 +463,10 @@ the owner's release key, `scripts/make-release.sh`) is released
 folder signed by the owner, ISO boot-tested (BIOS, UEFI).** **Next (owner's
 choice, 2026-11-19): Phase 9 community network on `feat/community-network`;
 ADR 0025 accepted by the owner (slice 1); slice 2 (server side: share.nix,
-`set-share`, core `share.rs`, `vm-share`) in progress.** Release flow: version bump + CHANGELOG on `develop`, full
+`set-share`, core `share.rs`, `vm-share`) and slice 3 (discovery:
+`resilience-messages share` beacon, `shares.json`, `parse_heard`) done;
+next: slice 4 (joining: `--from-peer`, `open-remote` + relay, TUI
+Community network screens).** Release flow: version bump + CHANGELOG on `develop`, full
 test run, `make-release.sh --update-key NIXKEY --sign MINISIGNKEY V OUT` at
 tag `vV` (the owner signs in their own terminal; secret keys under
 `~/.resilience-keys`, later a VeraCrypt container), merge into `main`, tag
