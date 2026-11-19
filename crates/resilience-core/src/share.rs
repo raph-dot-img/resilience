@@ -404,6 +404,155 @@ pub fn parse_heard(text: &str, now: u64) -> Vec<HeardShare> {
     out
 }
 
+/// A machine to fetch from (ADR 0025 §5): a local address, the interface
+/// for an IPv6 link-local one, and the port. Written `ADDRESS`,
+/// `ADDRESS:PORT`, `fe80::1%eth1` or `[fe80::1%eth1]:PORT` (port 80 when
+/// absent).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Peer {
+    pub address: std::net::IpAddr,
+    /// Required for (and only for) an IPv6 link-local address.
+    pub interface: Option<String>,
+    pub port: u16,
+}
+
+impl Peer {
+    pub fn parse(s: &str) -> Option<Peer> {
+        use std::net::IpAddr;
+        if s.len() > 64
+            || s.bytes()
+                .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
+        {
+            return None;
+        }
+        // [v6%if]:port | [v6%if] | v4:port | v4 | v6%if | v6
+        let (host, port) = if let Some(rest) = s.strip_prefix('[') {
+            let (h, after) = rest.split_once(']')?;
+            let port = match after {
+                "" => 80,
+                p => p.strip_prefix(':')?.parse().ok()?,
+            };
+            (h, port)
+        } else if s.matches(':').count() == 1 {
+            let (h, p) = s.split_once(':')?;
+            (h, p.parse().ok()?)
+        } else {
+            (s, 80)
+        };
+        if port == 0 {
+            return None;
+        }
+        let (addr, interface) = match host.split_once('%') {
+            Some((a, i)) => (a, Some(i.to_string())),
+            None => (host, None),
+        };
+        let address: IpAddr = addr.parse().ok()?;
+        if !is_local_address(&address) {
+            return None;
+        }
+        let link_local_v6 =
+            matches!(address, IpAddr::V6(v) if (v.segments()[0] & 0xffc0) == 0xfe80);
+        match (&interface, link_local_v6) {
+            (Some(i), true) if valid_interface(i) => {}
+            (None, false) => {}
+            _ => return None,
+        }
+        Some(Peer {
+            address,
+            interface,
+            port,
+        })
+    }
+
+    /// `http://…` for `path` (which starts with `/`). The zone of a
+    /// link-local address is written `%25IF`, as URLs require.
+    pub fn url(&self, path: &str) -> String {
+        let host = match (&self.address, &self.interface) {
+            (std::net::IpAddr::V6(a), Some(i)) => format!("[{a}%25{i}]"),
+            (std::net::IpAddr::V6(a), None) => format!("[{a}]"),
+            (a, _) => a.to_string(),
+        };
+        format!("http://{host}:{}{path}", self.port)
+    }
+
+    /// How it is shown and passed on the command line.
+    pub fn display(&self) -> String {
+        match (&self.address, &self.interface) {
+            (std::net::IpAddr::V6(a), Some(i)) => format!("[{a}%{i}]:{}", self.port),
+            (std::net::IpAddr::V6(a), None) => format!("[{a}]:{}", self.port),
+            (a, _) => format!("{a}:{}", self.port),
+        }
+    }
+}
+
+/// Whether `peer` is on one of this machine's own networks, from the
+/// contents of `/proc/net/route` and `/proc/net/ipv6_route`: a route with
+/// no gateway that contains it (and, for a link-local address, the named
+/// interface). Not the default route: a peer must be on the local link.
+pub fn on_link(peer: &Peer, route4: &str, route6: &str) -> bool {
+    use std::net::IpAddr;
+    match peer.address {
+        IpAddr::V4(a) => {
+            let a = u32::from(a);
+            route4.lines().skip(1).any(|l| {
+                let f: Vec<&str> = l.split_whitespace().collect();
+                if f.len() < 8 {
+                    return false;
+                }
+                // Little-endian hexadecimal, as the kernel prints them.
+                let hex = |s: &str| u32::from_str_radix(s, 16).ok().map(u32::from_be);
+                match (hex(f[1]), hex(f[2]), hex(f[7])) {
+                    (Some(dest), Some(0), Some(mask)) => mask != 0 && (a & mask) == (dest & mask),
+                    _ => false,
+                }
+            })
+        }
+        IpAddr::V6(a) => {
+            if let Some(i) = &peer.interface {
+                // Link-local: the interface must have its fe80::/64 route.
+                return route6.lines().any(|l| {
+                    let f: Vec<&str> = l.split_whitespace().collect();
+                    f.len() == 10 && f[9] == i && f[0].starts_with("fe80") && f[1] == "40"
+                });
+            }
+            let a = u128::from(a);
+            route6.lines().any(|l| {
+                let f: Vec<&str> = l.split_whitespace().collect();
+                if f.len() != 10 || f[4] != "00000000000000000000000000000000" {
+                    return false;
+                }
+                let (Ok(dest), Ok(len)) = (
+                    u128::from_str_radix(f[0], 16),
+                    u32::from_str_radix(f[1], 16),
+                ) else {
+                    return false;
+                };
+                if len == 0 || len > 128 {
+                    return false;
+                }
+                let mask = u128::MAX << (128 - len);
+                (a & mask) == (dest & mask)
+            })
+        }
+    }
+}
+
+/// The catalog packs a peer offers, from its index page (`/`): links
+/// `/packs/FILE` whose file is in `catalog`. Bounded; nothing else in the
+/// page is used.
+pub fn packs_in_index(index: &str, catalog: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for part in index.split("href=\"/packs/").skip(1).take(10_000) {
+        let Some((name, _)) = part.split_once('"') else {
+            continue;
+        };
+        if catalog.contains(&name) && !out.iter().any(|o| o == name) {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -688,5 +837,77 @@ mod tests {
         assert_eq!(got[1].identity, d2);
         assert!(parse_heard("garbage", 0).is_empty());
         assert!(parse_heard("[]", 0).is_empty());
+    }
+
+    #[test]
+    fn peers() {
+        let p = Peer::parse("192.168.1.5").expect("v4");
+        assert_eq!((p.port, p.interface.as_deref()), (80, None));
+        assert_eq!(p.url("/packs/a.zim"), "http://192.168.1.5:80/packs/a.zim");
+        assert_eq!(Peer::parse("10.0.0.2:8080").expect("port").port, 8080);
+        let l = Peer::parse("[fe80::1%eth1]:80").expect("link-local");
+        assert_eq!(l.interface.as_deref(), Some("eth1"));
+        assert_eq!(l.url("/"), "http://[fe80::1%25eth1]:80/");
+        assert_eq!(l.display(), "[fe80::1%eth1]:80");
+        assert_eq!(
+            Peer::parse("fe80::1%bat0"),
+            Peer::parse("[fe80::1%bat0]:80")
+        );
+        assert_eq!(Peer::parse(&l.display()), Some(l));
+        assert!(Peer::parse("fd00::5").is_some());
+        for bad in [
+            "",
+            "8.8.8.8",
+            "127.0.0.1",
+            "example.org",
+            "192.168.1.5:0",
+            "192.168.1.5:99999",
+            "fe80::1",
+            "[fe80::1]:80",
+            "fd00::5%eth1",
+            "fe80::1%a/b",
+            "192.168.1.5%eth1",
+            "192.168.1.5 ",
+            "[fe80::1%eth1]x",
+            "http://192.168.1.5/",
+            "2001:db8::1",
+        ] {
+            assert!(Peer::parse(bad).is_none(), "{bad:?}");
+        }
+    }
+
+    const ROUTE4: &str =
+        "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
+eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0
+eth1\t0001A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0
+";
+    const ROUTE6: &str = "fe800000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000001 00000000 00000001     eth1
+fd000000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000001 00000000 00000001     eth1
+00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000001 00000400 00000001 00000000 00000003     eth0
+";
+
+    #[test]
+    fn peers_on_this_machines_networks_only() {
+        let on = |s: &str| on_link(&Peer::parse(s).expect(s), ROUTE4, ROUTE6);
+        assert!(on("192.168.1.7"));
+        assert!(!on("192.168.2.7"), "only through the default route");
+        assert!(!on("10.0.0.1"));
+        assert!(on("fe80::5%eth1"));
+        assert!(!on("fe80::5%eth9"));
+        assert!(on("fd00::7"));
+        assert!(!on("fd01::7"));
+        assert!(!on_link(&Peer::parse("192.168.1.7").expect("p"), "", ""));
+    }
+
+    #[test]
+    fn packs_offered_by_a_peer() {
+        let index = r#"<ul><li><a href="/packs/a_en.zim">a_en.zim</a></li>
+            <li><a href="/packs/evil.zim">evil</a></li><li><a href="/packs/a_en.zim">again</a>
+            <a href="/packs/b.mbtiles">b</a><a href="/library/">Library</a>"#;
+        assert_eq!(
+            packs_in_index(index, &["a_en.zim", "b.mbtiles", "c.zim"]),
+            ["a_en.zim", "b.mbtiles"]
+        );
+        assert!(packs_in_index("", &["a"]).is_empty());
     }
 }

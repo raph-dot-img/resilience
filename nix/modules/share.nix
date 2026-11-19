@@ -124,6 +124,9 @@ let
       default_type application/octet-stream;
       access_log off;
       server_tokens off;
+      # Relative redirects: a client reading through its loopback relay
+      # (ADR 0025 §5) stays on the relay.
+      absolute_redirect off;
       sendfile on;
       client_body_temp_path /run/resilience-share-web/body;
       proxy_temp_path /run/resilience-share-web/proxy;

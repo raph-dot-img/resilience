@@ -8,7 +8,19 @@
 //! resilience-library open FILE [--search WORDS] read a pack in the text browser
 //! resilience-library check FILE                 compare a file (e.g. on a stick)
 //!                                               with the catalog's fingerprint
+//! resilience-library change --from-peer ADDRESS --get ID...
+//!                                               install packs from a nearby
+//!                                               machine that shares (ADR 0025)
+//! resilience-library peer-list ADDRESS          catalog packs a nearby machine offers
+//! resilience-library open-remote ADDRESS index|library|pages
+//!                                               read a nearby machine's pages
 //! ```
+//!
+//! Nearby machines (ADR 0025): ADDRESS must be a local address on one of
+//! this machine's networks (see `peer::resolve`). Packs from them come over
+//! plain HTTP and go through the same store, which checks the catalog
+//! hash, so a machine that sends other bytes wastes the download, nothing
+//! more. Their pages are read through a loopback relay (`peer::Relay`).
 //!
 //! `change` downloads with `curl` (HTTPS only), or reads the files from a
 //! mounted stick (`--from`), as the user, and streams the bytes to
@@ -30,6 +42,9 @@ use std::time::{Duration, Instant};
 use resilience_core::human_bytes;
 use resilience_core::launch::{self, PolkitAgent};
 use resilience_core::packs::{self, Outcome, Pack, PackConfig, PackKind, PackState, PlanLine};
+use resilience_core::share::Peer;
+
+mod peer;
 
 const EXIT_ERROR: u8 = 1;
 const EXIT_REFUSED: u8 = 2;
@@ -44,7 +59,10 @@ Usage:
   resilience-library list
   resilience-library change [--from DIR] [--remove FILE]... [--get ID]...
   resilience-library open FILE [--search WORDS]
-  resilience-library check FILE";
+  resilience-library check FILE
+  resilience-library change --from-peer ADDRESS --get ID...
+  resilience-library peer-list ADDRESS
+  resilience-library open-remote ADDRESS index|library|pages";
 
 enum Failure {
     Usage,
@@ -59,6 +77,10 @@ fn main() -> ExitCode {
         Some("change") => config().and_then(|c| change(&c, &args[1..])),
         Some("open") => config().and_then(|c| open(&c, &args[1..])),
         Some("check") if args.len() == 2 => config().and_then(|c| check(&c, Path::new(&args[1]))),
+        Some("peer-list") if args.len() == 2 => config().and_then(|c| peer_list(&c, &args[1])),
+        Some("open-remote") if args.len() == 3 => {
+            config().and_then(|c| open_remote(&c, &args[1], &args[2]))
+        }
         // Used at build time on the generated catalog.
         Some("check-config") if args.len() == 2 => PackConfig::load(Path::new(&args[1]))
             .map(|c| println!("{} packs", c.packs.len()))
@@ -119,6 +141,8 @@ fn list(cfg: &PackConfig) -> Result<(), Failure> {
 
 struct ChangeArgs {
     from: Option<PathBuf>,
+    /// A nearby machine that shares (ADR 0025), as given.
+    peer: Option<String>,
     remove: Vec<String>,
     get: Vec<String>,
 }
@@ -129,18 +153,25 @@ fn parse_change(args: &[String]) -> Result<ChangeArgs, Failure> {
     }
     let mut c = ChangeArgs {
         from: None,
+        peer: None,
         remove: Vec::new(),
         get: Vec::new(),
     };
     for pair in args.chunks(2) {
         match pair[0].as_str() {
-            "--from" if c.from.is_none() => c.from = Some(PathBuf::from(&pair[1])),
+            "--from" if c.from.is_none() && c.peer.is_none() => {
+                c.from = Some(PathBuf::from(&pair[1]))
+            }
+            "--from-peer" if c.from.is_none() && c.peer.is_none() => c.peer = Some(pair[1].clone()),
             "--remove" => c.remove.push(pair[1].clone()),
             "--get" => c.get.push(pair[1].clone()),
             _ => return Err(Failure::Usage),
         }
     }
     if c.remove.is_empty() && c.get.is_empty() {
+        return Err(Failure::Usage);
+    }
+    if c.peer.is_some() && (c.get.is_empty() || !c.remove.is_empty()) {
         return Err(Failure::Usage);
     }
     Ok(c)
@@ -150,16 +181,22 @@ fn parse_change(args: &[String]) -> Result<ChangeArgs, Failure> {
 enum Source {
     File(PathBuf),
     Download,
+    Peer(Peer),
 }
 
 fn change(cfg: &PackConfig, args: &[String]) -> Result<(), Failure> {
     let req = parse_change(args)?;
+    let from_peer = match &req.peer {
+        Some(a) => Some(peer::resolve(a).map_err(Failure::Refused)?),
+        None => None,
+    };
     let mut sources = Vec::new();
     for id in &req.get {
         let p = cfg
             .pack(id)
             .ok_or_else(|| Failure::Refused(format!("{id:?} is not in the catalog.")))?;
         let source = match &req.from {
+            _ if from_peer.is_some() => Source::Peer(from_peer.clone().ok_or(Failure::Usage)?),
             Some(dir) => {
                 let found = packs::find_on_volume(cfg, dir);
                 let idx = cfg.packs.iter().position(|q| q.id == p.id);
@@ -205,8 +242,16 @@ fn change(cfg: &PackConfig, args: &[String]) -> Result<(), Failure> {
         let how = match s {
             Source::File(_) => "copy    ",
             Source::Download => "download",
+            Source::Peer(_) => "get     ",
         };
         println!("  {how} {}  ({})", p.title, human_bytes(p.size));
+    }
+    if let Some(p) = &from_peer {
+        println!(
+            "\nFrom the computer at {}. Each pack is checked against this system's \
+             catalog before it is installed.",
+            p.display()
+        );
     }
     println!("\nAn administrator's password is needed (packs are shared by every account).");
     println!("Ctrl-C stops; an unfinished download continues next time.\n");
@@ -295,7 +340,8 @@ fn change(cfg: &PackConfig, args: &[String]) -> Result<(), Failure> {
                 }
                 let sent = match source {
                     Source::File(path) => send_file(&mut to_store, path, p, *offset),
-                    Source::Download => send_download(cfg, &mut to_store, p, *offset),
+                    Source::Download => send_download(cfg, &mut to_store, p, *offset, None),
+                    Source::Peer(peer) => send_download(cfg, &mut to_store, p, *offset, Some(peer)),
                 };
                 if let Err(e) = &sent {
                     eprintln!("\n  {e}");
@@ -441,8 +487,18 @@ fn send_file(w: &mut impl Write, path: &Path, p: &Pack, offset: u64) -> Result<(
     Ok(())
 }
 
-fn curl(cfg: &PackConfig, url: &str, from: u64) -> io::Result<(Child, ChildStdout)> {
+fn curl(
+    cfg: &PackConfig,
+    url: &str,
+    from: u64,
+    peer: Option<&Peer>,
+) -> io::Result<(Child, ChildStdout)> {
     let mut cmd = Command::new(&cfg.curl);
+    if let Some(p) = peer {
+        // `url` is the pack's path on the peer.
+        cmd.args(peer::curl_args(p, url, from));
+        return spawn_curl(cmd);
+    }
     // -q first: ignore ~/.curlrc. HTTPS only, also after redirects.
     cmd.args([
         "-q",
@@ -467,6 +523,10 @@ fn curl(cfg: &PackConfig, url: &str, from: u64) -> io::Result<(Child, ChildStdou
         cmd.args(["--continue-at", &from.to_string()]);
     }
     cmd.args(["--output", "-", "--", url]);
+    spawn_curl(cmd)
+}
+
+fn spawn_curl(mut cmd: Command) -> io::Result<(Child, ChildStdout)> {
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -484,17 +544,22 @@ fn send_download(
     w: &mut impl Write,
     p: &Pack,
     offset: u64,
+    peer: Option<&Peer>,
 ) -> Result<(), String> {
+    let urls = match peer {
+        Some(_) => vec![format!("/packs/{}", p.file)],
+        None => p.urls.clone(),
+    };
     let mut have = offset;
     let mut progress = Progress::new(p.size, offset);
     let mut last_error = String::new();
     for attempt in 0..ATTEMPTS {
-        let url = &p.urls[attempt % p.urls.len()];
+        let url = &urls[attempt % urls.len()];
         if attempt > 0 {
             eprintln!("\n  trying again in 5 seconds...");
             std::thread::sleep(Duration::from_secs(5));
         }
-        let (mut child, mut out) = curl(cfg, url, have).map_err(|e| format!("curl: {e}"))?;
+        let (mut child, mut out) = curl(cfg, url, have, peer).map_err(|e| format!("curl: {e}"))?;
         let need = p.size - have;
         let sent = pump(&mut out, w, need, &mut progress);
         drop(out);
@@ -749,6 +814,71 @@ fn open(cfg: &PackConfig, args: &[String]) -> Result<(), Failure> {
     }
 }
 
+// ------------------------------------------------------ nearby machines
+
+/// The catalog packs a nearby machine offers (ADR 0025): one line per
+/// pack, `ID<TAB>FILE<TAB>SIZE<TAB>TITLE`, from its index page.
+fn peer_list(cfg: &PackConfig, address: &str) -> Result<(), Failure> {
+    let p = peer::resolve(address).map_err(Failure::Refused)?;
+    let mut argv = vec![cfg.curl.clone()];
+    argv.extend(peer::curl_args(&p, "/", 0));
+    // Its index page is small; anything longer is cut.
+    argv.splice(1..1, ["--max-filesize".to_string(), "262144".to_string()]);
+    let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let out = resilience_core::proc::run_full(&args, Duration::from_secs(20))
+        .ok_or_else(|| Failure::Error("The computer did not answer in time.".into()))?;
+    if !out.success() {
+        return Err(Failure::Error(format!(
+            "The computer at {} did not answer: {}",
+            p.display(),
+            resilience_core::printable(out.stderr.trim())
+        )));
+    }
+    let files: Vec<&str> = cfg.packs.iter().map(|q| q.file.as_str()).collect();
+    for f in resilience_core::share::packs_in_index(&out.stdout, &files) {
+        if let Some(q) = cfg.packs.iter().find(|q| q.file == f) {
+            println!("{}\t{}\t{}\t{}", q.id, q.file, q.size, q.title);
+        }
+    }
+    Ok(())
+}
+
+/// Read a nearby machine's index, library or pages in the text browser,
+/// through a relay on 127.0.0.1 (lynx keeps `-localhost`).
+fn open_remote(cfg: &PackConfig, address: &str, what: &str) -> Result<(), Failure> {
+    let path = match what {
+        "index" => "/",
+        "library" => "/library/",
+        "pages" => "/pages/",
+        _ => return Err(Failure::Usage),
+    };
+    let p = peer::resolve(address).map_err(Failure::Refused)?;
+    let target = peer::socket_addr(&p).map_err(Failure::Refused)?;
+    let relay = peer::Relay::start(target)
+        .map_err(|e| Failure::Error(format!("Cannot open a local port: {e}")))?;
+    if io::stdin().is_terminal() {
+        println!(
+            "Pages from the computer at {}.\n\nThey were not checked: they are as trustworthy as \
+             whoever runs that computer. Anyone on this network can read them too.\n",
+            p.display()
+        );
+        print!("Press Enter to open them...");
+        let _ = io::stdout().flush();
+        let _ = io::stdin().lock().read_line(&mut String::new());
+    }
+    let mut argv = cfg.browser.clone();
+    argv.push(format!("http://localhost:{}{path}", relay.port));
+    let status = launch::run_foreground(&argv, &[], &[]);
+    drop(relay);
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(Failure::Error(format!("The text browser exited with {s}."))),
+        Err(e) => Err(Failure::Error(format!(
+            "Cannot start the text browser: {e}"
+        ))),
+    }
+}
+
 /// The message for a map pack, which the text browser cannot show.
 const MAP_REFUSAL: &str = "This file is a map. Maps are not read in the text browser: open it \
      from \"Maps & navigation\" in the main menu.";
@@ -787,6 +917,17 @@ mod tests {
         assert!(parse_change(&s(&["--from", "x"])).is_err());
         assert!(parse_change(&s(&["--from", "x", "--from", "y", "--get", "a"])).is_err());
         assert!(parse_change(&s(&["--get"])).is_err());
+        let c = parse_change(&s(&["--from-peer", "192.168.1.5", "--get", "a"]))
+            .ok()
+            .expect("peer");
+        assert_eq!(c.peer.as_deref(), Some("192.168.1.5"));
+        // From a peer: only getting, and not with a stick at the same time.
+        assert!(parse_change(&s(&["--from-peer", "x", "--remove", "a.zim"])).is_err());
+        assert!(
+            parse_change(&s(&["--from-peer", "x", "--get", "a", "--remove", "b.zim"])).is_err()
+        );
+        assert!(parse_change(&s(&["--from", "/m", "--from-peer", "x", "--get", "a"])).is_err());
+        assert!(parse_change(&s(&["--from-peer", "x", "--from-peer", "y", "--get", "a"])).is_err());
     }
 
     #[test]
