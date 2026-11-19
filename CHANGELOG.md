@@ -41,6 +41,18 @@ nothing starts by itself at boot. Tested in virtual machines only.
 - Handbook page "Community network"; VM tests `vm-share` (two
   machines through the interface) and `vm-hotspot` (a simulated phone).
 
+### Fixed
+- Installing without encryption failed on some SSDs ("bad superblock" at
+  "Mounting the new system", seen on a PNY CS900): the system partition is
+  no longer TRIMmed while it is formatted, and file system types are
+  named when mounting.
+- Computers joined by a cable, or by a switch with no router, now reach
+  each other for local messages: wired cards fall back to a profile with
+  link-local addresses only ("Wired without router") when no DHCP server
+  answers, and the Reticulum instance restarts by itself when a cable is
+  plugged in or a Wi-Fi network is joined after start-up. VM test
+  `vm-cable` (three computers on a switch).
+
 ### Security
 - An independent review of the community network before release; its
   fixes are in ADR 0025 (sharing never follows a card onto another

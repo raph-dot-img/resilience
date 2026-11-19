@@ -359,6 +359,21 @@ second radio in a network namespace playing the other computer.
 | Wi-Fi (delta): `set-mesh on` with no device configured takes the first card (wlan0): type IBSS, joined cell `02:52:45:53:4d:31`; a BATMAN-adv neighbour (the other radio); ping6 to it over `bat0` | PASS (2026-11-17) |
 | Wi-Fi: `set-mesh off` → no `bat0`, the card back to type managed and to its NetworkManager state | PASS (2026-11-17) |
 
+### VM: `vm-cable` — computers on a switch with no router (2026-11-19, after the owner's real-hardware case)
+
+alpha, beta and gamma on one switch (vlan 1), with no address from the
+test framework (NetworkManager alone) and the cables unplugged at start
+(QEMU `set_link vlan1 off`).
+
+| Scenario | Result |
+|---|---|
+| Unplugged: no `fe80::` on eth1, nobody heard, NetworkManager's own "Wired connection 1" not created | PASS (2026-11-19) |
+| Plugged in: "Wired" (DHCP) gives up, "Wired without router" comes up on all three (connected, 169.254.x.y and `fe80::`); the Reticulum instance restarts by itself (new main PID) | PASS (2026-11-19; earlier runs FAILED with `ipv4.link-local=fallback`, then `enabled`: NetworkManager's automatic profile fails without DHCP even with a link-local address; an experiment showed a link-local-only profile comes up at once) |
+| Each hears the other two; alpha→beta, beta→gamma, gamma→alpha all `delivered` and received | PASS (2026-11-19) |
+| alpha unplugged and plugged again: back on "Wired without router", a message to gamma delivered | PASS (2026-11-19) |
+| An ordinary wired network with a DHCP server still uses "Wired" (DHCP) | NOT TESTED in a VM (the other VM tests use addresses set by the test framework) |
+| Two real computers with a cable or a switch | NOT TESTED (the owner's 0.4.0 attempt failed without these fixes) |
+
 ### VM: `vm-hotspot` — the hotspot (ADR 0025 slice 6), a "phone" and the outside
 
 hot has two simulated radios (mac80211_hwsim): wlan0 becomes the hotspot,

@@ -217,6 +217,27 @@ in
       };
     };
 
+    # Reticulum lists the network cards only when it starts: a cable
+    # plugged in or a Wi-Fi network joined afterwards would never be used.
+    # When NetworkManager brings a connection up, restart the instance
+    # (the messaging programs and the store reattach and announce again).
+    networking.networkmanager.dispatcherScripts = lib.mkIf config.networking.networkmanager.enable [
+      {
+        type = "basic";
+        source = pkgs.writeShellScript "resilience-reticulum-dispatcher" ''
+          case "''${2:-}" in
+            up)
+              case "''${1:-}" in
+                ""|lo|bat0) ;;
+                *) ${config.systemd.package}/bin/systemctl --no-block try-restart resilience-reticulum.service ;;
+              esac
+              ;;
+          esac
+          exit 0
+        '';
+      }
+    ];
+
     systemd.services.resilience-messages-node = lib.mkIf cfg.store.enable {
       description = "Message store of Resilience (local messaging, store-and-forward)";
       # Started, stopped and restarted with the instance (and if the

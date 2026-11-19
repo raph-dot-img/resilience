@@ -50,7 +50,10 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │            security.nix    sudo (wheel+password), pam_faillock, sysctls, no ssh,
    │                            user namespaces off on Ultra-Stable-only machines (ADR 0012)
    │            networking.nix  NetworkManager (no connectivity check), polkit allowlist for
-   │                            accounts without its group (ADR 0010), firewall, no NTP
+   │                            accounts without its group (ADR 0010), firewall, no NTP; wired:
+   │                            no-auto-default, profiles "Wired" (DHCP, prio 10, 1 retry) then
+   │                            "Wired without router" (link-local v4+v6, prio -10) (vm-cable);
+   │                            comms.nix adds an NM dispatcher: `up` → try-restart rnsd
    │            comms.nix       local messaging network (ADR 0018): resilience.comms.enable
    │                            (default off; the STANDARD profile turns it on)
    │                            -> resilience-reticulum.service (rnsd, DynamicUser, AutoInterface
@@ -97,7 +100,7 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
               vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-install,
-              vm-install-uefi, vm-maps, vm-comms, vm-mesh, vm-share, vm-hotspot, vm-update, vm-licence,
+              vm-install-uefi, vm-maps, vm-comms, vm-mesh, vm-share, vm-hotspot, vm-cable, vm-update, vm-licence,
               security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world,
               comms-messages (the messaging program with real Reticulum + LXMF, no VM)
 
