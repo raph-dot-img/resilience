@@ -9,6 +9,8 @@ OPENING THE MAP
     Arrows           move the map (with Shift: one small step)
     + / -            zoom in / out
     /                find a place, a street or a point of interest
+    n                what is near the cross (water, health, shelter...)
+    g                go to coordinates you type
     d                coordinates as degrees, minutes and seconds
     i                what each map covers, its date, source and licence
     L                legend: what the colours and signs mean
@@ -27,6 +29,21 @@ FINDING A PLACE
   maps are searched: the world overview knows towns and cities, a
   detailed map also knows villages, streets and points of interest.
   "Nothing found" lists the maps that were searched.
+
+WHAT IS NEAR
+  Press n to list what is around the cross in the middle of the map,
+  nearest first, with the distance and direction: health (hospital,
+  doctor, pharmacy), water (drinking water, spring), shelter, safety
+  (police, fire station, defibrillator), food, fuel, toilets, post, town
+  hall, other named places and peaks. Tab shows one kind at a time, most
+  urgent first. Enter shows the chosen one on the map. It looks up to
+  10 km away, in the open detailed maps only.
+
+GOING TO COORDINATES
+  Press g and type a latitude, then a longitude: decimal degrees
+  (49.6116 6.1319) or degrees, minutes and seconds (49 36 41.8 N
+  6 7 54.8 E). A minus sign means south or west. The bottom line of the
+  map gives the cross's coordinates in the same forms.
 
 WHAT THE WORLD OVERVIEW SHOWS
   Coasts, country and region borders, large lakes and rivers, and about

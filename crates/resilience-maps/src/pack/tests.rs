@@ -1051,3 +1051,29 @@ fn search_finds_places_through_the_hardened_connection() {
     let pack = r.expect("still opens");
     assert!(pack.search("\"testville\"*").expect("no search").is_empty());
 }
+
+#[test]
+fn nearby_reads_the_rtree_through_the_hardened_connection() {
+    use resilience_core::maps::geo::LatLon;
+    let dir = TempDir::new("nearby");
+    let path = dir.file("map.mbtiles");
+    write_pack(&path);
+    let pack = open(&path).expect("open");
+    unchanged(dir.path(), || {
+        // The pharmacy is about 70 m from Testville's centre: in the first box.
+        let at = LatLon::new(49.6116, 6.1319).expect("at");
+        let found = pack.nearby(at).expect("nearby");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "Pharmacie du Test");
+        // 30 km away: the boxes widen to 10 km and stop; nothing.
+        let far = LatLon::new(49.9, 6.1319).expect("far");
+        assert!(pack.nearby(far).expect("nearby").is_empty());
+    });
+    // A pack whose R*Tree is gone answers with nothing.
+    let (_dir, r) = open_altered("nortree", |c| {
+        c.execute_batch("DROP TABLE rs_poi_rtree;").expect("drop");
+    });
+    let pack = r.expect("still opens");
+    let at = LatLon::new(49.6116, 6.1319).expect("at");
+    assert!(pack.nearby(at).expect("no nearby").is_empty());
+}

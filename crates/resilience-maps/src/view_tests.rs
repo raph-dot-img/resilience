@@ -766,23 +766,136 @@ fn legend_follows_the_scale_and_shows_all_on_request_and_help() {
     assert_eq!(h.key(KeyCode::Char('q')), Effect::Quit);
 }
 
+/// Nearby (`n`, slice 11): points around the crosshair, nearest first,
+/// one kind at a time with Tab, Enter centres the map; peaks count,
+/// settlements and streets do not.
 #[test]
-fn reserved_keys_do_nothing_yet() {
+fn nearby_lists_points_around_the_crosshair() {
+    let t = testland("Testland", "2026-01-01")
+        .place(
+            "poi",
+            "pharmacy",
+            "Pharmacie du Test",
+            Some("Testville"),
+            (49.6121, 6.1319),
+            3,
+        )
+        .place(
+            "poi",
+            "drinking_water",
+            "Fontaine",
+            None,
+            (49.6143, 6.1319),
+            1,
+        )
+        .place("natural", "peak", "Mont Test", None, (49.6197, 6.1319), 2)
+        .place("poi", "shelter", "Abri", None, (49.6250, 6.1319), 2)
+        .place("poi", "cafe", "Cafe Loin", None, (49.6800, 6.1319), 9)
+        .place("settlement", "town", "Testville", None, TESTVILLE, 1)
+        .place(
+            "street",
+            "residential",
+            "Rue de l'Essai",
+            None,
+            (49.6117, 6.1319),
+            1,
+        );
+    let mut h = Harness::new("nearby", &[("t.mbtiles", &t)], Some(TESTVILLE), Some(50.0));
+    assert_eq!(h.key(KeyCode::Char('n')), Effect::None);
+    assert_eq!(h.app.screen, Screen::Nearby);
+    let s = h.screen(110, 30);
+    let order: Vec<usize> = [
+        "Pharmacie du Test",
+        "Fontaine",
+        "Mont Test",
+        "Abri",
+        "Cafe Loin",
+    ]
+    .iter()
+    .map(|n| s.find(n).unwrap_or_else(|| panic!("{n}: {s}")))
+    .collect();
+    assert!(order.windows(2).all(|w| w[0] < w[1]), "{s}");
+    assert!(
+        s.contains("health") && s.contains("(pharmacy)") && s.contains("m N"),
+        "{s}"
+    );
+    assert!(
+        !s.contains("Rue de l'Essai") && !s.contains("Testville (town)"),
+        "{s}"
+    );
+    assert!(s.contains("Nearest first, from: Testland"), "{s}");
+    assert_console_glyphs(&s);
+    // Tab: one kind at a time, most urgent first; Shift-Tab back.
+    h.key(KeyCode::Tab);
+    let s = h.screen(110, 30);
+    assert!(
+        s.contains("only health") && s.contains("Pharmacie") && !s.contains("Fontaine"),
+        "{s}"
+    );
+    h.key(KeyCode::Tab);
+    let s = h.screen(110, 30);
+    assert!(
+        s.contains("only water") && s.contains("Fontaine") && !s.contains("Pharmacie"),
+        "{s}"
+    );
+    h.key(KeyCode::BackTab);
+    h.key(KeyCode::BackTab);
+    assert!(h.screen(110, 30).contains("every kind"));
+    // Enter shows the chosen point on the map.
+    h.key(KeyCode::Down);
+    h.key(KeyCode::Enter);
+    assert_eq!(h.app.screen, Screen::Map);
+    assert!((h.app.view().center().lat() - 49.6143).abs() < 1e-6);
+    // From somewhere with nothing near: said plainly.
+    h.app
+        .handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+    type_text(&mut h, "49.52 6.29");
+    h.key(KeyCode::Enter);
+    h.key(KeyCode::Char('n'));
+    assert!(flat(&h.screen(110, 30)).contains("Nothing within 10 km in: Testland"));
+}
+
+/// Go to (`g`): typed coordinates in the forms the readout prints;
+/// mistakes are explained and nothing moves.
+#[test]
+fn go_to_coordinates() {
     let t = testland("Testland", "2026-01-01");
-    let mut h = Harness::new(
-        "reserved",
-        &[("t.mbtiles", &t)],
-        Some(TESTVILLE),
-        Some(50.0),
+    let mut h = Harness::new("goto", &[("t.mbtiles", &t)], Some(TESTVILLE), Some(50.0));
+    h.key(KeyCode::Char('g'));
+    assert_eq!(h.app.screen, Screen::GoTo);
+    let s = h.screen(100, 30);
+    assert!(
+        s.contains("GO TO COORDINATES") && s.contains("49.6116 6.1319"),
+        "{s}"
     );
     let before = *h.app.view();
-    for c in ['n', 'g'] {
-        assert_eq!(h.key(KeyCode::Char(c)), Effect::None);
-        assert_eq!(h.app.screen, Screen::Map);
-    }
+    type_text(&mut h, "north of here");
+    h.key(KeyCode::Enter);
+    assert_eq!(h.app.screen, Screen::GoTo);
+    assert!(h.screen(100, 30).contains("[!!]"));
     assert_eq!(*h.app.view(), before);
-    let s = h.screen(160, 50);
-    assert!(!s.contains("n Nearby"), "{s}");
+    h.key(KeyCode::Esc);
+    h.key(KeyCode::Char('g'));
+    for _ in 0..13 {
+        h.key(KeyCode::Backspace);
+    }
+    type_text(&mut h, "49 36 41.8 N 6 7 54.8 E");
+    h.key(KeyCode::Enter);
+    assert_eq!(h.app.screen, Screen::Map);
+    let c = h.app.view().center();
+    assert!(
+        (c.lat() - 49.611_61).abs() < 1e-4 && (c.lon() - 6.131_89).abs() < 1e-4,
+        "{c:?}"
+    );
+    assert_eq!(h.app.view().scale(), before.scale(), "the scale is kept");
+    // A latitude out of range is refused.
+    h.key(KeyCode::Char('g'));
+    for _ in 0..30 {
+        h.key(KeyCode::Backspace);
+    }
+    type_text(&mut h, "95 6");
+    h.key(KeyCode::Enter);
+    assert_eq!(h.app.screen, Screen::GoTo);
 }
 
 fn type_text(h: &mut Harness, text: &str) {

@@ -65,7 +65,7 @@ use std::time::{Duration, Instant};
 
 use resilience_core::maps::geo::{LatLon, TileId, TmsTile};
 use resilience_core::maps::mvt;
-use resilience_core::maps::search;
+use resilience_core::maps::{nearby, search};
 use rusqlite::config::DbConfig;
 use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
 use rusqlite::limits::Limit;
@@ -988,16 +988,53 @@ impl Pack {
             return Ok(Vec::new());
         }
         self.budget.arm(QUERY_BUDGET);
-        let mut st = self
-            .conn
-            .prepare(
-                "SELECT p.kind, p.class, p.name, p.fold, p.near, p.lon, p.lat, p.rank \
-                 FROM rs_place_fts JOIN rs_place AS p ON p.id = rs_place_fts.rowid \
-                 WHERE rs_place_fts MATCH ?1 LIMIT ?2",
-            )
-            .map_err(sql_err)?;
         let limit = i64::try_from(search::PER_PACK).unwrap_or(50);
-        let mut rows = st.query(rusqlite::params![fts, limit]).map_err(sql_err)?;
+        self.places(
+            "SELECT p.kind, p.class, p.name, p.fold, p.near, p.lon, p.lat, p.rank \
+             FROM rs_place_fts JOIN rs_place AS p ON p.id = rs_place_fts.rowid \
+             WHERE rs_place_fts MATCH ?1 LIMIT ?2",
+            rusqlite::params![fts, limit],
+        )
+    }
+
+    /// Points of interest and peaks around `centre` (ADR 0016 §4, `n`):
+    /// a box of [`nearby::BOXES_M`]`[0]`, widened while fewer than
+    /// [`nearby::WANT`] are found; each box within [`QUERY_BUDGET`] and
+    /// [`nearby::MAX_ROWS`] rows. Empty when the file has no verified
+    /// R*Tree.
+    pub fn nearby(&self, centre: LatLon) -> Result<Vec<search::Hit>, PackError> {
+        if self.capabilities.nearby.is_err() {
+            return Ok(Vec::new());
+        }
+        let limit = i64::try_from(nearby::MAX_ROWS).unwrap_or(1000);
+        let mut found = Vec::new();
+        for half in nearby::BOXES_M {
+            let (w, s, e, n) = nearby::box_micro(centre, half);
+            self.budget.arm(QUERY_BUDGET);
+            found = self.places(
+                "SELECT p.kind, p.class, p.name, p.fold, p.near, p.lon, p.lat, p.rank \
+                 FROM rs_poi_rtree AS r JOIN rs_place AS p ON p.id = r.id \
+                 WHERE r.max_lon >= ?1 AND r.min_lon <= ?3 AND r.max_lat >= ?2 AND r.min_lat <= ?4 \
+                 LIMIT ?5",
+                rusqlite::params![w, s, e, n, limit],
+            )?;
+            if found.len() >= nearby::WANT {
+                break;
+            }
+        }
+        Ok(found)
+    }
+
+    /// Run a query over `rs_place` columns (kind, class, name, fold, near,
+    /// lon, lat, rank) and keep the well-formed rows: a known kind, a
+    /// position inside the world, bounded text.
+    fn places(
+        &self,
+        sql: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<Vec<search::Hit>, PackError> {
+        let mut st = self.conn.prepare(sql).map_err(sql_err)?;
+        let mut rows = st.query(params).map_err(sql_err)?;
         let text = |v: ValueRef<'_>, max: usize| -> Option<String> {
             match v {
                 ValueRef::Text(t) if t.len() <= max => {

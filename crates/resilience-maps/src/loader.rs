@@ -29,7 +29,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
-use resilience_core::maps::geo::TileId;
+use resilience_core::maps::geo::{LatLon, TileId};
 use resilience_core::maps::{mvt, search};
 use resilience_core::packs::PackConfig;
 
@@ -135,6 +135,12 @@ pub enum Request {
         generation: u64,
         fts: String,
     },
+    /// Points of interest and peaks around `at`, in every open pack with
+    /// the R*Tree.
+    Nearby {
+        generation: u64,
+        at: LatLon,
+    },
 }
 
 /// The outcome of one tile read.
@@ -183,6 +189,13 @@ pub enum Response {
         searched: Vec<usize>,
         failed: Vec<(usize, String)>,
     },
+    /// What is near a point, from every pack asked.
+    NearbyFound {
+        generation: u64,
+        hits: Vec<search::Hit>,
+        searched: Vec<usize>,
+        failed: Vec<(usize, String)>,
+    },
 }
 
 /// The reader's state: the open packs, by the viewer's index.
@@ -223,6 +236,7 @@ impl Worker {
                 }
             }
             Request::Search { generation, fts } => send(self.search(generation, &fts)),
+            Request::Nearby { generation, at } => send(self.nearby(generation, at)),
         }
     }
 
@@ -326,6 +340,33 @@ impl Worker {
             }
         }
         Response::Found {
+            generation,
+            hits,
+            searched,
+            failed,
+        }
+    }
+
+    /// Points near `at` in every open pack that has the R*Tree.
+    pub fn nearby(&mut self, generation: u64, at: LatLon) -> Response {
+        let (mut hits, mut searched, mut failed) = (Vec::new(), Vec::new(), Vec::new());
+        for (index, pack) in self.packs.iter().enumerate() {
+            let Some(pack) = pack else { continue };
+            if pack.capabilities().nearby.is_err() {
+                continue;
+            }
+            match pack.nearby(at) {
+                Ok(found) => {
+                    searched.push(index);
+                    hits.extend(found.into_iter().map(|mut h| {
+                        h.pack = index;
+                        h
+                    }));
+                }
+                Err(e) => failed.push((index, e.to_string())),
+            }
+        }
+        Response::NearbyFound {
             generation,
             hits,
             searched,

@@ -231,6 +231,48 @@ impl PoiCategory {
     }
 }
 
+/// Points of interest, most urgent category first (ADR 0016 §4): (key,
+/// value, category). The value is the `rs_place.class` of the row, and
+/// [`poi_category`] maps it back, so every value appears once.
+/// `man_made=water_tap` counts only with `drinking_water=yes` (see
+/// [`poi`]).
+pub const POIS: &[(&str, &str, PoiCategory)] = &[
+    ("amenity", "hospital", PoiCategory::Health),
+    ("amenity", "clinic", PoiCategory::Health),
+    ("amenity", "doctors", PoiCategory::Health),
+    ("amenity", "pharmacy", PoiCategory::Health),
+    ("healthcare", "hospital", PoiCategory::Health),
+    ("healthcare", "clinic", PoiCategory::Health),
+    ("healthcare", "doctor", PoiCategory::Health),
+    ("healthcare", "pharmacy", PoiCategory::Health),
+    ("amenity", "drinking_water", PoiCategory::Water),
+    ("amenity", "water_point", PoiCategory::Water),
+    ("natural", "spring", PoiCategory::Water),
+    ("man_made", "water_tap", PoiCategory::Water),
+    ("amenity", "shelter", PoiCategory::Shelter),
+    ("tourism", "alpine_hut", PoiCategory::Shelter),
+    ("tourism", "wilderness_hut", PoiCategory::Shelter),
+    ("tourism", "camp_site", PoiCategory::Shelter),
+    ("amenity", "police", PoiCategory::Safety),
+    ("amenity", "fire_station", PoiCategory::Safety),
+    ("emergency", "defibrillator", PoiCategory::Safety),
+    ("shop", "supermarket", PoiCategory::Food),
+    ("shop", "bakery", PoiCategory::Food),
+    ("amenity", "marketplace", PoiCategory::Food),
+    ("amenity", "fuel", PoiCategory::Fuel),
+    ("amenity", "toilets", PoiCategory::Toilets),
+    ("amenity", "post_office", PoiCategory::Post),
+    ("amenity", "townhall", PoiCategory::TownHall),
+];
+
+/// The category of a POI row's class (an OSM value). Values not in
+/// [`POIS`] are "other".
+pub fn poi_category(class: &str) -> PoiCategory {
+    POIS.iter()
+        .find(|(_, v, _)| *v == class)
+        .map_or(PoiCategory::Other, |(_, _, c)| *c)
+}
+
 /// A class of one layer of `resilience-1`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Class {

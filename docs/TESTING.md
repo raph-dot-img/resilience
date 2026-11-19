@@ -367,6 +367,10 @@ second radio in a network namespace playing the other computer.
 | Ranking: exact folded name first, then kind, rank, distance; the same place in two packs once; "15 km SW" | PASS (2026-11-19, unit tests) |
 | Pack reader: real FTS5 queries through the hardened connection (authorizer, budget): prefixes, accents/case, two words, nothing found, hostile words harmless, empty query, a pack without the search tables; nothing written beside the file | PASS (2026-11-19) |
 | Viewer (TestBackend): `/`, typing, Enter; results from the overview and the detailed pack ranked (town before pharmacy, "near Testville", distance and direction); Enter centres the map at a scale for the kind; `/` again keeps the results, Down + Enter takes the second; new words search again; "Nothing found in: World overview, Testland … cannot be found"; hostile words; Esc does not move; `--search` runs once the packs are open; a map without search tables says so and asks nothing | PASS (2026-11-19) |
+| Nearby (slice 11), core: boxes of 500 m, 2 km, 10 km in microdegrees, cut at the poles and the antimeridian; points nearest first with their category (from the builder's table, now in core); settlements and streets left out; duplicates from two packs once | PASS (2026-11-19, unit tests) |
+| Nearby, pack reader: the R*Tree through the hardened connection, widening until found, nothing 30 km away, a pack without the R*Tree | PASS (2026-11-19) |
+| Nearby, viewer: `n` lists pharmacy, fountain, peak, shelter, cafe nearest first with category, kind and "m N"; Tab only health, then only water; Shift-Tab back to every kind; Enter centres on the chosen point; far from everything: "Nothing within 10 km in: Testland" | PASS (2026-11-19) |
+| Go to (slice 11), viewer: `g`, the examples shown; "north of here" refused with a message and nothing moves; "49 36 41.8 N 6 7 54.8 E" centres the map, scale kept; latitude 95 refused | PASS (2026-11-19) |
 | On a real pack (Luxembourg) | NOT TESTED yet (slice 13) |
 
 ### VM: `vm-cable` — computers on a switch with no router (2026-11-19, after the owner's real-hardware case)

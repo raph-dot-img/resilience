@@ -555,9 +555,11 @@ impl PackSpec {
                 .expect("rs_place row");
             }
             c.execute_batch(
-                "INSERT INTO rs_place_fts (rowid, name) SELECT id, name FROM rs_place;",
+                "INSERT INTO rs_place_fts (rowid, name) SELECT id, name FROM rs_place;
+                 INSERT INTO rs_poi_rtree (id, min_lon, max_lon, min_lat, max_lat)
+                   SELECT id, lon, lon, lat, lat FROM rs_place WHERE kind IN ('poi', 'natural');",
             )
-            .expect("fts");
+            .expect("fts and rtree");
         }
         c.execute_batch("COMMIT").expect("commit");
         c.close().expect("close pack");

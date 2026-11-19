@@ -304,6 +304,8 @@ pub fn draw(f: &mut Frame, app: &mut MapApp) {
             );
         }
         Screen::Search => search_page(f, app, &t, area),
+        Screen::Nearby => nearby_page(f, app, &t, area),
+        Screen::GoTo => goto_page(f, app, &t, area),
         Screen::Legend { all, scroll } => {
             let (title, lines) = legend_lines(app, all, &t);
             let hint = if all {
@@ -551,6 +553,119 @@ fn search_page(f: &mut Frame, app: &mut MapApp, t: &Theme, area: Rect) {
     );
 }
 
+/// What is near the crosshair (`n`).
+fn nearby_page(f: &mut Frame, app: &mut MapApp, t: &Theme, area: Rect) {
+    use crate::app::FindStatus;
+    use resilience_core::maps::nearby::category_name;
+    use resilience_core::maps::search::where_from;
+    let w = usize::from(area.width.saturating_sub(4)).max(20);
+    let at = app.around.at.unwrap_or(app.view().center());
+    let filter = match app.around.filter {
+        Some(c) => format!("only {} (Tab: next)", category_name(c)),
+        None => "every kind (Tab: one kind at a time)".into(),
+    };
+    let mut lines: Vec<Line<'static>> = vec![Line::from(vec![
+        Span::styled("Near the crosshair: ", t.title),
+        Span::styled(filter, t.accent),
+    ])];
+    let status = match &app.around.status {
+        FindStatus::Typing => String::new(),
+        FindStatus::Searching { .. } => "Looking...".into(),
+        FindStatus::Done {
+            searched, failed, ..
+        } => {
+            let names = if searched.is_empty() {
+                "no open map knows points of interest".to_string()
+            } else {
+                searched.join(", ")
+            };
+            let mut s = if app.around.found.is_empty() {
+                format!("Nothing within 10 km in: {names}. Places not on these maps are not known.")
+            } else {
+                format!("Nearest first, from: {names}. Enter shows one on the map.")
+            };
+            if !failed.is_empty() {
+                s.push_str(&format!(" Could not be read: {}.", failed.join(", ")));
+            }
+            s
+        }
+    };
+    lines.extend(text_lines(&status, w, 0, t.dim));
+    lines.push(Line::raw(""));
+    let first = lines.len();
+    let shown = app.around.shown();
+    for (i, n) in shown.iter().enumerate() {
+        let what = fold(&n.hit.class, 20).replace('_', " ");
+        let text = format!(
+            "{:<9} {} ({what})  {}",
+            category_name(n.category),
+            fold(&n.hit.name, 40),
+            where_from(at, n.hit.at)
+        );
+        let text: String = text.chars().take(w).collect();
+        let style = if i == app.around.sel {
+            t.accent.add_modifier(Modifier::REVERSED)
+        } else {
+            t.base
+        };
+        lines.push(Line::from(Span::styled(text, style)));
+    }
+    let visible = usize::from(area.height.saturating_sub(4));
+    let scroll = (first + app.around.sel).saturating_sub(visible.saturating_sub(1)) as u16;
+    page(
+        f,
+        app,
+        t,
+        area,
+        "NEARBY",
+        lines,
+        scroll,
+        "Up/Down Choose  Enter Show on the map  Tab Kind  Esc Back",
+    );
+}
+
+/// Go to typed coordinates (`g`).
+fn goto_page(f: &mut Frame, app: &mut MapApp, t: &Theme, area: Rect) {
+    let w = usize::from(area.width.saturating_sub(4)).max(20);
+    let mut lines: Vec<Line<'static>> = vec![
+        Line::from(vec![
+            Span::styled("Go to: ", t.title),
+            Span::styled(fold(&app.goto.input, 100), t.accent),
+            Span::styled("_", t.base),
+        ]),
+        Line::raw(""),
+    ];
+    match &app.goto.error {
+        Some(e) => lines.extend(text_lines(&format!("[!!] {e}"), w, 0, t.error)),
+        None => lines.extend(text_lines(
+            "Latitude then longitude, in decimal degrees or degrees, minutes and seconds, \
+             for example:",
+            w,
+            0,
+            t.dim,
+        )),
+    }
+    for ex in [
+        "  49.6116 6.1319",
+        "  49.6116, 6.1319      (a comma between the two)",
+        "  -33.87 151.21        (minus: south or west)",
+        "  49 36 41.8 N 6 7 54.8 E",
+        "  49d36'41.8\" N 6d07'54.8\" E",
+    ] {
+        lines.push(Line::from(Span::styled(ex.to_string(), t.base)));
+    }
+    page(
+        f,
+        app,
+        t,
+        area,
+        "GO TO COORDINATES",
+        lines,
+        0,
+        "Type  Enter Go  Esc Back",
+    );
+}
+
 /// Fold any text for the console, or say it could not be shown.
 fn fold(s: &str, max: usize) -> String {
     fold_to(s, max).unwrap_or_else(|| "(cannot be shown)".into())
@@ -752,6 +867,9 @@ pub fn help_lines(width: usize) -> Vec<Line<'static>> {
         "  there and who made the map data.",
         "  /                   Find a place, a street or a point of interest in the",
         "                      open maps (Enter goes to the chosen result)",
+        "  n                   What is near the crosshair, nearest first: health,",
+        "                      water, shelter, safety, food... (Tab: one kind)",
+        "  g                   Go to coordinates you type",
         "  d                   Coordinates in degrees, minutes and seconds, or decimal",
         "  L                   Legend: what the colours and signs mean (a: all scales)",
         "  i                   Information about each map: what it covers, how old the",

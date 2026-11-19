@@ -10,8 +10,10 @@
 //! the words typed are turned into an FTS5 query by
 //! `resilience_core::maps::search` (never passed as typed), every open
 //! pack with search tables is asked by the reader, and Enter on a result
-//! centres the map on it. Nearby (`n`) and go-to (`g`) come with a later
-//! slice: those keys are reserved and do nothing yet.
+//! centres the map on it. **Nearby** (`n`) lists the points of interest
+//! and peaks around the crosshair, nearest first (Tab: one category at a
+//! time, most urgent first); **go to** (`g`) reads typed coordinates with
+//! `geo::parse_coordinates`.
 //!
 //! **Packs**: each `--pack` is a [`Slot`] (opening, open, failed). An open
 //! pack has a [`Role`]:
@@ -42,7 +44,9 @@ use resilience_core::config::ThemeName;
 use resilience_core::maps::canvas::Canvas;
 use resilience_core::maps::geo::{LatLon, MAX_SCALE, View, ZOOM_LADDER};
 use resilience_core::maps::label::fold_to;
+use resilience_core::maps::nearby::{self, Near};
 use resilience_core::maps::search::{self, Hit};
+use resilience_core::maps::style::PoiCategory;
 
 use crate::area::Area;
 use crate::cache::{BadKind, Insert, Key, Lookup, TileCache};
@@ -82,6 +86,39 @@ pub enum Screen {
     },
     /// Find a place (`/`): see [`Find`].
     Search,
+    /// What is near the crosshair (`n`): see [`Around`].
+    Nearby,
+    /// Go to typed coordinates (`g`).
+    GoTo,
+}
+
+/// The nearby screen's state.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Around {
+    /// Where the list was made (the crosshair then).
+    pub at: Option<LatLon>,
+    pub found: Vec<Near>,
+    /// One category only (Tab), or all.
+    pub filter: Option<PoiCategory>,
+    pub sel: usize,
+    pub status: FindStatus,
+}
+
+impl Around {
+    /// The rows shown with the filter.
+    pub fn shown(&self) -> Vec<&Near> {
+        self.found
+            .iter()
+            .filter(|n| self.filter.is_none_or(|c| n.category == c))
+            .collect()
+    }
+}
+
+/// The go-to dialog's state.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GoTo {
+    pub input: String,
+    pub error: Option<String>,
 }
 
 /// The search screen's state, kept when it is closed so that `/` shows
@@ -260,6 +297,10 @@ pub struct MapApp {
     reader_lost: bool,
     /// The search screen (`/`).
     pub find: Find,
+    /// The nearby screen (`n`).
+    pub around: Around,
+    /// The go-to dialog (`g`).
+    pub goto: GoTo,
     /// `--search` waits for the packs to open.
     search_pending: bool,
     search_generation: u64,
@@ -327,6 +368,8 @@ impl MapApp {
                 ..Find::default()
             },
             search_pending: s.search.is_some(),
+            around: Around::default(),
+            goto: GoTo::default(),
             search_generation: 0,
             theme: s.theme,
             now: s.now,
@@ -508,6 +551,12 @@ impl MapApp {
                 searched,
                 failed,
             } => self.on_found(generation, hits, &searched, &failed),
+            Response::NearbyFound {
+                generation,
+                hits,
+                searched,
+                failed,
+            } => self.on_nearby(generation, hits, &searched, &failed),
         }
         if self.search_pending && !self.slots.iter().any(|s| matches!(s, Slot::Opening { .. })) {
             self.search_pending = false;
@@ -598,6 +647,142 @@ impl MapApp {
             searched: searched.iter().map(|i| self.title_of(*i)).collect(),
             failed: failed.iter().map(|(i, _)| self.title_of(*i)).collect(),
         };
+    }
+
+    /// `n`: ask every pack with the R*Tree what is near the crosshair.
+    fn start_nearby(&mut self) {
+        let at = self.view.center();
+        self.screen = Screen::Nearby;
+        self.around = Around {
+            at: Some(at),
+            ..Around::default()
+        };
+        if self
+            .open_packs()
+            .all(|(_, p)| p.summary.capabilities.nearby.is_err())
+        {
+            self.around.status = FindStatus::Done {
+                query: String::new(),
+                searched: Vec::new(),
+                failed: Vec::new(),
+            };
+            return;
+        }
+        self.search_generation += 1;
+        self.around.status = FindStatus::Searching {
+            generation: self.search_generation,
+        };
+        self.outbox.push(Request::Nearby {
+            generation: self.search_generation,
+            at,
+        });
+    }
+
+    fn on_nearby(
+        &mut self,
+        generation: u64,
+        hits: Vec<Hit>,
+        searched: &[usize],
+        failed: &[(usize, String)],
+    ) {
+        if self.around.status != (FindStatus::Searching { generation }) {
+            return;
+        }
+        let at = self.around.at.unwrap_or(self.view.center());
+        self.around.found = nearby::order(hits, at);
+        self.around.sel = 0;
+        self.around.status = FindStatus::Done {
+            query: String::new(),
+            searched: searched.iter().map(|i| self.title_of(*i)).collect(),
+            failed: failed.iter().map(|(i, _)| self.title_of(*i)).collect(),
+        };
+    }
+
+    /// Keys of the nearby screen: choose, Tab for one category at a time,
+    /// Enter to centre the map on the point.
+    fn nearby_key(&mut self, code: KeyCode) {
+        let n = self.around.shown().len();
+        match code {
+            KeyCode::Esc | KeyCode::Char('q' | 'n') => self.screen = Screen::Map,
+            KeyCode::Tab | KeyCode::BackTab => {
+                let cats = nearby::categories(&self.around.found);
+                let pos = self
+                    .around
+                    .filter
+                    .and_then(|f| cats.iter().position(|c| *c == f));
+                self.around.filter = if code == KeyCode::Tab {
+                    match pos {
+                        None => cats.first().copied(),
+                        Some(i) => cats.get(i + 1).copied(),
+                    }
+                } else {
+                    match pos {
+                        None => cats.last().copied(),
+                        Some(0) => None,
+                        Some(i) => cats.get(i - 1).copied(),
+                    }
+                };
+                self.around.sel = 0;
+            }
+            KeyCode::Up | KeyCode::Char('k') if n > 0 => {
+                self.around.sel = self.around.sel.saturating_sub(1)
+            }
+            KeyCode::Down | KeyCode::Char('j') if n > 0 => {
+                self.around.sel = (self.around.sel + 1).min(n - 1)
+            }
+            KeyCode::PageUp if n > 0 => self.around.sel = self.around.sel.saturating_sub(10),
+            KeyCode::PageDown if n > 0 => self.around.sel = (self.around.sel + 10).min(n - 1),
+            KeyCode::Home if n > 0 => self.around.sel = 0,
+            KeyCode::End if n > 0 => self.around.sel = n - 1,
+            KeyCode::Enter if n > 0 => {
+                let shown = self.around.shown();
+                if let Some(p) = shown.get(self.around.sel.min(n - 1)) {
+                    let (at, name) = (p.hit.at, p.hit.name.clone());
+                    self.view.set_center(at);
+                    if self.view.scale() > 20.0 {
+                        self.view.set_scale(20.0);
+                    }
+                    self.center_known = true;
+                    self.scale_known = true;
+                    self.screen = Screen::Map;
+                    self.moved();
+                    let name = fold_to(&name, 60).unwrap_or_else(|| "The place".into());
+                    self.notify(Level::Info, format!("{name}: at the crosshair."));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Keys of the go-to dialog.
+    fn goto_key(&mut self, k: KeyEvent) {
+        match k.code {
+            KeyCode::Esc => self.screen = Screen::Map,
+            KeyCode::Enter => {
+                match resilience_core::maps::geo::parse_coordinates(&self.goto.input) {
+                    Ok(at) => {
+                        self.view.set_center(at);
+                        self.center_known = true;
+                        self.screen = Screen::Map;
+                        self.goto.error = None;
+                        self.moved();
+                        self.notify(Level::Info, "The crosshair is on the coordinates.".into());
+                    }
+                    Err(e) => self.goto.error = Some(e.to_string()),
+                }
+            }
+            KeyCode::Backspace => {
+                self.goto.input.pop();
+                self.goto.error = None;
+            }
+            KeyCode::Char(c) if !c.is_control() && !k.modifiers.contains(KeyModifiers::CONTROL) => {
+                if self.goto.input.chars().count() < resilience_core::maps::geo::MAX_COORD_INPUT {
+                    self.goto.input.push(c);
+                }
+                self.goto.error = None;
+            }
+            _ => {}
+        }
     }
 
     /// Centre the map on a result, at a scale that suits its kind.
@@ -998,6 +1183,14 @@ impl MapApp {
                 self.search_key(k);
                 Effect::None
             }
+            Screen::Nearby => {
+                self.nearby_key(k.code);
+                Effect::None
+            }
+            Screen::GoTo => {
+                self.goto_key(k);
+                Effect::None
+            }
             Screen::Info { scroll } | Screen::Help { scroll } | Screen::Legend { scroll, .. } => {
                 let scroll = match k.code {
                     KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
@@ -1034,7 +1227,7 @@ impl MapApp {
                     Screen::Help { .. } => Screen::Help { scroll },
                     Screen::Legend { all, .. } => Screen::Legend { all, scroll },
                     Screen::Map => Screen::Map,
-                    Screen::Search => Screen::Search,
+                    s @ (Screen::Search | Screen::Nearby | Screen::GoTo) => s,
                 };
                 Effect::None
             }
@@ -1047,7 +1240,7 @@ impl MapApp {
             Screen::Info { scroll } | Screen::Help { scroll } | Screen::Legend { scroll, .. } => {
                 *scroll = (*scroll).min(max);
             }
-            Screen::Map | Screen::Search => {}
+            Screen::Map | Screen::Search | Screen::Nearby | Screen::GoTo => {}
         }
     }
 
@@ -1105,8 +1298,11 @@ impl MapApp {
             KeyCode::Char('?') | KeyCode::F(1) => self.screen = Screen::Help { scroll: 0 },
             KeyCode::Char('c') => self.offer_check(),
             KeyCode::Char('/') => self.screen = Screen::Search,
-            // Reserved for a later slice: nearby, go to coordinates.
-            KeyCode::Char('n' | 'g') => {}
+            KeyCode::Char('n') => self.start_nearby(),
+            KeyCode::Char('g') => {
+                self.goto.error = None;
+                self.screen = Screen::GoTo;
+            }
             _ => {}
         }
         Effect::None

@@ -16,5 +16,6 @@ pub mod label;
 pub mod mvt;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mvt_encode;
+pub mod nearby;
 pub mod search;
 pub mod style;
