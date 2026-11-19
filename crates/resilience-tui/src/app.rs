@@ -113,6 +113,8 @@ pub struct Paths {
     pub route6: PathBuf,
     /// Network interfaces.
     pub sys_net: PathBuf,
+    /// The shared folders (`files`, `pages`) of the community network.
+    pub shared_dir: PathBuf,
     /// The installer's configuration: only on live systems (ADR 0022).
     pub install_config: PathBuf,
     /// Present when the computer started with UEFI.
@@ -135,6 +137,7 @@ impl Default for Paths {
             route4: "/proc/net/route".into(),
             route6: "/proc/net/ipv6_route".into(),
             sys_net: "/sys/class/net".into(),
+            shared_dir: "/var/lib/resilience/shared".into(),
             install_config: resilience_core::install::INSTALL_CONFIG_PATH.into(),
             efi: "/sys/firmware/efi".into(),
         }
@@ -772,6 +775,12 @@ pub enum View {
         ticked: Vec<bool>,
         list: ListState,
     },
+    /// The files of a nearby computer's shared folder.
+    PeerFiles {
+        peer: resilience_core::share::Peer,
+        rows: Vec<resilience_core::share::SharedFile>,
+        list: ListState,
+    },
     /// The choices before sharing this computer's resources.
     ShareSetup {
         form: ShareForm,
@@ -836,6 +845,11 @@ pub enum Pending {
     PeerPacks {
         peer: String,
         get: Vec<String>,
+    },
+    /// Copy a file of a nearby computer's shared folder into ~/Received.
+    PeerGet {
+        peer: String,
+        name: String,
     },
     SetMode {
         user: String,
@@ -1318,6 +1332,7 @@ impl App {
             View::Community { .. }
             | View::PeerMenu { .. }
             | View::PeerPacks { .. }
+            | View::PeerFiles { .. }
             | View::ShareSetup { .. } => HelpTopic::Community,
             View::Network { .. } => HelpTopic::Network,
             View::Settings { .. } => HelpTopic::Settings,
@@ -1440,6 +1455,7 @@ impl App {
             View::Community { .. }
                 | View::PeerMenu { .. }
                 | View::PeerPacks { .. }
+                | View::PeerFiles { .. }
                 | View::ShareSetup { .. }
         ) {
             return self.community_key(view, key);
@@ -1454,6 +1470,7 @@ impl App {
             View::Community { .. }
             | View::PeerMenu { .. }
             | View::PeerPacks { .. }
+            | View::PeerFiles { .. }
             | View::ShareSetup { .. } => {}
             // Handled by licence_key in handle_key.
             View::Licence { .. } => {}
@@ -2368,7 +2385,8 @@ impl App {
             | Pending::RemovePgpKey { .. }
             | Pending::SetMesh { .. }
             | Pending::SetShare { .. }
-            | Pending::PeerPacks { .. } => return,
+            | Pending::PeerPacks { .. }
+            | Pending::PeerGet { .. } => return,
             Pending::Logout => (
                 "LOG OUT",
                 "End this session? Programs you started from here will be closed.",
@@ -2632,6 +2650,7 @@ impl App {
             }
             Pending::SetShare { args } => return self.set_share_effect(&args),
             Pending::PeerPacks { peer, get } => return self.peer_packs_effect(&peer, &get),
+            Pending::PeerGet { peer, name } => return self.peer_get_effect(&peer, &name),
             Pending::ForgetWifi { name, uuid } => {
                 self.forget_wifi(&name, &uuid);
                 return Effect::None;

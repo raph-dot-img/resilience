@@ -189,6 +189,8 @@ on Phase 6 (mesh, ADR 0021; Reticulum announces, ADR 0018), resource packs
 - ✅ **ADR 0025 (accepted by the owner 2026-11-19)** settles it: one read-only nginx on TCP 80 on one interface while an administrator shares (`set-share`, auth_admin), discovery by Reticulum announces (no mDNS), joining as the user (packs through the store's hash check, pages through a loopback relay and restricted lynx), hotspot with WPA2 and no forwarding (`set-hotspot`), expert names in the hotspot's DNS (`home.arpa`). Slices 2 to 7 in the ADR; THREAT_MODEL T46 to T50.
 - ✅ Slice 2, server side: `nix/modules/share.nix` (nginx, kiwix-serve, firewall chain, NetworkManager dispatcher), helper `set-share`, `vm-share`
 - ✅ Slice 3, discovery: `resilience-messages share` announces while sharing (`resilience-share-announce@IF`); each account's program records what it hears in `shares.json` (checked, local addresses only, 64 machines, 1 hour); `resilience_core::share::parse_heard`
+- ✅ Slice 4, joining: `resilience-library change --from-peer`, `peer-list`, `open-remote` (loopback relay, lynx `-localhost`), TUI Communications → Community network (computers heard, their library, pages and packs, sharing this computer), `vm-share` through the TUI
+- ✅ Slice 5, shared folder: `resilience-library peer-files` / `peer-get` (exact listed size, hidden `.partial`, then into ~/Received under a safe name, never replacing), TUI "Files in its shared folder"; the share form counts what will and will not be served
 - **An ADR comes first.** This is the first time a Resilience service
   accepts requests from the network: today nothing listens beyond
   `127.0.0.1` and the firewall allows nothing by default. The ADR settles

@@ -141,6 +141,7 @@ description = "Carol the admin"
         route4: sys.join("route"),
         route6: sys.join("ipv6_route"),
         sys_net: sys.join("net"),
+        shared_dir: sys.join("shared"),
         // Absent: not a live system (no installer).
         install_config: sys.join("install.toml"),
         efi: sys.join("efi"),
@@ -4830,7 +4831,7 @@ fn community_network_finds_reads_and_shares() {
     let View::PeerMenu { actions, .. } = a.view() else {
         panic!("a computer's menu");
     };
-    assert_eq!(actions.len(), 4);
+    assert_eq!(actions.len(), 5);
     press(&mut a, KeyCode::Esc);
 
     // Sharing: the form, the warning (Cancel first), then the helper.
@@ -4868,9 +4869,27 @@ fn community_network_finds_reads_and_shares() {
     type_text(&mut a, "School library");
     press(&mut a, KeyCode::Enter);
     assert!(a.modal.is_none());
+    let shared = a.paths.shared_dir.join("files");
+    std::fs::create_dir_all(&shared).expect("mkdir");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for (n, mode) in [
+            ("notice.txt", 0o644),
+            ("private.txt", 0o600),
+            (".hidden", 0o644),
+        ] {
+            std::fs::write(shared.join(n), "x").expect("w");
+            std::fs::set_permissions(shared.join(n), std::fs::Permissions::from_mode(mode))
+                .expect("chmod");
+        }
+    }
     let screen = render(&mut a, 100, 30);
     assert!(
         screen.contains("SHARE THIS COMPUTER'S RESOURCES"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("Shared folder: 1 file(s) served, 1 private"),
         "{screen}"
     );
     assert!(screen.contains("ANYONE"), "{screen}");

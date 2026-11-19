@@ -28,6 +28,22 @@ let
       --publisher=Resilience --name=fieldnotes_en src $out/fieldnotes_en_2026-01.zim
   '';
   zim = "${fieldnotes}/fieldnotes_en_2026-01.zim";
+  # Served under the name of a pack whose catalog hash (on near) differs.
+  tampered =
+    pkgs.runCommand "tampered_en_2026-01.zim" { }
+      "head -c 4096 /dev/zero | tr '\\0' x > $out";
+  tamperedEntry = {
+    id = "tampered";
+    title = "Tampered (test)";
+    description = "The server sends other bytes";
+    category = "practical";
+    language = "en";
+    file = "tampered_en_2026-01.zim";
+    size = 4096;
+    sha256 = "1111111111111111111111111111111111111111111111111111111111111111";
+    license = "CC0-1.0";
+    source = "Resilience test suite";
+  };
 
   client =
     { lib, pkgs, ... }:
@@ -78,11 +94,39 @@ in
           license = "CC0-1.0";
           source = "Resilience test suite";
         }
+        tamperedEntry
       ];
     };
-  # A Resilience machine whose account hears the server's announce.
+  # A Resilience machine whose account hears the server's announce, and
+  # gets packs from it through the TUI with an administrator's password.
   nodes.near =
-    { lib, pkgs, ... }:
+    {
+      config,
+      lib,
+      pkgs,
+      ...
+    }:
+    let
+      # Its own catalog: the field notes with their real hash (known once
+      # built), and the tampered pack with a hash the server's bytes miss.
+      catalog = pkgs.runCommand "packs-near.toml" { } ''
+        cat ${config.resilience.packs.configFile} > $out
+        cat >> $out <<EOF
+        [[pack]]
+        id = "fieldnotes"
+        title = "Field notes (test)"
+        description = "A tiny pack built by the test"
+        category = "practical"
+        language = "en"
+        file = "fieldnotes_en_2026-01.zim"
+        size = $(stat -c %s ${zim})
+        sha256 = "$(sha256sum ${zim} | cut -d' ' -f1)"
+        license = "CC0-1.0"
+        source = "Resilience test suite"
+        EOF
+        ${config.resilience.package}/bin/resilience-library check-config $out
+      '';
+    in
     {
       imports = [
         self.nixosModules.default
@@ -92,9 +136,16 @@ in
       virtualisation.memorySize = 1024;
       virtualisation.cores = 1;
       users.users.root.hashedPassword = lib.mkForce null;
-      resilience.users.alice.mode = "ultra-stable";
+      resilience.users = {
+        alice.mode = "ultra-stable";
+        carol.mode = "advanced";
+      };
+      users.users.carol.initialPassword = "carol-pw";
       resilience.interface.autologinUser = "alice";
       resilience.comms.enable = true;
+      resilience.share.enable = true;
+      resilience.packs.catalog = lib.mkForce [ tamperedEntry ];
+      environment.etc."resilience/packs.toml".source = lib.mkForce catalog;
       environment.systemPackages = [ pkgs.curl ];
     };
   nodes.far =
@@ -105,7 +156,36 @@ in
     };
 
   testScript = ''
+    import base64, re, time as _time
+
     HELPER = "resilience-admin"
+
+    def tty_text(m):
+        """near's tty1 from /dev/vcsu1 (UTF-32); see modes.nix."""
+        cols = int(m.wait_until_succeeds("stty -F /dev/tty1 size", timeout=10).split()[1])
+        raw = base64.b64decode(m.succeed("base64 -w0 /dev/vcsu1"))
+        text = raw.decode("utf-32-le", errors="replace")
+        return "\n".join(text[i:i + cols] for i in range(0, len(text), cols))
+
+    def wait_tty(m, regexp, timeout=60):
+        deadline = _time.monotonic() + timeout
+        while True:
+            text = tty_text(m)
+            if re.search(regexp, text):
+                return text
+            if _time.monotonic() > deadline:
+                print(text)
+                raise Exception(f"timed out waiting for {regexp!r}")
+            _time.sleep(0.5)
+
+    def select(m, regexp):
+        """Move the list selection to the line matching `regexp`."""
+        for _ in range(12):
+            if re.search(r"> " + regexp, tty_text(m)):
+                return
+            m.send_key("down")
+            _time.sleep(0.3)
+        raise Exception(f"line {regexp!r} not found:\n" + tty_text(m))
     AS_ALICE = "runuser -u alice -- "
     PACKS = "/var/lib/resilience/packs"
     SHARED = "/var/lib/resilience/shared"
@@ -128,6 +208,7 @@ in
     # Content: a catalog pack, a pack not in the catalog, shared files.
     server.succeed(f"install -m 0644 -o resilience-packs ${zim} {PACKS}/{ZIM}")
     server.succeed(f"echo not listed > {PACKS}/notlisted_en.zim && chmod 0644 {PACKS}/notlisted_en.zim")
+    server.succeed(f"install -m 0644 -o resilience-packs ${tampered} {PACKS}/tampered_en_2026-01.zim")
     server.succeed(f"echo 'public notice sharedfileword' > {SHARED}/files/notice.txt && chmod 0644 {SHARED}/files/notice.txt")
     server.succeed(f"echo 'private sharedsecretword' > {SHARED}/files/private.txt && chmod 0600 {SHARED}/files/private.txt")
     server.succeed(f"echo hidden > {SHARED}/files/.hidden && chmod 0644 {SHARED}/files/.hidden")
@@ -195,6 +276,84 @@ in
         assert all(a == ip1 or a.startswith("fe80:") for a in entry["addresses"]), entry
         # The announcer runs as a dynamic user.
         server.succeed("systemctl show -p DynamicUser --value resilience-share-announce@eth1.service | grep -qx yes")
+
+    with subtest("joining through the TUI: packs checked, the library through the relay"):
+        near.succeed("dmesg -n 1")
+        wait_tty(near, "MAIN MENU")
+        near.send_chars("/community")
+        wait_tty(near, "Community network: share")
+        near.send_key("ret")
+        wait_tty(near, "COMMUNITY NETWORK")
+        wait_tty(near, r'"Test shelter"\?', timeout=60)
+        assert ip1 in tty_text(near), tty_text(near)
+        select(near, r'"Test shelter"\?')
+        near.send_key("ret")
+        wait_tty(near, "NEARBY COMPUTER")
+        select(near, "Get packs from it")
+        near.send_key("ret")
+        wait_tty(near, "PACKS FROM A NEARBY COMPUTER", timeout=40)
+        for title in ("Field notes", "Tampered"):
+            select(near, r"\[ \] " + title)
+            near.send_chars(" ")
+            wait_tty(near, r"\[\+\] " + title)
+        near.send_key("ret")
+        wait_tty(near, "GET PACKS")
+        near.send_key("left")
+        near.send_key("ret")
+        wait_tty(near, "AUTHENTICATING FOR org.resilience.packs.change", timeout=30)
+        wait_tty(near, "Choose identity|Password:")
+        if "Choose identity" in tty_text(near):
+            m = re.search(r"(\d)\. .*carol", tty_text(near))
+            assert m, tty_text(near)
+            near.send_chars(m.group(1) + "\n")
+            wait_tty(near, "Password:")
+        near.send_chars("carol-pw\n")
+        wait_tty(near, r"Field notes \(test\): installed and checked", timeout=90)
+        wait_tty(near, r"Tampered \(test\): the data received is not the expected", timeout=60)
+        got = near.succeed(f"sha256sum {PACKS}/{ZIM}").split()[0]
+        assert got == server.succeed(f"sha256sum {PACKS}/{ZIM}").split()[0]
+        near.fail(f"test -e {PACKS}/tampered_en_2026-01.zim")
+        near.fail(f"ls {PACKS}/.staging/tampered* {PACKS}/.staging/fieldnotes*")
+        wait_tty(near, "Press Enter to return", timeout=30)
+        near.send_key("ret")
+        wait_tty(near, "NEARBY COMPUTER")
+        # The library: lynx stays on localhost; the relay carries it.
+        select(near, "Read its library")
+        near.send_key("ret")
+        wait_tty(near, "Press Enter to open them")
+        near.send_key("ret")
+        wait_tty(near, "Field notes", timeout=60)
+        assert "JavaScript" not in tty_text(near), tty_text(near)
+        args = near.succeed("pgrep -a -u alice lynx")
+        assert "http://localhost:" in args and ip1 not in args, args
+        assert "-localhost" in args, args
+        near.send_chars("q")
+        wait_tty(near, "Are you sure you want to quit")
+        near.send_chars("y")
+        wait_tty(near, "NEARBY COMPUTER")
+        near.fail("pgrep -u alice lynx")
+        # Shared folder (slice 5): a file copied into ~/Received under its
+        # name, 0600; the private file is listed by nginx but refused (403),
+        # and nothing is kept.
+        select(near, "Files in its shared folder")
+        near.send_key("ret")
+        wait_tty(near, "SHARED FOLDER OF A NEARBY COMPUTER", timeout=40)
+        for name, ok in (("notice.txt", True), ("private.txt", False)):
+            select(near, re.escape(name))
+            near.send_key("ret")
+            wait_tty(near, "COPY A FILE")
+            near.send_key("left")
+            near.send_key("ret")
+            wait_tty(near, "Saved as" if ok else "Nothing was kept", timeout=60)
+            wait_tty(near, "Press Enter to return", timeout=30)
+            near.send_key("ret")
+            wait_tty(near, "SHARED FOLDER OF A NEARBY COMPUTER")
+        got = near.succeed("cat /home/alice/Received/notice.txt")
+        assert "sharedfileword" in got, got
+        assert near.succeed("stat -c %a /home/alice/Received/notice.txt").strip() == "600"
+        near.fail("ls /home/alice/Received/private* /home/alice/Received/.download-*")
+        near.send_key("esc")
+        wait_tty(near, "NEARBY COMPUTER")
 
     with subtest("packs: catalog files only, the exact bytes"):
         index = near.succeed(f"curl -sf http://{ip1}/")

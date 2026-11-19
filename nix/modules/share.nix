@@ -229,7 +229,7 @@ let
       echo 'trustworthy as whoever runs this computer.</p><ul>'
       for s in $services; do
         case "$s" in
-          library) echo '<li><a href="/library/">Library</a> (encyclopedias, guides, documentation)</li>' ;;
+          library) echo '<li><a href="/library/nojs">Library</a> (encyclopedias, guides, documentation)</li>' ;;
           files) echo '<li><a href="/files/">Shared folder</a></li>' ;;
           pages) echo '<li><a href="/pages/">Pages</a></li>' ;;
           packs) echo '<li><a href="#packs">Packs to download</a></li>' ;;

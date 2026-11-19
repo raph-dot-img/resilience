@@ -34,6 +34,7 @@ use super::{
 pub const NEARBY_LABEL: &str = "Nearby computer";
 pub const PEER_PACKS_LABEL: &str = "Packs from a nearby computer";
 pub const SET_SHARE_LABEL: &str = "Sharing";
+pub const PEER_FILE_LABEL: &str = "A file from a nearby computer";
 
 /// The lists are read again this often while the screen is shown.
 const RELOAD_TICKS: u64 = 8;
@@ -63,6 +64,7 @@ pub enum PeerAction {
     Index,
     Library,
     Pages,
+    Files,
     Packs,
 }
 
@@ -72,6 +74,7 @@ impl PeerAction {
             PeerAction::Index => "Its front page (what it shares)",
             PeerAction::Library => "Read its library (encyclopedias, guides...)",
             PeerAction::Pages => "Read its pages (notices, news)",
+            PeerAction::Files => "Files in its shared folder (copy one into Received)",
             PeerAction::Packs => "Get packs from it (checked before installing)",
         }
     }
@@ -81,7 +84,7 @@ impl PeerAction {
             PeerAction::Index => Some("index"),
             PeerAction::Library => Some("library"),
             PeerAction::Pages => Some("pages"),
-            PeerAction::Packs => None,
+            PeerAction::Files | PeerAction::Packs => None,
         }
     }
 }
@@ -225,6 +228,7 @@ impl App {
         for (s, a) in [
             (Service::Library, PeerAction::Library),
             (Service::Pages, PeerAction::Pages),
+            (Service::Files, PeerAction::Files),
             (Service::Packs, PeerAction::Packs),
         ] {
             if services.contains(&s) {
@@ -292,6 +296,97 @@ impl App {
             ticked,
             list: ListState::default().with_selected(sel),
         })
+    }
+
+    /// The files of `peer`'s shared folder (`resilience-library
+    /// peer-files`, which checks the address again and talks to it).
+    fn peer_files_view(&mut self, peer: &Peer) -> Option<View> {
+        let addr = peer.display();
+        let out = run_full(
+            &[self.sys.tools.library.as_str(), "peer-files", addr.as_str()],
+            Duration::from_secs(25),
+        );
+        let text = match out {
+            Some(o) if o.success() => o.stdout,
+            Some(o) => {
+                let why: String = o
+                    .stderr
+                    .lines()
+                    .rev()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("no answer")
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(200)
+                    .collect();
+                self.notify(Level::Error, format!("No list of files: {why}"));
+                return None;
+            }
+            None => {
+                self.notify(Level::Error, "The computer did not answer in time.");
+                return None;
+            }
+        };
+        let rows: Vec<share::SharedFile> = text
+            .lines()
+            .filter_map(|l| {
+                let (name, size) = l.rsplit_once('\t')?;
+                let size = size.parse().ok()?;
+                share::valid_shared_name(name).then(|| share::SharedFile {
+                    name: name.to_string(),
+                    size,
+                })
+            })
+            .take(share::MAX_FOLDER_FILES)
+            .collect();
+        let sel = (!rows.is_empty()).then_some(0);
+        Some(View::PeerFiles {
+            peer: peer.clone(),
+            rows,
+            list: ListState::default().with_selected(sel),
+        })
+    }
+
+    /// `resilience-library peer-get ADDRESS NAME`.
+    pub(super) fn peer_get_effect(&self, peer: &str, name: &str) -> Effect {
+        tracing::info!(peer, "file from a nearby computer requested");
+        Effect::Run(RunRequest {
+            label: PEER_FILE_LABEL.into(),
+            argv: vec![
+                self.sys.tools.library.clone(),
+                "peer-get".into(),
+                peer.to_string(),
+                name.to_string(),
+            ],
+            extra_args: Vec::new(),
+            env: Vec::new(),
+            polkit_agent: None,
+            clean_env: false,
+            pause_after: true,
+            banner: None,
+        })
+    }
+
+    /// In a shared folder (`files` or `pages`): how many files everyone
+    /// may read (they are served) and how many are private (not served).
+    /// Hidden files are never served and not counted.
+    pub(crate) fn shared_counts(&self, sub: &str) -> (usize, usize) {
+        use std::os::unix::fs::PermissionsExt;
+        let mut out = (0, 0);
+        let Ok(d) = std::fs::read_dir(self.paths.shared_dir.join(sub)) else {
+            return out;
+        };
+        for e in d.flatten().take(10_000) {
+            if e.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            match std::fs::symlink_metadata(e.path()) {
+                Ok(m) if m.is_file() && m.permissions().mode() & 0o004 != 0 => out.0 += 1,
+                Ok(_) => out.1 += 1,
+                Err(_) => {}
+            }
+        }
+        out
     }
 
     /// Network interfaces that are up, not the loopback.
@@ -542,6 +637,10 @@ impl App {
                             let p = peer.clone();
                             next = self.peer_packs_view(&p);
                         }
+                        Some(PeerAction::Files) => {
+                            let p = peer.clone();
+                            next = self.peer_files_view(&p);
+                        }
                         Some(a) => {
                             if let Some(w) = a.what() {
                                 effect = self.open_remote_effect(peer, w);
@@ -611,6 +710,38 @@ impl App {
                 _ if is_back(key) => return (None, Effect::None),
                 _ => nav(list, rows.len(), key),
             },
+            View::PeerFiles { peer, rows, list } => {
+                if is_activate(key) {
+                    if let Some(f) = list.selected().and_then(|i| rows.get(i)) {
+                        if f.size > share::MAX_FOLDER_FILE {
+                            self.notify(Level::Warn, "This file is too large to copy.");
+                        } else {
+                            self.modal = Some(Modal::Confirm {
+                                title: "COPY A FILE".into(),
+                                body: format!(
+                                    "Copy '{}' ({}) from the computer at {} into your \
+                                     Received folder?\n\nIt is not checked: it is as \
+                                     trustworthy as whoever runs that computer. Nothing is \
+                                     replaced, and it is never run.",
+                                    resilience_core::messages::clean_line(&f.name, 80),
+                                    resilience_core::human_bytes(f.size),
+                                    peer.display()
+                                ),
+                                confirm: "Copy".into(),
+                                action: Pending::PeerGet {
+                                    peer: peer.display(),
+                                    name: f.name.clone(),
+                                },
+                                yes_focused: false,
+                            });
+                        }
+                    }
+                } else if is_back(key) {
+                    return (None, Effect::None);
+                } else {
+                    nav(list, rows.len(), key);
+                }
+            }
             View::ShareSetup { form, list } => {
                 let row = list.selected().unwrap_or(0);
                 if key.code == KeyCode::Char(' ') || is_activate(key) {

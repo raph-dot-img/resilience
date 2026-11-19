@@ -168,6 +168,7 @@ pub fn lines(topic: HelpTopic, mode: Mode) -> Vec<String> {
             "  Packs you get from it are checked against this system's catalog before they",
             "  are installed; a pack that does not match is refused. Pages are not checked.",
             "  On the list of its packs: Space ticks, Enter gets the ticked packs.",
+            "  On its shared folder: Enter copies a file into your Received folder.",
             "  Sharing this computer needs an administrator's password. Everything shared",
             "  can be read by anyone on that network. It stops when you stop it, when the",
             "  network changes, or when the computer restarts.",

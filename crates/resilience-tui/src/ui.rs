@@ -195,6 +195,7 @@ fn footer_hints(view: &View) -> &'static str {
         View::Community { .. } => "Enter Open  a Type an address  r Refresh  Esc Back  F1 Help",
         View::PeerMenu { .. } => "Enter Open  Esc Back  F1 Help",
         View::PeerPacks { .. } => "Space Tick  Enter/d Get the ticked packs  Esc Back",
+        View::PeerFiles { .. } => "Enter Copy into Received  Esc Back  F1 Help",
         View::ShareSetup { .. } => "Enter/Space Change  Up/Down Move  Esc Cancel  F1 Help",
         View::Settings { .. } => "Enter Apply  Esc Back",
         View::Install { .. } => "Enter Change  m Mode  f Full name  a Add  d Remove  Esc  F1 Help",
@@ -370,6 +371,7 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
             ticked,
             list,
         } => draw_peer_packs(f, app, area, peer, rows, ticked, list),
+        View::PeerFiles { peer, rows, list } => draw_peer_files(f, app, area, peer, rows, list),
         View::ShareSetup { form, list } => draw_share_setup(f, app, area, form, list),
         View::Chat {
             peer,
@@ -3165,7 +3167,7 @@ fn draw_share_setup(f: &mut Frame, app: &App, area: Rect, form: &ShareForm, list
     }
     items.push(ListItem::new(Span::styled("Share now...", t.accent)));
     debug_assert_eq!(items.len(), crate::app::SHARE_ROWS);
-    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(6)]).areas(area);
+    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(7)]).areas(area);
     draw_list(f, &t, l, "SHARE THIS COMPUTER'S RESOURCES", items, list, "");
     details(
         f,
@@ -3176,10 +3178,63 @@ fn draw_share_setup(f: &mut Frame, app: &App, area: Rect, form: &ShareForm, list
                 "Everything you share can be read by ANYONE on this network.",
                 t.warn,
             )),
-            Line::from(
-                "Only one network at a time. Only files everyone on this computer may read \
-                 are served from the shared folders. Nothing can be sent to this computer.",
-            ),
+            Line::from({
+                let (f_ok, f_no) = app.shared_counts("files");
+                let (p_ok, p_no) = app.shared_counts("pages");
+                format!(
+                    "Shared folder: {f_ok} file(s) served, {f_no} private or not a file \
+                     (not served). Pages: {p_ok} served, {p_no} not served. Only files \
+                     everyone on this computer may read are served."
+                )
+            }),
+            Line::from(Span::styled(
+                "Only one network at a time. Nothing can be sent to this computer.",
+                t.dim,
+            )),
+        ],
+    );
+}
+
+fn draw_peer_files(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    peer: &resilience_core::share::Peer,
+    rows: &[resilience_core::share::SharedFile],
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    let items: Vec<ListItem> = rows
+        .iter()
+        .map(|r| {
+            ListItem::new(format!(
+                "{:<56.56} {:>10}",
+                messages::clean_line(&r.name, 56),
+                human_bytes(r.size)
+            ))
+        })
+        .collect();
+    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(5)]).areas(area);
+    draw_list(
+        f,
+        &t,
+        l,
+        "SHARED FOLDER OF A NEARBY COMPUTER",
+        items,
+        list,
+        "This computer's shared folder is empty.",
+    );
+    details(
+        f,
+        &t,
+        d,
+        vec![
+            Line::from(format!("From {}.", peer.display())),
+            Line::from(Span::styled(
+                "Files are not checked. A copy goes into your Received folder; read it \
+                 with Find & view files.",
+                t.dim,
+            )),
         ],
     );
 }

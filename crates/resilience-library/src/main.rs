@@ -12,6 +12,8 @@
 //!                                               install packs from a nearby
 //!                                               machine that shares (ADR 0025)
 //! resilience-library peer-list ADDRESS          catalog packs a nearby machine offers
+//! resilience-library peer-files ADDRESS         files in its shared folder
+//! resilience-library peer-get ADDRESS NAME      copy one of them into ~/Received
 //! resilience-library open-remote ADDRESS index|library|pages
 //!                                               read a nearby machine's pages
 //! ```
@@ -62,6 +64,8 @@ Usage:
   resilience-library check FILE
   resilience-library change --from-peer ADDRESS --get ID...
   resilience-library peer-list ADDRESS
+  resilience-library peer-files ADDRESS
+  resilience-library peer-get ADDRESS NAME
   resilience-library open-remote ADDRESS index|library|pages";
 
 enum Failure {
@@ -78,6 +82,12 @@ fn main() -> ExitCode {
         Some("open") => config().and_then(|c| open(&c, &args[1..])),
         Some("check") if args.len() == 2 => config().and_then(|c| check(&c, Path::new(&args[1]))),
         Some("peer-list") if args.len() == 2 => config().and_then(|c| peer_list(&c, &args[1])),
+        Some("peer-files") if args.len() == 2 => {
+            config().and_then(|c| peer_files(&c, &args[1]).map(|_| ()))
+        }
+        Some("peer-get") if args.len() == 3 => {
+            config().and_then(|c| peer_get(&c, &args[1], &args[2]))
+        }
         Some("open-remote") if args.len() == 3 => {
             config().and_then(|c| open_remote(&c, &args[1], &args[2]))
         }
@@ -843,12 +853,176 @@ fn peer_list(cfg: &PackConfig, address: &str) -> Result<(), Failure> {
     Ok(())
 }
 
+/// Fetch a small page from a peer into memory (at most `max` bytes).
+fn peer_page(cfg: &PackConfig, p: &Peer, path: &str, max: u64) -> Result<String, Failure> {
+    let mut argv = vec![cfg.curl.clone()];
+    argv.extend(peer::curl_args(p, path, 0));
+    argv.splice(1..1, ["--max-filesize".to_string(), max.to_string()]);
+    let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let out = resilience_core::proc::run_full(&args, Duration::from_secs(20))
+        .ok_or_else(|| Failure::Error("The computer did not answer in time.".into()))?;
+    if !out.success() {
+        return Err(Failure::Error(format!(
+            "The computer at {} did not answer: {}",
+            p.display(),
+            resilience_core::printable(out.stderr.trim())
+        )));
+    }
+    Ok(out.stdout)
+}
+
+/// The files of a nearby machine's shared folder: `NAME<TAB>SIZE` lines.
+fn peer_files(
+    cfg: &PackConfig,
+    address: &str,
+) -> Result<Vec<resilience_core::share::SharedFile>, Failure> {
+    let p = peer::resolve(address).map_err(Failure::Refused)?;
+    let page = peer_page(cfg, &p, "/files/", 1 << 20)?;
+    let files = resilience_core::share::parse_listing(&page);
+    for f in &files {
+        println!("{}\t{}", f.name, f.size);
+    }
+    Ok(files)
+}
+
+/// Copy one file of a nearby machine's shared folder into ~/Received
+/// (ADR 0025 §5, with the rules of ADR 0020): the size its listing gives
+/// and not one byte more, a hidden `.partial` file (0600) until complete,
+/// then moved in under a safe name that never replaces a file.
+fn peer_get(cfg: &PackConfig, address: &str, name: &str) -> Result<(), Failure> {
+    use resilience_core::share::{self, MAX_FOLDER_FILE};
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    if !share::valid_shared_name(name) {
+        return Err(Failure::Refused("Not a file name.".into()));
+    }
+    let p = peer::resolve(address).map_err(Failure::Refused)?;
+    let listing = share::parse_listing(&peer_page(cfg, &p, "/files/", 1 << 20)?);
+    let f = listing.iter().find(|f| f.name == name).ok_or_else(|| {
+        Failure::Refused(format!(
+            "{} is not in that computer's shared folder.",
+            resilience_core::printable(name)
+        ))
+    })?;
+    if f.size > MAX_FOLDER_FILE {
+        return Err(Failure::Refused(format!(
+            "{} is too large ({}; at most {}).",
+            resilience_core::printable(name),
+            human_bytes(f.size),
+            human_bytes(MAX_FOLDER_FILE)
+        )));
+    }
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| Failure::Error("No home folder.".into()))?;
+    let dest = home.join(resilience_core::messages::RECEIVED_DIR);
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dest)
+        .map_err(|e| Failure::Error(format!("{}: {e}", dest.display())))?;
+    if free_bytes(&dest).is_some_and(|free| free < f.size + 64 * 1024 * 1024) {
+        return Err(Failure::Refused(format!(
+            "Not enough free space for {} ({}).",
+            resilience_core::printable(name),
+            human_bytes(f.size)
+        )));
+    }
+    // SAFETY: getpid cannot fail.
+    let pid = unsafe { libc::getpid() };
+    let partial = dest.join(format!(".download-{pid}.partial"));
+    let _ = fs::remove_file(&partial);
+    let mut out = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&partial)
+        .map_err(|e| Failure::Error(format!("{}: {e}", partial.display())))?;
+    println!(
+        "{} ({}) from the computer at {}",
+        resilience_core::printable(name),
+        human_bytes(f.size),
+        p.display()
+    );
+    let path = format!("/files/{}", share::percent_encode(name));
+    let mut cmd = Command::new(&cfg.curl);
+    cmd.args(peer::curl_args(&p, &path, 0));
+    let result = (|| -> Result<(), String> {
+        let (mut child, mut body) = spawn_curl(cmd).map_err(|e| format!("curl: {e}"))?;
+        let mut buf = vec![0u8; CHUNK];
+        let mut got: u64 = 0;
+        let mut progress = Progress::new(f.size, 0);
+        loop {
+            let n = match body.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(e.to_string());
+                }
+            };
+            got += n as u64;
+            if got > f.size {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("the computer sent more than the file's size".into());
+            }
+            out.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+            progress.add(n as u64);
+        }
+        let status = child.wait().map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err(format!("download failed ({status})"));
+        }
+        if got != f.size {
+            return Err("the download stopped before the end".into());
+        }
+        out.sync_all().map_err(|e| e.to_string())
+    })();
+    eprintln!();
+    if let Err(e) = result {
+        let _ = fs::remove_file(&partial);
+        return Err(Failure::Error(format!(
+            "{}: {e}. Nothing was kept.",
+            resilience_core::printable(name)
+        )));
+    }
+    match resilience_core::messages::move_into(&partial, &dest, name) {
+        Ok(to) => {
+            println!(
+                "Saved as {}.\nIt was not checked: open it only with care.",
+                to.display()
+            );
+            Ok(())
+        }
+        Err(e) => {
+            let _ = fs::remove_file(&partial);
+            Err(Failure::Error(format!("Cannot save it: {e}")))
+        }
+    }
+}
+
+/// Free bytes for an unprivileged user on the file system of `p`.
+fn free_bytes(p: &Path) -> Option<u64> {
+    let c = std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok()?;
+    // SAFETY: zeroed statvfs is a valid out-parameter; `c` is NUL-terminated.
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: valid pointers for the duration of the call.
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    Some(st.f_bavail as u64 * st.f_frsize as u64)
+}
+
 /// Read a nearby machine's index, library or pages in the text browser,
 /// through a relay on 127.0.0.1 (lynx keeps `-localhost`).
 fn open_remote(cfg: &PackConfig, address: &str, what: &str) -> Result<(), Failure> {
     let path = match what {
         "index" => "/",
-        "library" => "/library/",
+        // kiwix-serve's list of books without JavaScript.
+        "library" => "/library/nojs",
         "pages" => "/pages/",
         _ => return Err(Failure::Usage),
     };

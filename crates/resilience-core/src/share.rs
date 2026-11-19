@@ -602,6 +602,93 @@ pub fn peer_for(h: &HeardShare, route4: &str, route6: &str) -> Option<Peer> {
         })
 }
 
+/// The largest file taken from a nearby computer's shared folder.
+pub const MAX_FOLDER_FILE: u64 = 4 * 1024 * 1024 * 1024;
+/// At most this many files are listed.
+pub const MAX_FOLDER_FILES: usize = 2000;
+
+/// A file in a nearby computer's shared folder, as its listing says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedFile {
+    pub name: String,
+    pub size: u64,
+}
+
+fn percent_decode(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' {
+            let h = std::str::from_utf8(b.get(i + 1..i + 3)?).ok()?;
+            out.push(u8::from_str_radix(h, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// `name` for a URL path: everything but unreserved characters escaped.
+pub fn percent_encode(name: &str) -> String {
+    name.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+
+/// A file name as served: one path component, no dot first, no control
+/// characters, at most 255 bytes.
+pub fn valid_shared_name(n: &str) -> bool {
+    !n.is_empty()
+        && n.len() <= 255
+        && !n.starts_with('.')
+        && !n.contains(['/', '\\'])
+        && !n.chars().any(char::is_control)
+}
+
+/// The files of nginx's listing of the shared folder (`autoindex` with
+/// exact sizes): `<a href="NAME">...</a>  DATE TIME  SIZE`. Folders, the
+/// parent link and anything malformed are left out.
+pub fn parse_listing(html: &str) -> Vec<SharedFile> {
+    let mut out = Vec::new();
+    for line in html.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("<a href=\"") else {
+            continue;
+        };
+        let Some((href, after)) = rest.split_once('"') else {
+            continue;
+        };
+        if href.ends_with('/') {
+            continue;
+        }
+        let Some(name) = percent_decode(href).filter(|n| valid_shared_name(n)) else {
+            continue;
+        };
+        let Some(size) = after
+            .split_whitespace()
+            .last()
+            .and_then(|t| t.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        if !out.iter().any(|f: &SharedFile| f.name == name) {
+            out.push(SharedFile { name, size });
+        }
+        if out.len() >= MAX_FOLDER_FILES {
+            break;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -993,5 +1080,42 @@ fd000000000000000000000000000000 40 00000000000000000000000000000000 00 00000000
         );
         assert!(peer_for(&h(&["10.9.9.9", "fd01::9"]), ROUTE4, ROUTE6).is_none());
         assert!(peer_for(&h(&["fe80::9"]), "", "").is_none());
+    }
+
+    #[test]
+    fn shared_folder_listing() {
+        let html = "<html><head><title>Index of /files/</title></head>\n<body>\n<h1>Index of /files/</h1><hr><pre><a href=\"../\">../</a>\n\
+<a href=\"sub/\">sub/</a>                                               19-Nov-2026 12:00                   -\n\
+<a href=\"notice.txt\">notice.txt</a>                                         19-Nov-2026 12:00                  30\n\
+<a href=\"Plan%20de%20l%27%C3%A9cole.pdf\">Plan de l&apos;école.pdf</a>      19-Nov-2026 12:00              123456\n\
+<a href=\"%2Eevil\">x</a>  19-Nov-2026 12:00  5\n\
+<a href=\"a%2Fb\">x</a>  19-Nov-2026 12:00  5\n\
+<a href=\"bad%0Aname\">x</a>  19-Nov-2026 12:00  5\n\
+<a href=\"nosize\">x</a>  19-Nov-2026 12:00  -\n\
+<a href=\"%zz\">x</a>  19-Nov-2026 12:00  5\n\
+</pre><hr></body></html>";
+        let got = parse_listing(html);
+        assert_eq!(
+            got,
+            [
+                SharedFile {
+                    name: "notice.txt".into(),
+                    size: 30
+                },
+                SharedFile {
+                    name: "Plan de l'école.pdf".into(),
+                    size: 123456
+                },
+            ]
+        );
+        assert_eq!(
+            percent_encode("Plan de l'école.pdf"),
+            "Plan%20de%20l%27%C3%A9cole.pdf"
+        );
+        assert_eq!(
+            percent_decode(&percent_encode("a b%c")).as_deref(),
+            Some("a b%c")
+        );
+        assert!(parse_listing("").is_empty());
     }
 }
