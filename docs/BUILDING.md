@@ -107,3 +107,12 @@ Uploading (the owner's server, through Tor): a key restricted with
 `rsync -rt --partial --ignore-existing --delay-updates --chmod=D755,F644
 OUTDIR/releases/ yoga-mirror-claude:releases/`, and the top files last.
 Published files are never changed: `--ignore-existing` keeps it so.
+
+On a connection that drops (as for 0.2.0 and 0.4.0, 2026-11-18), the
+release went first into a hidden `.staging/VERSION/` (nginx does not serve
+dotfiles) with `rsync -rt --append-verify --chmod=D700,F644`, retried until
+complete, then on the server `sha256sum -c SHA256SUMS`, `chmod 644` on every
+file, `chmod 755` on the folder and one `mv -n` into `releases/`. Check
+from outside that **every file answers HTTP 200**: a file whose transfer
+was resumed can keep rsync's temporary mode 0600 despite `--chmod`, and
+nginx then answers 403 (it happened to both ISOs; fixed with `chmod 644`).
