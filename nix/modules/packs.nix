@@ -282,6 +282,12 @@ in
         (ADR 0016).
       '';
     };
+    builtinZimFiles = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      internal = true;
+      description = "Store paths of the built-in ZIM packs (served by sharing, ADR 0025).";
+    };
     configFile = mkOption {
       type = types.package;
       readOnly = true;
@@ -301,6 +307,7 @@ in
 
   config = lib.mkIf cfg.enable {
     resilience.packs.configFile = packsConfig;
+    resilience.packs.builtinZimFiles = lib.optional cfg.builtinDocs "${docsPack}/share/resilience/packs/resilience-system-docs.zim";
 
     assertions = [
       {

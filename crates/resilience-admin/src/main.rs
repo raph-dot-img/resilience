@@ -17,6 +17,8 @@
 //! resilience-admin set-default-generation N   root (pkexec / sudo), ADR 0011
 //! resilience-admin set-keymap LAYOUT     root (pkexec, no password), ADR 0017
 //! resilience-admin set-mesh on|off       root (pkexec, no password), ADR 0021
+//! resilience-admin set-share on IF --name NAME SERVICE... | off
+//!                                        root (pkexec / sudo), ADR 0025
 //! resilience-admin record-licence SHA256  root (pkexec, no password), ADR 0024
 //! resilience-admin check-update DIR      any user, read-only, ADR 0023
 //! resilience-admin apply-update DIR      root (pkexec / sudo), ADR 0023
@@ -55,6 +57,10 @@ Usage:
                                          Start system generation N at every boot
   resilience-admin set-keymap LAYOUT     Load a console keyboard layout of this system
   resilience-admin set-mesh on|off       Turn the Wi-Fi mesh on or off (ADR 0021)
+  resilience-admin set-share on INTERFACE --name NAME SERVICE...
+                                         Share on one network (ADR 0025); SERVICE is
+                                         packs, library, files or pages
+  resilience-admin set-share off         Stop sharing
   resilience-admin record-licence SHA256 Record that you read the licence (ADR 0024)
   resilience-admin check-update DIR      Check the update in DIR without installing it
   resilience-admin apply-update DIR      Install the update in DIR (USB stick, ADR 0023)
@@ -71,6 +77,7 @@ fn main() -> ExitCode {
         ["set-default-generation", n] => set_default_generation(n),
         ["set-keymap", id] => set_keymap(id),
         ["set-mesh", state] => set_mesh(state),
+        ["set-share", rest @ ..] => set_share(rest),
         ["record-licence", hash] => record_licence(hash),
         ["check-update", dir] => apply_update::check_update(dir),
         ["apply-update", dir] => apply_update::apply_update(dir),
@@ -543,6 +550,132 @@ fn set_mesh(requested: &str) -> Result<()> {
             Err(Failure::Error("systemctl did not finish".into()))
         }
     }
+}
+
+/// Share offline resources on one network (ADR 0025), or stop: start or
+/// stop the share units of that one interface, after writing the
+/// validated request for them. An administrator's password every time
+/// (polkit auth_admin), also to stop.
+fn set_share(args: &[&str]) -> Result<()> {
+    use resilience_core::share::{self, ShareRequest};
+    if !is_root() {
+        return Err(Failure::Permission);
+    }
+    let cfg = AdminConfig::load().map_err(err)?;
+    let (uid, by) = caller();
+    let uid_s = uid.to_string();
+    let _lock = lock(&cfg)?;
+    let shown: String = args.join(" ");
+    let base = [
+        ("op", "set-share"),
+        ("caller", by.as_str()),
+        ("caller_uid", uid_s.as_str()),
+        ("request", shown.as_str()),
+    ];
+    let outcome = |extra: &[(&str, &str)]| {
+        let mut f = base.to_vec();
+        f.extend_from_slice(extra);
+        audit(&cfg, &f);
+    };
+    let refuse = |reason: String| {
+        outcome(&[("result", "refused"), ("reason", &reason)]);
+        Failure::Refused(reason)
+    };
+    let req = share::parse_request(args).map_err(|r| refuse(r.to_string()))?;
+    let facts = match &req {
+        ShareRequest::On { interface, .. } => {
+            // A validated name: no `/`, no `..`.
+            let dir = std::path::Path::new("/sys/class/net").join(interface);
+            match (
+                fs::read_to_string(dir.join("flags")),
+                fs::read_to_string(dir.join("type")),
+            ) {
+                (Ok(f), Ok(t)) => share::interface_facts(&f, &t),
+                _ => None,
+            }
+        }
+        ShareRequest::Off => None,
+    };
+    let plan = share::plan_set_share(cfg.share.as_ref(), cfg.systemctl.as_deref(), &req, facts)
+        .map_err(|r| refuse(r.to_string()))?;
+    let run = |argv: &[String]| -> std::result::Result<(), String> {
+        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+        match run_full(&a, Duration::from_secs(90)) {
+            Some(o) if o.success() => Ok(()),
+            Some(o) => Err(o.stderr.trim().to_string()),
+            None => Err("systemctl did not finish".into()),
+        }
+    };
+    let fail = |reason: String| {
+        outcome(&[("result", "error"), ("reason", &reason)]);
+        Failure::Error(format!("sharing could not be changed: {reason}"))
+    };
+    // Whatever was shared before stops first: one network at a time.
+    run(&plan.stop).map_err(fail)?;
+    let Some(start) = plan.start else {
+        outcome(&[("result", "ok")]);
+        println!("Sharing is off.");
+        return Ok(());
+    };
+    let Some(settings) = cfg.share.as_ref() else {
+        return Err(fail("sharing is not configured".into()));
+    };
+    write_share_request(&settings.state_dir, &plan.files).map_err(fail)?;
+    if let Err(e) = run(&start) {
+        // Leave nothing half on (the firewall rule goes with the unit).
+        let _ = run(&plan.stop);
+        return Err(fail(e));
+    }
+    outcome(&[("result", "ok")]);
+    if let ShareRequest::On {
+        interface,
+        name,
+        services,
+    } = &req
+    {
+        let ids: Vec<&str> = services.iter().map(|s| s.id()).collect();
+        println!(
+            "Sharing {} on {interface} as \"{name}\". Anyone on this network can read it.",
+            ids.join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// Write the request files for the share units: root-owned, 0644, each
+/// through a temporary file and a rename, never following a link.
+fn write_share_request(
+    dir: &std::path::Path,
+    files: &[(&str, String)],
+) -> std::result::Result<(), String> {
+    if !dir.is_absolute() {
+        return Err(format!("{} is not an absolute path", dir.display()));
+    }
+    match fs::symlink_metadata(dir) {
+        Ok(m) if m.is_dir() && !m.file_type().is_symlink() => {}
+        Ok(_) => return Err(format!("{} is not a directory", dir.display())),
+        Err(_) => {
+            fs::create_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o755))
+                .map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+    }
+    for (name, content) in files {
+        let tmp = dir.join(format!(".{name}.tmp"));
+        let _ = fs::remove_file(&tmp);
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o644)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&tmp)
+            .map_err(|e| format!("{}: {e}", tmp.display()))?;
+        f.write_all(content.as_bytes())
+            .and_then(|()| f.sync_all())
+            .map_err(|e| format!("{}: {e}", tmp.display()))?;
+        fs::rename(&tmp, dir.join(name)).map_err(|e| format!("{name}: {e}"))?;
+    }
+    Ok(())
 }
 
 /// Set the system clock and the hardware clock to an exact UTC time.

@@ -358,6 +358,28 @@ second radio in a network namespace playing the other computer.
 | beta turns it off: unit inactive, `bat0` and the state file gone, each card's NetworkManager state as before; alpha can no longer ping gamma; a new message is not delivered within 40 s | PASS (2026-11-17) |
 | Wi-Fi (delta): `set-mesh on` with no device configured takes the first card (wlan0): type IBSS, joined cell `02:52:45:53:4d:31`; a BATMAN-adv neighbour (the other radio); ping6 to it over `bat0` | PASS (2026-11-17) |
 | Wi-Fi: `set-mesh off` → no `bat0`, the card back to type managed and to its NetworkManager state | PASS (2026-11-17) |
+
+### VM: `vm-share` — community network, server side (ADR 0025 slice 2), one server between two networks
+
+near (vlan 1) ── server (vlans 1 and 2, eth1/eth2) ── far (vlan 2). The
+server has a catalog pack (a real ZIM built by the test), a ZIM file not
+in the catalog, and files in the shared folder: public (0644), private
+(0600), a dotfile and a symbolic link to `/etc/os-release`.
+
+| Scenario | Result |
+|---|---|
+| Nothing listens on TCP 80 and no share unit runs until an administrator shares; `near` gets no answer | PASS (2026-11-19) |
+| `set-share`: polkit does not allow the TUI's process without authentication (auth_admin); the account itself is refused (exit 77); 11 malformed requests refused (missing name or service, `lo`, an absent interface, an unknown or repeated service, two interfaces, `-x` as a name, `eth1;id`, `off now`), audited `result=refused` | PASS (2026-11-19) |
+| `set-share on eth1 --name 'Test shelter' packs library files pages`: audited `ok`, the three units start, `state.toml` written; `near` reads the index; `far` (eth2) gets no answer; nginx runs as a dynamic user, not root | PASS (2026-11-19) |
+| Packs: the index lists the catalog pack and not the other file; the download has the server's exact SHA-256; a range request gives 206; the file outside the catalog, `/packs/` and `../` paths are refused | PASS (2026-11-19; the first run FAILED: a regular-expression location served any `.zim` in the folder, replaced by one exact location per catalog file) |
+| Library: kiwix-serve answers behind nginx under `/library/` and listens on 127.0.0.1 only; the test pack's content is reachable | PASS (2026-11-19; the first run FAILED: the unit's sandbox refused netlink, which kiwix-serve needs for getifaddrs) |
+| Files and pages: the public file is listed and served; the 0600 file gives 403, the dotfile 404, the symbolic link 403/404; pages served with `Content-Security-Policy: default-src 'none'` and `nosniff`; no nginx version in the headers | PASS (2026-11-19) |
+| Read-only: POST, PUT, DELETE and OPTIONS refused (405/413), nothing written | PASS (2026-11-19) |
+| `systemctl reload firewall` while sharing: still reachable on eth1, still not on eth2 | PASS (2026-11-19) |
+| `set-share off`: the three units inactive, `state.toml` gone, the `resilience-share` chain empty, no answer on eth1 | PASS (2026-11-19) |
+| Only `packs` shared: `/library/` and `/files/` give 404, no library unit; sharing on eth2 then replaces eth1 (eth1 no longer answers) | PASS (2026-11-19) |
+| `nmcli device disconnect eth2`: the dispatcher stops sharing, state gone, chain empty | PASS (2026-11-19) |
+| The helper reports a failing library unit (kiwix-serve exits after the start job) | NOT TESTED (the helper only sees systemctl's start job; the unit restarts and is visible in the journal) |
 | Real Wi-Fi cards (IBSS on iwlwifi and others), radio range, several hops over the air, battery use | NOT TESTED |
 
 ### VM: `vm-install` — the text installer (ADR 0022), driven through the TUI

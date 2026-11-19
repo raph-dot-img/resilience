@@ -21,6 +21,7 @@ activity as known on 2026-11-14; re-check before each release.
 | kiwix-tools (kiwix-serve) | 3.8.2 | GPL-3.0-or-later | https://github.com/kiwix/kiwix-tools | yes | serves one installed ZIM file on 127.0.0.1 while it is read (ADR 0013) |
 | libkiwix, libzim, Xapian | 14.2.1, 9.7.0, 1.4.31 | GPL-3.0+, GPL-2.0+, GPL-2.0+ | https://kiwix.org | yes | dependencies of kiwix-serve (ZIM reading, full-text search) |
 | Lynx | 2.9.2 | GPL-2.0-or-later | https://lynx.invisible-island.net | yes | text browser of the offline library, `-restrictions=… -localhost` |
+| nginx | 1.30.6 | BSD-2-Clause | https://nginx.org | yes | community network (ADR 0025): read-only web server on one interface while an administrator shares; DynamicUser, GET/HEAD only, kiwix-serve behind it on 127.0.0.1:81 |
 | poppler-utils (pdftotext) | 26.10.0 | GPL-2.0-or-later | https://poppler.freedesktop.org | yes | text of PDF files in Find & view files (ADR 0014) |
 | libarchive (bsdtar) | 3.8.9 | BSD-3-Clause | https://libarchive.org | yes | lists archive contents, never extracts (ADR 0014) |
 | man-db, less | 2.13.1, 692 | GPL-2.0-or-later, GPL-3.0-or-later | https://man-db.gitlab.io, https://greenwoodsoftware.com/less | yes | Manual pages; less in secure mode (ADR 0014) |

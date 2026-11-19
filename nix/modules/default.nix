@@ -13,6 +13,7 @@
     ./networking.nix
     ./comms.nix
     ./mesh.nix
+    ./share.nix
     ./installer.nix
     ./updates.nix
     ./licence.nix

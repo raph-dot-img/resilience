@@ -1,6 +1,6 @@
 # ADR 0025: Community network (sharing offline resources with nearby machines)
 
-Status: proposed (2026-11-19). Nothing is implemented yet; the slices are
+Status: accepted (2026-11-19, by the owner). Nothing is implemented yet; the slices are
 listed at the end.
 
 ## Context

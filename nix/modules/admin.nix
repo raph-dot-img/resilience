@@ -7,6 +7,7 @@
 #   (ADR 0017: one of the listed console keyboard layouts), `set-mesh`
 #   (ADR 0021: the Wi-Fi mesh on or off) and `record-licence` (ADR 0024),
 #   allowed without a password to the active local session only.
+#   `set-share` (ADR 0025) is auth_admin, to turn sharing on and off.
 # * Configuration the helper trusts is generated here and root-owned
 #   (/etc/resilience/admin.toml); it never reads the caller's environment.
 # * Mode changes persist in /var/lib/resilience/modes.toml and are
@@ -56,6 +57,19 @@ let
     }
     // lib.optionalAttrs cfg.mesh.enable {
       mesh_unit = "resilience-mesh.service";
+    }
+    // lib.optionalAttrs cfg.share.enable {
+      # ADR 0025: `set-share` starts and stops these template units only.
+      share = {
+        unit = "resilience-share";
+        services = [
+          "packs"
+          "library"
+          "files"
+          "pages"
+        ];
+        state_dir = "/run/resilience-share";
+      };
     }
     // lib.optionalAttrs (cfg.updates.settings != null) {
       # ADR 0023: `apply-update`.
@@ -111,6 +125,19 @@ let
         <annotate key="org.freedesktop.policykit.exec.path">${helper}</annotate>
         <annotate key="org.freedesktop.policykit.exec.argv1">set-default-generation</annotate>
       </action>
+      ${lib.optionalString cfg.share.enable ''
+        <action id="org.resilience.admin.set-share">
+          <description>Share offline resources with the computers on a network, or stop</description>
+          <message>Sharing with a network, or stopping it, requires an administrator password. Everything shared can be read by anyone on that network. Request: $(command_line)</message>
+          <defaults>
+            <allow_any>auth_admin</allow_any>
+            <allow_inactive>auth_admin</allow_inactive>
+            <allow_active>auth_admin</allow_active>
+          </defaults>
+          <annotate key="org.freedesktop.policykit.exec.path">${helper}</annotate>
+          <annotate key="org.freedesktop.policykit.exec.argv1">set-share</annotate>
+        </action>
+      ''}
       ${lib.optionalString (cfg.updates.settings != null) ''
         <action id="org.resilience.admin.apply-update">
           <description>Install a Resilience update from removable media</description>

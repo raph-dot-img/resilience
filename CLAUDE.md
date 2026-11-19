@@ -73,13 +73,21 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            (root oneshot: card out of NM, IBSS cell resilience-mesh 2412 MHz fixed
    │                            BSSID, batman_adv bat0 link-local only, restarts rnsd); started/stopped
    │                            only by `resilience-admin set-mesh on|off` (allow_active=yes)
+   │            share.nix       community network, server side (ADR 0025): resilience.share.{enable
+   │                            (standard: on, mkDefault), autoStart}; template units
+   │                            resilience-share@IF (root oneshot: TCP 80 on IF only in iptables
+   │                            chain `resilience-share`, nginx includes + index page in
+   │                            /run/resilience-share, state.toml), resilience-share-web@IF (nginx,
+   │                            DynamicUser, GET/HEAD), resilience-share-library@IF (kiwix-serve
+   │                            127.0.0.1:81); NM dispatcher stops it when IF's connection changes;
+   │                            shared folders /var/lib/resilience/shared/{files,pages} root:wheel 2775
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
    ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
    ├─ packages: resilience, resilience-session, resilience-handbook, resilience-world-map, iso, iso-minimal, vm
    ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
               vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-install,
-              vm-install-uefi, vm-maps, vm-comms, vm-mesh, vm-update, vm-licence,
+              vm-install-uefi, vm-maps, vm-comms, vm-mesh, vm-share, vm-update, vm-licence,
               security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world,
               comms-messages (the messaging program with real Reticulum + LXMF, no VM)
 
@@ -101,6 +109,7 @@ crates/resilience-core  library: status, network (passive + on-demand probe),
 crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR 0007):
                         list | set-mode USER MODE | set-time UTC |
                         set-default-generation N | set-keymap LAYOUT | set-mesh on|off |
+                        set-share on IF --name NAME SERVICE... | set-share off (auth_admin) |
                         apply-update DIR | record-licence SHA256 | apply-state; check-update DIR
                         (any user, read-only)
 crates/resilience-backup binary `resilience-backup` (UNPRIVILEGED, ADR 0008):
@@ -450,7 +459,8 @@ the owner's release key, `scripts/make-release.sh`) is released
 (2026-11-18): `main` merged and pushed, tag `v0.4.0` on `82f3152`, release
 folder signed by the owner, ISO boot-tested (BIOS, UEFI).** **Next (owner's
 choice, 2026-11-19): Phase 9 community network on `feat/community-network`;
-ADR 0025 proposed (slice 1), waiting for the owner's review before slice 2.** Release flow: version bump + CHANGELOG on `develop`, full
+ADR 0025 accepted by the owner (slice 1); slice 2 (server side: share.nix,
+`set-share`, core `share.rs`, `vm-share`) in progress.** Release flow: version bump + CHANGELOG on `develop`, full
 test run, `make-release.sh --update-key NIXKEY --sign MINISIGNKEY V OUT` at
 tag `vV` (the owner signs in their own terminal; secret keys under
 `~/.resilience-keys`, later a VeraCrypt container), merge into `main`, tag
@@ -636,7 +646,7 @@ Phase 5 (maps) is parked.
 - 0022 Installer: prebuilt generic installed systems (per edition, UEFI/BIOS, plain/LUKS), accounts as local accounts in modes.toml, keyboard in /var/lib/resilience/keyboard (+ initrd secret), `resilience-install` via polkit allow_active on the live ISO only
 - 0023 Offline updates: signed Nix binary cache on a USB stick (release key in nix/release-keys.nix, passed per import, never in nix.conf), helper `apply-update` (auth_admin, newer version of this edition and variant only, switch-to-configuration boot), `check-update` as the user, TUI Recovery → Update from a USB stick
 - 0024 Licence notice: before an account's first use of the TUI, Hippocratic License 2.1 summary + original text, "I certify that I have read" → helper `record-licence SHA256` (allow_active=yes) appends to /var/lib/resilience/licence-acceptances.log (root 0644); `resilience.licence.prompt` off only in VM tests (flake wrapper, mkDefault); live ISO asks at every start
-- 0025 Community network (PROPOSED, not implemented): sharing packs/library/folder/pages over HTTP (one read-only nginx, TCP 80, one interface) only via helper `set-share` (auth_admin, not kept across reboots), discovery by Reticulum announces, joining as the user (peer packs hash-checked by the store, pages via a loopback relay + restricted lynx), hotspot via `set-hotspot` (auth_admin, WPA2, no forwarding), expert DNS in the hotspot's dnsmasq (`home.arpa`)
+- 0025 Community network (accepted 2026-11-19; slice 2 = server side): sharing packs/library/folder/pages over HTTP (one read-only nginx, TCP 80, one interface) only via helper `set-share` (auth_admin, not kept across reboots), discovery by Reticulum announces, joining as the user (peer packs hash-checked by the store, pages via a loopback relay + restricted lynx), hotspot via `set-hotspot` (auth_admin, WPA2, no forwarding), expert DNS in the hotspot's dnsmasq (`home.arpa`)
 
 ## 18. How to continue safely
 
