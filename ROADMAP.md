@@ -180,12 +180,13 @@ the netinstall is an addition, never a requirement.
   on stdin), and nothing is downloaded before the user confirms the
   summary with the total size.
 
-## Phase 9 — Community network ⬜ (requested 2026-11-18)
+## Phase 9 — Community network 🟡 (requested 2026-11-18; design in ADR 0025, proposed 2026-11-19)
 An assisted tool that lets a person with little experience join or create
 a network of Resilience machines and share offline resources on it. Builds
 on Phase 6 (mesh, ADR 0021; Reticulum announces, ADR 0018), resource packs
 (ADR 0013) and maps (ADR 0016).
 
+- 🟡 **ADR 0025 (proposed 2026-11-19)** settles it: one read-only nginx on TCP 80 on one interface while an administrator shares (`set-share`, auth_admin), discovery by Reticulum announces (no mDNS), joining as the user (packs through the store's hash check, pages through a loopback relay and restricted lynx), hotspot with WPA2 and no forwarding (`set-hotspot`), expert names in the hotspot's DNS (`home.arpa`). Slices 2 to 7 in the ADR; THREAT_MODEL T46 to T50.
 - **An ADR comes first.** This is the first time a Resilience service
   accepts requests from the network: today nothing listens beyond
   `127.0.0.1` and the firewall allows nothing by default. The ADR settles

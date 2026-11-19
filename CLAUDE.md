@@ -443,13 +443,14 @@ needlessly. Watch `free -h` during VM tests.
 4. The build-time catalog check ensures the binary exists. Add a VM test
    assertion if the app is important.
 
-## 14. Current implementation status (2026-11-18)
+## 14. Current implementation status (2026-11-19)
 
 **Now: release 0.4.0 (offline updates ADR 0023, licence notice ADR 0024,
 the owner's release key, `scripts/make-release.sh`) is released
 (2026-11-18): `main` merged and pushed, tag `v0.4.0` on `82f3152`, release
-folder signed by the owner, ISO boot-tested (BIOS, UEFI); next work: ask
-the owner.** Release flow: version bump + CHANGELOG on `develop`, full
+folder signed by the owner, ISO boot-tested (BIOS, UEFI).** **Next (owner's
+choice, 2026-11-19): Phase 9 community network on `feat/community-network`;
+ADR 0025 proposed (slice 1), waiting for the owner's review before slice 2.** Release flow: version bump + CHANGELOG on `develop`, full
 test run, `make-release.sh --update-key NIXKEY --sign MINISIGNKEY V OUT` at
 tag `vV` (the owner signs in their own terminal; secret keys under
 `~/.resilience-keys`, later a VeraCrypt container), merge into `main`, tag
@@ -635,6 +636,7 @@ Phase 5 (maps) is parked.
 - 0022 Installer: prebuilt generic installed systems (per edition, UEFI/BIOS, plain/LUKS), accounts as local accounts in modes.toml, keyboard in /var/lib/resilience/keyboard (+ initrd secret), `resilience-install` via polkit allow_active on the live ISO only
 - 0023 Offline updates: signed Nix binary cache on a USB stick (release key in nix/release-keys.nix, passed per import, never in nix.conf), helper `apply-update` (auth_admin, newer version of this edition and variant only, switch-to-configuration boot), `check-update` as the user, TUI Recovery → Update from a USB stick
 - 0024 Licence notice: before an account's first use of the TUI, Hippocratic License 2.1 summary + original text, "I certify that I have read" → helper `record-licence SHA256` (allow_active=yes) appends to /var/lib/resilience/licence-acceptances.log (root 0644); `resilience.licence.prompt` off only in VM tests (flake wrapper, mkDefault); live ISO asks at every start
+- 0025 Community network (PROPOSED, not implemented): sharing packs/library/folder/pages over HTTP (one read-only nginx, TCP 80, one interface) only via helper `set-share` (auth_admin, not kept across reboots), discovery by Reticulum announces, joining as the user (peer packs hash-checked by the store, pages via a loopback relay + restricted lynx), hotspot via `set-hotspot` (auth_admin, WPA2, no forwarding), expert DNS in the hotspot's dnsmasq (`home.arpa`)
 
 ## 18. How to continue safely
 
