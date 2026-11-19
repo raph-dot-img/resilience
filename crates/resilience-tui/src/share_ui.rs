@@ -35,6 +35,7 @@ pub const NEARBY_LABEL: &str = "Nearby computer";
 pub const PEER_PACKS_LABEL: &str = "Packs from a nearby computer";
 pub const SET_SHARE_LABEL: &str = "Sharing";
 pub const PEER_FILE_LABEL: &str = "A file from a nearby computer";
+pub const HOTSPOT_LABEL: &str = "Hotspot";
 
 /// The lists are read again this often while the screen is shown.
 const RELOAD_TICKS: u64 = 8;
@@ -50,6 +51,10 @@ pub enum CommunityRow {
     Share,
     /// Type the address of a computer.
     Address,
+    /// This computer as a Wi-Fi network (on: what it is).
+    Hotspot { on: Option<String> },
+    /// The mesh network (ADR 0021), from here too.
+    Mesh { on: bool },
     /// A computer heard sharing, and how to reach it from here (`None`:
     /// none of its addresses is on this computer's networks).
     Machine {
@@ -187,6 +192,28 @@ impl App {
             None => rows.push(CommunityRow::Share),
         }
         rows.push(CommunityRow::Address);
+        let admin = std::fs::read_to_string(&self.paths.admin_config)
+            .ok()
+            .and_then(|t| AdminConfig::parse(&t).ok());
+        if let Some(h) = admin.as_ref().and_then(|c| c.hotspot.as_ref()) {
+            let on = std::fs::read_to_string(&self.paths.hotspot_state)
+                .ok()
+                .and_then(|t| {
+                    t.lines().find_map(|l| {
+                        l.strip_prefix("device = \"")?
+                            .strip_suffix('"')
+                            .map(String::from)
+                    })
+                })
+                .filter(|d| share::valid_interface(d))
+                .map(|d| format!("\"{}\" on {d}", h.ssid));
+            rows.push(CommunityRow::Hotspot { on });
+        }
+        if admin.as_ref().is_some_and(|c| c.mesh_unit.is_some()) {
+            rows.push(CommunityRow::Mesh {
+                on: self.paths.mesh_devices.exists(),
+            });
+        }
         let text =
             std::fs::read_to_string(self.chat_store().root.join("shares.json")).unwrap_or_default();
         let (r4, r6) = self.routes();
@@ -500,6 +527,38 @@ impl App {
         })
     }
 
+    /// `pkexec <helper> set-hotspot on|off`, in the foreground: the
+    /// helper shows the password, which stays on screen until a key.
+    pub(super) fn set_hotspot_effect(&mut self, on: bool) -> Effect {
+        let Some(cfg) = self.share_config().filter(|c| c.hotspot.is_some()) else {
+            self.notify(Level::Error, "This computer offers no hotspot.");
+            return Effect::None;
+        };
+        tracing::warn!(on, "hotspot change requested");
+        Effect::Run(RunRequest {
+            label: HOTSPOT_LABEL.into(),
+            argv: vec![
+                cfg.pkexec.to_string_lossy().into_owned(),
+                cfg.helper.to_string_lossy().into_owned(),
+                "set-hotspot".into(),
+                if on { "on" } else { "off" }.into(),
+            ],
+            extra_args: Vec::new(),
+            env: vec![(
+                "SHELL".into(),
+                cfg.session_shell.to_string_lossy().into_owned(),
+            )],
+            polkit_agent: Some(cfg.pkttyagent.to_string_lossy().into_owned()),
+            clean_env: false,
+            pause_after: true,
+            banner: Some(
+                "HOTSPOT. An administrator must now type their password. To cancel, press \
+                 Ctrl-C while the password is asked."
+                    .into(),
+            ),
+        })
+    }
+
     /// `resilience-library change --from-peer ADDRESS --get ID...`.
     pub(super) fn peer_packs_effect(&self, peer: &str, get: &[String]) -> Effect {
         let mut argv = vec![
@@ -549,6 +608,9 @@ impl App {
 
     /// After a program started from these screens exits.
     pub(super) fn share_after_run(&mut self, label: &str) {
+        if label == HOTSPOT_LABEL {
+            self.reload_community();
+        }
         if label == SET_SHARE_LABEL {
             while matches!(self.view(), View::ShareSetup { .. }) {
                 self.stack.pop();
@@ -599,6 +661,8 @@ impl App {
                     Some(CommunityRow::Address) => {
                         self.ask_share(ShareInput::Address, String::new())
                     }
+                    Some(CommunityRow::Mesh { .. }) => self.open_mesh(),
+                    Some(CommunityRow::Hotspot { on }) => self.confirm_hotspot(on),
                     Some(CommunityRow::Machine { heard, peer }) => match peer {
                         Some(p) => {
                             next = Some(self.peer_menu(
@@ -772,6 +836,38 @@ impl App {
             }
             None => (Some(view), effect),
         }
+    }
+
+    fn confirm_hotspot(&mut self, on: Option<String>) {
+        let (body, confirm, turn_on) = match on {
+            Some(what) => (
+                format!(
+                    "The hotspot {what} is ON.\n\nTurn it off? The people on it lose the \
+                     connection. An administrator's password is needed."
+                ),
+                "Turn off",
+                false,
+            ),
+            None => (
+                "Make this computer a Wi-Fi network that phones and other computers can \
+                 join, when there is no Wi-Fi router.\n\n- A new password is shown once; \
+                 give it to the people who should join.\n- It gives no access to the \
+                 Internet through this computer.\n- This computer's Wi-Fi cannot join \
+                 another network meanwhile (a cable still works).\n- Share something on it \
+                 from this screen, or there is nothing to read on it.\n\nAn administrator's \
+                 password is needed. It stops when turned off or at restart."
+                    .to_string(),
+                "Turn on",
+                true,
+            ),
+        };
+        self.modal = Some(Modal::Confirm {
+            title: "HOTSPOT".into(),
+            body,
+            confirm: confirm.into(),
+            action: Pending::SetHotspot { on: turn_on },
+            yes_focused: false,
+        });
     }
 
     fn ask_share(&mut self, kind: ShareInput, value: String) {

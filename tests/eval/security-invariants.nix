@@ -77,6 +77,12 @@ let
                 "resilience-share-web@"
                 "resilience-share-library@"
               ];
+        "the hotspot is never on at boot" =
+          !c.resilience.share.hotspot.enable
+          || (c.systemd.services.resilience-hotspot.wantedBy or [ ]) == [ ];
+        "the hotspot's DNS forwards nothing" =
+          !c.resilience.share.hotspot.enable
+          || lib.hasInfix "no-resolv" c.environment.etc."NetworkManager/dnsmasq-shared.d/resilience.conf".text;
         "the minimal edition offers no sharing" =
           c.resilience.edition != "minimal" || !c.resilience.share.enable;
         "the minimal edition has no local messaging" =

@@ -19,6 +19,7 @@
 //! resilience-admin set-mesh on|off       root (pkexec, no password), ADR 0021
 //! resilience-admin set-share on IF --name NAME SERVICE... | off
 //!                                        root (pkexec / sudo), ADR 0025
+//! resilience-admin set-hotspot on|off    root (pkexec / sudo), ADR 0025
 //! resilience-admin record-licence SHA256  root (pkexec, no password), ADR 0024
 //! resilience-admin check-update DIR      any user, read-only, ADR 0023
 //! resilience-admin apply-update DIR      root (pkexec / sudo), ADR 0023
@@ -61,6 +62,7 @@ Usage:
                                          Share on one network (ADR 0025); SERVICE is
                                          packs, library, files or pages
   resilience-admin set-share off         Stop sharing
+  resilience-admin set-hotspot on|off    This computer as a Wi-Fi network (ADR 0025)
   resilience-admin record-licence SHA256 Record that you read the licence (ADR 0024)
   resilience-admin check-update DIR      Check the update in DIR without installing it
   resilience-admin apply-update DIR      Install the update in DIR (USB stick, ADR 0023)
@@ -78,6 +80,7 @@ fn main() -> ExitCode {
         ["set-keymap", id] => set_keymap(id),
         ["set-mesh", state] => set_mesh(state),
         ["set-share", rest @ ..] => set_share(rest),
+        ["set-hotspot", state] => set_hotspot(state),
         ["record-licence", hash] => record_licence(hash),
         ["check-update", dir] => apply_update::check_update(dir),
         ["apply-update", dir] => apply_update::apply_update(dir),
@@ -676,6 +679,124 @@ fn write_share_request(
         fs::rename(&tmp, dir.join(name)).map_err(|e| format!("{name}: {e}"))?;
     }
     Ok(())
+}
+
+/// Turn this computer into a Wi-Fi network for others (ADR 0025 §6), or
+/// stop it. The password is made here from the kernel's random generator,
+/// left for the unit in a root-only file, and shown once on this terminal;
+/// it is never logged or passed on a command line.
+fn set_hotspot(requested: &str) -> Result<()> {
+    use resilience_core::share;
+    if !is_root() {
+        return Err(Failure::Permission);
+    }
+    let cfg = AdminConfig::load().map_err(err)?;
+    let (uid, by) = caller();
+    let uid_s = uid.to_string();
+    let _lock = lock(&cfg)?;
+    let base = [
+        ("op", "set-hotspot"),
+        ("caller", by.as_str()),
+        ("caller_uid", uid_s.as_str()),
+        ("to", requested),
+    ];
+    let outcome = |extra: &[(&str, &str)]| {
+        let mut f = base.to_vec();
+        f.extend_from_slice(extra);
+        audit(&cfg, &f);
+    };
+    let mesh_on = cfg
+        .hotspot
+        .as_ref()
+        .is_some_and(|h| h.mesh_devices.exists());
+    let (argv, on) = match share::plan_set_hotspot(
+        cfg.hotspot.as_ref(),
+        cfg.systemctl.as_deref(),
+        requested,
+        mesh_on,
+    ) {
+        Ok(p) => p,
+        Err(r) => {
+            let reason = r.to_string();
+            outcome(&[("result", "refused"), ("reason", &reason)]);
+            return Err(Failure::Refused(reason));
+        }
+    };
+    let Some(h) = cfg.hotspot.clone() else {
+        return Err(err("no hotspot settings"));
+    };
+    let password_file = h.state_dir.join("password");
+    let mut password = String::new();
+    if on {
+        let mut random = [0u8; 16];
+        // SAFETY: getrandom writes at most `random.len()` bytes into it.
+        let n = unsafe { libc::getrandom(random.as_mut_ptr().cast(), random.len(), 0) };
+        if n != random.len() as isize {
+            return Err(err("the random generator failed"));
+        }
+        password = share::hotspot_password(&random);
+        let written = (|| -> std::io::Result<()> {
+            match fs::symlink_metadata(&h.state_dir) {
+                Ok(m) if m.is_dir() && !m.file_type().is_symlink() => {}
+                Ok(_) => return Err(std::io::Error::other("not a directory")),
+                Err(_) => {
+                    fs::create_dir(&h.state_dir)?;
+                    fs::set_permissions(&h.state_dir, fs::Permissions::from_mode(0o700))?;
+                }
+            }
+            let _ = fs::remove_file(&password_file);
+            let mut f = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(&password_file)?;
+            f.write_all(password.as_bytes())?;
+            f.sync_all()
+        })();
+        if let Err(e) = written {
+            let reason = format!("{}: {e}", password_file.display());
+            outcome(&[("result", "error"), ("reason", &reason)]);
+            return Err(Failure::Error(reason));
+        }
+    }
+    let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let result = run_full(&args, Duration::from_secs(90));
+    if !on {
+        let _ = fs::remove_file(&password_file);
+    }
+    match result {
+        Some(o) if o.success() => {
+            outcome(&[("result", "ok")]);
+            if on {
+                println!(
+                    "The Wi-Fi network \"{}\" is on.\n\n  Password: {password}\n\n\
+                     Give it to the people who should join. Anyone who has it is on the \
+                     network; it gives no access to the Internet through this computer.\n\
+                     A new password is made each time the hotspot is turned on.",
+                    h.ssid
+                );
+            } else {
+                println!("The Wi-Fi network \"{}\" is off.", h.ssid);
+            }
+            Ok(())
+        }
+        Some(o) => {
+            let reason = o.stderr.trim().to_string();
+            outcome(&[("result", "error"), ("reason", &reason)]);
+            if on {
+                let _ = run_full(&[args[0], "stop", "--", args[3]], Duration::from_secs(60));
+                let _ = fs::remove_file(&password_file);
+            }
+            Err(Failure::Error(format!(
+                "the hotspot could not be changed: {reason}"
+            )))
+        }
+        None => {
+            outcome(&[("result", "error"), ("reason", "systemctl did not finish")]);
+            Err(Failure::Error("systemctl did not finish".into()))
+        }
+    }
 }
 
 /// Set the system clock and the hardware clock to an exact UTC time.

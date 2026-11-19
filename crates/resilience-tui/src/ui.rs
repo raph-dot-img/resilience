@@ -3008,6 +3008,20 @@ fn draw_community(
             )),
             CommunityRow::Share => ListItem::new("Share this computer's resources..."),
             CommunityRow::Address => ListItem::new("Type the address of a computer..."),
+            CommunityRow::Hotspot { on: Some(what) } => ListItem::new(Span::styled(
+                format!("[ON] Hotspot {what} - Enter to turn off"),
+                t.warn,
+            )),
+            CommunityRow::Hotspot { on: None } => {
+                ListItem::new("Create a network: hotspot (this computer as Wi-Fi)...")
+            }
+            CommunityRow::Mesh { on: true } => ListItem::new(Span::styled(
+                "[ON] Mesh network - Enter to turn off",
+                t.warn,
+            )),
+            CommunityRow::Mesh { on: false } => {
+                ListItem::new("Create a network: mesh (Wi-Fi without a router)...")
+            }
             CommunityRow::Machine { heard, peer } => {
                 let what: Vec<&str> = heard.services.iter().map(|s| s.id()).collect();
                 let reach = match peer {

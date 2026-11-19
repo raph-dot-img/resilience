@@ -232,16 +232,23 @@ which goes through the existing store with an administrator's password
   and DNS server (NetworkManager's dnsmasq) on the radio. The helper
   makes it with NetworkManager (a profile it owns, `802-11-wireless.mode
   ap`, `ipv4.method shared`, IPv6 disabled):
-  - **WPA2 with a random password** shown on the console (made by the TUI
-    as for random passwords, ADR 0015, given to the helper on stdin, kept
-    by NetworkManager root 0600). It keeps passers-by off the radio
-    and encrypts the link. The network is still treated as open (§1):
+  - **WPA2 with a random password** shown on the console. *Changed
+    while implementing (2026-11-19):* the helper makes it from the
+    kernel's random generator (16 bytes → four groups of four easily read
+    characters), leaves it for the unit in a root-only file and prints it
+    once; the unit writes the NetworkManager profile (0600) into
+    NetworkManager's in-memory profile directory, so the password never
+    passes through the TUI, a pipe or a command line. A new one each
+    time. It keeps passers-by off the radio and encrypts the link. The network is still treated as open (§1):
     anyone told the password is on it.
   - **No routing to other networks.** NetworkManager's shared mode NATs
-    the hotspot to the default route; our firewall drops every packet
-    forwarded from the hotspot interface (a `FORWARD` rule in the
-    `resilience-share` chain set). A hotspot never gives anyone Internet
-    access through this computer.
+    the hotspot to the default route and turns IP forwarding on; our
+    firewall drops every packet forwarded from or to the hotspot's card
+    (chain `resilience-hotspot-fwd` in `FORWARD`, IPv4 and IPv6), and the
+    hotspot's DNS forwards nothing (`no-resolv`). A hotspot never gives
+    anyone Internet access through this computer. DHCP and DNS are
+    opened on that card only (chain `resilience-hotspot`).
+  - The mesh and the hotspot exclude each other (one card, one mode).
   - Like the mesh, the Wi-Fi card cannot be on another Wi-Fi network
     meanwhile; Ethernet keeps working. Not kept across reboots.
 

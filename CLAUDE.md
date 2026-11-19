@@ -84,13 +84,20 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            with comms: resilience-share-announce@IF (`resilience-messages share`,
    │                            DynamicUser, IPAddressDeny=any) announces aspect resilience.share;
    │                            each account's program writes heard machines to shares.json
+   │            hotspot.nix     ADR 0025 §6-7: resilience.share.hotspot.{enable (= share.enable),
+   │                            ssid, device, dnsRecords}; resilience-hotspot.service (root oneshot:
+   │                            NM profile in /run/NetworkManager/system-connections 0600, WPA2,
+   │                            ipv4 shared 10.42.0.1/24, IPv6 off; chains resilience-hotspot (DHCP/DNS
+   │                            on the card) and resilience-hotspot-fwd in FORWARD (DROP in and out,
+   │                            never flushed by the firewall's own scripts)); dnsmasq-shared.d:
+   │                            no-resolv, home.arpa only; mesh and hotspot exclude each other
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
    ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
    ├─ packages: resilience, resilience-session, resilience-handbook, resilience-world-map, iso, iso-minimal, vm
    ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
               vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-install,
-              vm-install-uefi, vm-maps, vm-comms, vm-mesh, vm-share, vm-update, vm-licence,
+              vm-install-uefi, vm-maps, vm-comms, vm-mesh, vm-share, vm-hotspot, vm-update, vm-licence,
               security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world,
               comms-messages (the messaging program with real Reticulum + LXMF, no VM)
 
@@ -113,6 +120,7 @@ crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR
                         list | set-mode USER MODE | set-time UTC |
                         set-default-generation N | set-keymap LAYOUT | set-mesh on|off |
                         set-share on IF --name NAME SERVICE... | set-share off (auth_admin) |
+                        set-hotspot on|off (auth_admin; prints a new password once) |
                         apply-update DIR | record-licence SHA256 | apply-state; check-update DIR
                         (any user, read-only)
 crates/resilience-backup binary `resilience-backup` (UNPRIVILEGED, ADR 0008):
@@ -265,6 +273,9 @@ address" / heard machines (`share::parse_heard` + `peer_for`) → PeerMenu
 ticks) → `change --from-peer ADDR --get ID...` (plain HTTP to local
 addresses only, `share::on_link` against /proc/net/route*, no redirects,
 store checks the catalog hash). While sharing, a line on every screen.
+Hotspot: Community network row → Confirm → `pkexec <helper> set-hotspot on`
+in the foreground (pause_after: the password the helper prints stays on
+screen) → helper writes /run/resilience-hotspot/password (0600) → unit.
 
 Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
 with `connection.permissions user:U`, no secret → thread: `nmcli connection
@@ -486,8 +497,9 @@ ADR 0025 accepted by the owner (slice 1); slice 2 (server side: share.nix,
 `resilience-messages share` beacon, `shares.json`, `parse_heard`) done;
 slice 4 (joining: `--from-peer`, `peer-list`, `open-remote` + relay, TUI
 Community network screens, vm-share through near's TUI) and slice 5
-(shared folder: `peer-files`/`peer-get` into ~/Received) done; next:
-slice 6 (hotspot + expert DNS), 7 (handbook, review).** **Release plan (owner, 2026-11-19): 0.5.0 = Phase 9
+(shared folder: `peer-files`/`peer-get` into ~/Received) and slice 6
+(hotspot + expert DNS, `vm-hotspot`) done; next: slice 7 (handbook,
+docs, the independent review of the server side), then the 0.5.0 steps.** **Release plan (owner, 2026-11-19): 0.5.0 = Phase 9
 complete, released BEFORE resuming maps (maps then = 0.6.0). Before
 tagging 0.5.0: slices 5-7; an independent review of the server side
 (nginx config, firewall chain, `set-share`, relay, announce parser) with

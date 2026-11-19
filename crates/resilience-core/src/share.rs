@@ -689,6 +689,95 @@ pub fn parse_listing(html: &str) -> Vec<SharedFile> {
     out
 }
 
+/// The `[hotspot]` section of admin.toml (ADR 0025 §6).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HotspotSettings {
+    /// The unit `set-hotspot` starts and stops.
+    pub unit: String,
+    /// Root-only directory where the helper leaves the password for the
+    /// unit (0700).
+    pub state_dir: PathBuf,
+    /// The network's name.
+    pub ssid: String,
+    /// Present while the mesh is on: the card cannot do both.
+    pub mesh_devices: PathBuf,
+}
+
+/// Why `set-hotspot` refuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HotspotRefusal {
+    Unavailable,
+    BadState,
+    MeshOn,
+}
+
+impl std::fmt::Display for HotspotRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            HotspotRefusal::Unavailable => "this system offers no hotspot",
+            HotspotRefusal::BadState => "the hotspot can only be turned on or off",
+            HotspotRefusal::MeshOn => {
+                "the mesh network is on: turn it off first (the Wi-Fi card cannot do both)"
+            }
+        })
+    }
+}
+
+/// `set-hotspot on|off`: the systemctl argv, and whether it turns it on.
+pub fn plan_set_hotspot(
+    settings: Option<&HotspotSettings>,
+    systemctl: Option<&Path>,
+    state: &str,
+    mesh_on: bool,
+) -> Result<(Vec<String>, bool), HotspotRefusal> {
+    let (Some(s), Some(sc)) = (settings, systemctl) else {
+        return Err(HotspotRefusal::Unavailable);
+    };
+    let unit_ok = s.unit.ends_with(".service")
+        && unit_ok(s.unit.trim_end_matches(".service"))
+        && sc.is_absolute()
+        && s.state_dir.is_absolute();
+    if !unit_ok {
+        return Err(HotspotRefusal::Unavailable);
+    }
+    let on = match state {
+        "on" => true,
+        "off" => false,
+        _ => return Err(HotspotRefusal::BadState),
+    };
+    if on && mesh_on {
+        return Err(HotspotRefusal::MeshOn);
+    }
+    let verb = if on { "start" } else { "stop" };
+    Ok((
+        vec![
+            sc.to_string_lossy().into_owned(),
+            verb.into(),
+            "--".into(),
+            s.unit.clone(),
+        ],
+        on,
+    ))
+}
+
+/// A hotspot password from 16 random bytes: four groups of four
+/// characters from 32 that cannot be confused when read aloud or copied
+/// (no 0/o, 1/l/i), 80 bits. WPA2 needs 8 to 63 characters.
+pub fn hotspot_password(random: &[u8; 16]) -> String {
+    const ALPHABET: &[u8; 32] = b"abcdefghjkmnpqrstuvwxyz23456789#";
+    let mut out = String::with_capacity(19);
+    for (i, b) in random.iter().enumerate() {
+        if i > 0 && i % 4 == 0 {
+            out.push('-');
+        }
+        let c = ALPHABET[(b & 31) as usize];
+        // '#' would be awkward to say: use the next letter instead.
+        out.push(if c == b'#' { 'x' } else { c as char });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1117,5 +1206,60 @@ fd000000000000000000000000000000 40 00000000000000000000000000000000 00 00000000
             Some("a b%c")
         );
         assert!(parse_listing("").is_empty());
+    }
+
+    #[test]
+    fn hotspot_rules() {
+        let s = HotspotSettings {
+            unit: "resilience-hotspot.service".into(),
+            state_dir: "/run/resilience-hotspot".into(),
+            ssid: "Resilience-hotspot".into(),
+            mesh_devices: "/run/resilience-mesh/devices".into(),
+        };
+        let sc = Path::new(SC);
+        let (argv, on) = plan_set_hotspot(Some(&s), Some(sc), "on", false).expect("on");
+        assert_eq!(argv, [SC, "start", "--", "resilience-hotspot.service"]);
+        assert!(on);
+        assert_eq!(
+            plan_set_hotspot(Some(&s), Some(sc), "off", true)
+                .expect("off")
+                .0[1],
+            "stop"
+        );
+        assert_eq!(
+            plan_set_hotspot(Some(&s), Some(sc), "on", true),
+            Err(HotspotRefusal::MeshOn)
+        );
+        for bad in ["", "ON", "restart", "on --x"] {
+            assert_eq!(
+                plan_set_hotspot(Some(&s), Some(sc), bad, false),
+                Err(HotspotRefusal::BadState)
+            );
+        }
+        assert_eq!(
+            plan_set_hotspot(None, Some(sc), "on", false),
+            Err(HotspotRefusal::Unavailable)
+        );
+        let mut bad = s.clone();
+        bad.unit = "x;y.service".into();
+        assert_eq!(
+            plan_set_hotspot(Some(&bad), Some(sc), "on", false),
+            Err(HotspotRefusal::Unavailable)
+        );
+    }
+
+    #[test]
+    fn hotspot_passwords() {
+        let p = hotspot_password(&[0u8; 16]);
+        assert_eq!(p, "aaaa-aaaa-aaaa-aaaa");
+        let q = hotspot_password(&[31, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        assert_eq!(q.len(), 19);
+        assert!((8..=63).contains(&q.len()));
+        assert!(
+            q.chars()
+                .all(|c| c == '-' || c.is_ascii_lowercase() || c.is_ascii_digit()),
+            "{q}"
+        );
+        assert!(!q.contains(['0', '1', 'l', 'i', 'o', '#']), "{q}");
     }
 }

@@ -359,6 +359,23 @@ second radio in a network namespace playing the other computer.
 | Wi-Fi (delta): `set-mesh on` with no device configured takes the first card (wlan0): type IBSS, joined cell `02:52:45:53:4d:31`; a BATMAN-adv neighbour (the other radio); ping6 to it over `bat0` | PASS (2026-11-17) |
 | Wi-Fi: `set-mesh off` → no `bat0`, the card back to type managed and to its NetworkManager state | PASS (2026-11-17) |
 
+### VM: `vm-hotspot` — the hotspot (ADR 0025 slice 6), a "phone" and the outside
+
+hot has two simulated radios (mac80211_hwsim): wlan0 becomes the hotspot,
+wlan1 is moved into a network namespace as a phone (wpa_supplicant, busybox
+udhcpc, dig, curl); `outside` is on hot's cable (vlan 1).
+
+| Scenario | Result |
+|---|---|
+| `set-hotspot`: polkit auth_admin for any, inactive and active; the account itself refused (77); `""`, `maybe`, `on now`, `ON` refused and audited | PASS (2026-11-19) |
+| `set-hotspot on`: audited `ok`, a 19-character password printed once; the NetworkManager profile in /run (root 0600), the password file 0600, the interface's state file without it; the connection activated, wlan0 in AP mode; the password in no journal line, audit line or command line (`grep -F -f`) | PASS (2026-11-19; the first run FAILED: NetworkManager had not made wlan0 usable yet, the unit now waits for it) |
+| The phone joins with that password (WPA2/RSN), gets 10.42.0.x with 10.42.0.1 as router; `resilience.home.arpa`, `library.home.arpa` and `printer.home.arpa` answered as configured; `example.org` and `outside` not answered (nothing forwarded) | PASS (2026-11-19) |
+| Never routed: NetworkManager turns forwarding on for wlan0; with forwarding on everywhere (as on a machine with an Internet connection) the phone cannot ping `outside`; control: without our rule it can; `systemctl reload resilience-hotspot` puts it back; through a firewall reload the DROP rules stay in place (checked 20 times right after) | PASS (2026-11-19; two runs FAILED on the test's setup, and one on a real gap: the firewall's reload ran our stop commands, which emptied the drop chain for a moment; that chain is no longer touched by the firewall's own scripts) |
+| Sharing on the hotspot: pages reachable from the phone at `http://resilience.home.arpa/pages/`; stopped again | PASS (2026-11-19) |
+| `set-mesh on` refused while the hotspot is on, no `bat0`, the hotspot still on | PASS (2026-11-19) |
+| `set-hotspot off`: unit inactive; profile, password and state files gone; NetworkManager no longer knows the connection; both chains empty; the phone loses the network; turning it on again gives a different password | PASS (2026-11-19) |
+| On real Wi-Fi cards and phones | NOT TESTED |
+
 ### Check: `comms-messages`, community network part (ADR 0025 slice 3)
 
 | Scenario | Result |

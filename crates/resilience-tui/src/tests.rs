@@ -142,6 +142,7 @@ description = "Carol the admin"
         route6: sys.join("ipv6_route"),
         sys_net: sys.join("net"),
         shared_dir: sys.join("shared"),
+        hotspot_state: sys.join("hotspot"),
         // Absent: not a live system (no installer).
         install_config: sys.join("install.toml"),
         efi: sys.join("efi"),
@@ -4951,4 +4952,54 @@ fn community_network_finds_reads_and_shares() {
     }
     a.stack.truncate(1);
     assert!(render(&mut a, 100, 30).contains("SHARING packs, library"));
+
+    // The hotspot (ADR 0025 §6): offered where the helper has it, Cancel
+    // first, then the helper in the foreground (it shows the password).
+    let admin = std::fs::read_to_string(&a.paths.admin_config).expect("admin.toml");
+    std::fs::write(
+        &a.paths.admin_config,
+        format!(
+            "hotspot = {{ unit = \"resilience-hotspot.service\", state_dir = \"/run/resilience-hotspot\", ssid = \"Resilience-hotspot\", mesh_devices = \"/run/resilience-mesh/devices\" }}\n{admin}"
+        ),
+    )
+    .expect("admin.toml");
+    let rows = a.community_rows();
+    let hot = rows
+        .iter()
+        .position(|r| matches!(r, crate::app::CommunityRow::Hotspot { on: None }))
+        .expect("hotspot row");
+    let (v, _) = a.activate(Entry::Builtin(Builtin::Community));
+    a.stack.push(v.expect("community"));
+    assert!(render(&mut a, 100, 30).contains("Create a network: hotspot"));
+    press(&mut a, KeyCode::Home);
+    for _ in 0..hot {
+        press(&mut a, KeyCode::Down);
+    }
+    press(&mut a, KeyCode::Enter);
+    let Some(Modal::Confirm { ref body, .. }) = a.modal else {
+        panic!("a confirmation");
+    };
+    assert!(body.contains("no access to the"), "{body}");
+    assert!(matches!(press(&mut a, KeyCode::Enter), Effect::None));
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::Left);
+    match press(&mut a, KeyCode::Enter) {
+        Effect::Run(r) => {
+            assert_eq!(&r.argv[2..], ["set-hotspot", "on"]);
+            assert!(r.pause_after, "the password must stay on screen");
+            assert!(r.polkit_agent.is_some());
+        }
+        e => panic!("expected the helper, got {e:?}"),
+    }
+    std::fs::write(
+        &a.paths.hotspot_state,
+        "device = \"wlan0\"\nssid = \"Resilience-hotspot\"\n",
+    )
+    .expect("state");
+    assert!(
+        a.community_rows()
+            .contains(&crate::app::CommunityRow::Hotspot {
+                on: Some("\"Resilience-hotspot\" on wlan0".into())
+            })
+    );
 }

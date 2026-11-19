@@ -115,6 +115,8 @@ pub struct Paths {
     pub sys_net: PathBuf,
     /// The shared folders (`files`, `pages`) of the community network.
     pub shared_dir: PathBuf,
+    /// Written by the hotspot unit while it is on (no secret in it).
+    pub hotspot_state: PathBuf,
     /// The installer's configuration: only on live systems (ADR 0022).
     pub install_config: PathBuf,
     /// Present when the computer started with UEFI.
@@ -138,6 +140,7 @@ impl Default for Paths {
             route6: "/proc/net/ipv6_route".into(),
             sys_net: "/sys/class/net".into(),
             shared_dir: "/var/lib/resilience/shared".into(),
+            hotspot_state: "/run/resilience-share/hotspot".into(),
             install_config: resilience_core::install::INSTALL_CONFIG_PATH.into(),
             efi: "/sys/firmware/efi".into(),
         }
@@ -845,6 +848,10 @@ pub enum Pending {
     PeerPacks {
         peer: String,
         get: Vec<String>,
+    },
+    /// Turn the hotspot on or off (ADR 0025 §6).
+    SetHotspot {
+        on: bool,
     },
     /// Copy a file of a nearby computer's shared folder into ~/Received.
     PeerGet {
@@ -2386,7 +2393,8 @@ impl App {
             | Pending::SetMesh { .. }
             | Pending::SetShare { .. }
             | Pending::PeerPacks { .. }
-            | Pending::PeerGet { .. } => return,
+            | Pending::PeerGet { .. }
+            | Pending::SetHotspot { .. } => return,
             Pending::Logout => (
                 "LOG OUT",
                 "End this session? Programs you started from here will be closed.",
@@ -2651,6 +2659,7 @@ impl App {
             Pending::SetShare { args } => return self.set_share_effect(&args),
             Pending::PeerPacks { peer, get } => return self.peer_packs_effect(&peer, &get),
             Pending::PeerGet { peer, name } => return self.peer_get_effect(&peer, &name),
+            Pending::SetHotspot { on } => return self.set_hotspot_effect(on),
             Pending::ForgetWifi { name, uuid } => {
                 self.forget_wifi(&name, &uuid);
                 return Effect::None;
