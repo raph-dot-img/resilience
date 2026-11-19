@@ -371,6 +371,8 @@ second radio in a network namespace playing the other computer.
 | Nearby, pack reader: the R*Tree through the hardened connection, widening until found, nothing 30 km away, a pack without the R*Tree | PASS (2026-11-19) |
 | Nearby, viewer: `n` lists pharmacy, fountain, peak, shelter, cafe nearest first with category, kind and "m N"; Tab only health, then only water; Shift-Tab back to every kind; Enter centres on the chosen point; far from everything: "Nothing within 10 km in: Testland" | PASS (2026-11-19) |
 | Go to (slice 11), viewer: `g`, the examples shown; "north of here" refused with a message and nothing moves; "49 36 41.8 N 6 7 54.8 E" centres the map, scale kept; latitude 95 refused | PASS (2026-11-19) |
+| Spot heights (slice 12): converter on Natural Earth samples (summit with height and zoom 4, depression -416, pass as saddle kept at zoom 7, impossible height dropped but the point kept, unnamed with height drawn and not searched, unnamed without height left out, a line refused); style: summit `^` and depression `v` visible, named and with height at 5,000 m/px, not at 20,000 | PASS (2026-11-19, unit tests) |
+| Spot heights in the real world overview (`map-world`): 711 elevation points written; Mount Everest a `summit` search row and in the R*Tree; Death Valley a `depression`; at least 640 searchable; size 11.9 MB; integrity ok | PASS (2026-11-19; the first run FAILED: the Dead Sea shore point is unnamed in Natural Earth and was dropped; unnamed spot heights are now drawn with their height) |
 | On a real pack (Luxembourg) | NOT TESTED yet (slice 13) |
 
 ### VM: `vm-cable` — computers on a switch with no router (2026-11-19, after the owner's real-hardware case)
