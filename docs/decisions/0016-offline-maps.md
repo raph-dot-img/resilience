@@ -812,6 +812,19 @@ Decided while adding maps to the TUI (slice 9, 2026-11-16):
 - The entries exist only on a system with resource packs
   (`/etc/resilience/packs.toml`), like the Offline library.
 
+Decided by the project owner on 2026-11-19 (maps resumed for 0.6.0):
+
+- **Catalog regions**: Luxembourg and Bretagne (built, hashed and
+  hosted as GitHub Release assets; slice 13).
+- **Spot heights** (slice 12) are in 0.6.0.
+- **Accented names**: yes. Labels and search results use the console
+  font's CP437 accented letters instead of folding them to ASCII; the
+  glyph rule of CLAUDE.md §4 and its test change with it (a slice of its
+  own, after search).
+- **Order**: search (slice 10) first, then nearby and go-to (11), spot
+  heights (12), accents, catalog and VM test (13), and an independent
+  review of the pack builder and viewer before release.
+
 Decided by the project owner on 2026-11-15:
 
 - **Hosting**: built packs are published as GitHub Release assets of the
