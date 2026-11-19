@@ -1,6 +1,6 @@
 # Threat model
 
-Version 0.5 (2026-11-19, Phase 9 design: serving to the local network, ADR 0025; first version 2026-11-14). Reviewed whenever a security-relevant feature is
+Version 0.5 (2026-11-19, Phase 9: serving to the local network, ADR 0025, implemented and reviewed; first version 2026-11-14). Reviewed whenever a security-relevant feature is
 added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 
 ## 1. What we protect

@@ -490,16 +490,15 @@ needlessly. Watch `free -h` during VM tests.
 **Now: release 0.4.0 (offline updates ADR 0023, licence notice ADR 0024,
 the owner's release key, `scripts/make-release.sh`) is released
 (2026-11-18): `main` merged and pushed, tag `v0.4.0` on `82f3152`, release
-folder signed by the owner, ISO boot-tested (BIOS, UEFI).** **Next (owner's
-choice, 2026-11-19): Phase 9 community network on `feat/community-network`;
-ADR 0025 accepted by the owner (slice 1); slice 2 (server side: share.nix,
-`set-share`, core `share.rs`, `vm-share`) and slice 3 (discovery:
-`resilience-messages share` beacon, `shares.json`, `parse_heard`) done;
-slice 4 (joining: `--from-peer`, `peer-list`, `open-remote` + relay, TUI
-Community network screens, vm-share through near's TUI) and slice 5
-(shared folder: `peer-files`/`peer-get` into ~/Received) and slice 6
-(hotspot + expert DNS, `vm-hotspot`) done; next: slice 7 (handbook,
-docs, the independent review of the server side), then the 0.5.0 steps.** **Release plan (owner, 2026-11-19): 0.5.0 = Phase 9
+folder signed by the owner, ISO boot-tested (BIOS, UEFI).** **Now (2026-11-19): release 0.5.0 (Phase 9, community network, ADR 0025)
+is being prepared on `develop`: `feat/community-network` merged (slices
+1-7 and the independent review's fixes), version 0.5.0 + CHANGELOG
+done; next: the full test run (25 checks incl. `vm-share`,
+`vm-hotspot`), ISO build + boot BIOS/UEFI, offline update 0.4.0 → 0.5.0
+→ rollback in QEMU (the owner signs the bundle), `make-release.sh` (the
+owner signs), then merge into `main` and tag only when the owner says
+so. The owner is testing 0.4.0 on new hardware meanwhile; findings may
+go into 0.5.0.** **Release plan (owner, 2026-11-19): 0.5.0 = Phase 9
 complete, released BEFORE resuming maps (maps then = 0.6.0). Before
 tagging 0.5.0: slices 5-7; an independent review of the server side
 (nginx config, firewall chain, `set-share`, relay, announce parser) with
@@ -666,8 +665,8 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Current: Phase 6 (networking and communications), see §14.
-Phase 5 (maps) is parked.
+See ROADMAP.md. Current: release 0.5.0 (Phase 9 done), then maps
+(Phase 5, slices 10-13) for 0.6.0 (owner, 2026-11-19).
 
 ## 17. Important decisions (docs/decisions/)
 
@@ -695,7 +694,7 @@ Phase 5 (maps) is parked.
 - 0022 Installer: prebuilt generic installed systems (per edition, UEFI/BIOS, plain/LUKS), accounts as local accounts in modes.toml, keyboard in /var/lib/resilience/keyboard (+ initrd secret), `resilience-install` via polkit allow_active on the live ISO only
 - 0023 Offline updates: signed Nix binary cache on a USB stick (release key in nix/release-keys.nix, passed per import, never in nix.conf), helper `apply-update` (auth_admin, newer version of this edition and variant only, switch-to-configuration boot), `check-update` as the user, TUI Recovery → Update from a USB stick
 - 0024 Licence notice: before an account's first use of the TUI, Hippocratic License 2.1 summary + original text, "I certify that I have read" → helper `record-licence SHA256` (allow_active=yes) appends to /var/lib/resilience/licence-acceptances.log (root 0644); `resilience.licence.prompt` off only in VM tests (flake wrapper, mkDefault); live ISO asks at every start
-- 0025 Community network (accepted 2026-11-19; slice 2 = server side): sharing packs/library/folder/pages over HTTP (one read-only nginx, TCP 80, one interface) only via helper `set-share` (auth_admin, not kept across reboots), discovery by Reticulum announces, joining as the user (peer packs hash-checked by the store, pages via a loopback relay + restricted lynx), hotspot via `set-hotspot` (auth_admin, WPA2, no forwarding), expert DNS in the hotspot's dnsmasq (`home.arpa`)
+- 0025 Community network (accepted 2026-11-19, implemented, reviewed; 0.5.0): sharing packs/library/folder/pages over HTTP (one read-only nginx, TCP 80, one interface) only via helper `set-share` (auth_admin, not kept across reboots), discovery by Reticulum announces, joining as the user (peer packs hash-checked by the store, pages via a loopback relay + restricted lynx), hotspot via `set-hotspot` (auth_admin, WPA2, no forwarding), expert DNS in the hotspot's dnsmasq (`home.arpa`)
 
 ## 18. How to continue safely
 

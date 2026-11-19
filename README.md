@@ -67,6 +67,13 @@ works at 80×24, without colour, and on modest hardware.
   stick is checked, installed with an administrator's password, and starts
   at the next restart with the previous version kept in the boot menu.
   Computers installed from 0.3.0 cannot take updates: reinstall them once.
+- Local messages between nearby computers without the Internet, with
+  store-and-forward and files, and a Wi-Fi mesh when there is no router
+  (standard edition).
+- Community network: computers nearby share their library, packs, a
+  folder and pages; packs from them are checked against the catalog. An
+  administrator can share, or turn the computer into a Wi-Fi hotspot.
+  Nothing is shared until an administrator turns it on.
 
 ## Downloads
 

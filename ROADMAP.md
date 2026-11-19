@@ -180,7 +180,7 @@ the netinstall is an addition, never a requirement.
   on stdin), and nothing is downloaded before the user confirms the
   summary with the total size.
 
-## Phase 9 — Community network 🟡 (requested 2026-11-18; design in ADR 0025, proposed 2026-11-19)
+## Phase 9 — Community network ✅ (requested 2026-11-18; ADR 0025; release 0.5.0)
 An assisted tool that lets a person with little experience join or create
 a network of Resilience machines and share offline resources on it. Builds
 on Phase 6 (mesh, ADR 0021; Reticulum announces, ADR 0018), resource packs
@@ -192,6 +192,7 @@ on Phase 6 (mesh, ADR 0021; Reticulum announces, ADR 0018), resource packs
 - ✅ Slice 4, joining: `resilience-library change --from-peer`, `peer-list`, `open-remote` (loopback relay, lynx `-localhost`), TUI Communications → Community network (computers heard, their library, pages and packs, sharing this computer), `vm-share` through the TUI
 - ✅ Slice 5, shared folder: `resilience-library peer-files` / `peer-get` (exact listed size, hidden `.partial`, then into ~/Received under a safe name, never replacing), TUI "Files in its shared folder"; the share form counts what will and will not be served
 - ✅ Slice 6, hotspot and expert DNS: `nix/modules/hotspot.nix`, helper `set-hotspot` (auth_admin, password made by the helper and shown once), WPA2, no forwarding (also through firewall reloads), DNS for `home.arpa` only (`dnsRecords`), mesh and hotspot exclusive; TUI rows to create a network (hotspot, mesh); `vm-hotspot`
+- ✅ Slice 7: handbook page, docs, an independent review of the server side and the joining path, its fixes (ADR 0025)
 - **An ADR comes first.** This is the first time a Resilience service
   accepts requests from the network: today nothing listens beyond
   `127.0.0.1` and the firewall allows nothing by default. The ADR settles

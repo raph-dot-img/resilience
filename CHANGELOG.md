@@ -6,6 +6,49 @@ Git tags: `vX.Y.Z` on the commit of each release.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-19 — Community network
+
+Computers nearby can share their library, resource packs and maps, a
+folder of files and simple web pages, without the Internet, and a
+computer can become a Wi-Fi network for others. This is the first
+release that can run a network server: it is offered in the standard
+edition but nothing is shared until an administrator turns it on, and
+nothing starts by itself at boot. Tested in virtual machines only.
+
+### Added
+- Community network (ADR 0025), Communications > Community network:
+  - finding the computers that share nearby (Reticulum announces while
+    they share; names are shown as claims), or typing an address; only
+    addresses on this computer's own networks are used;
+  - reading their library and pages in the text browser, through a
+    relay on this computer (the browser still reaches no remote host);
+  - getting packs from them: every pack is checked against this
+    system's catalog before it is installed, as for downloads;
+  - copying a file from their shared folder into Received (exact size,
+    never replacing a file, never run);
+  - sharing this computer's packs, library, shared folder and pages on
+    one network, with an administrator's password every time
+    (`resilience-admin set-share`): read-only nginx on TCP port 80 of
+    that network only (firewall and kernel), only world-readable files,
+    no uploads, limits per address, no access log; it stops when the
+    network changes and at restart (`resilience.share.autoStart` for a
+    computer left on in a shelter); a line on every screen while on.
+- Hotspot (`resilience-admin set-hotspot`, administrator's password):
+  this computer as a WPA2 Wi-Fi network with a new password each time,
+  DHCP and DNS for `home.arpa` only (`resilience.home.arpa`; more names
+  with `resilience.share.hotspot.dnsRecords`), never routing anyone to
+  other networks. The mesh and the hotspot exclude each other.
+- Handbook page "Community network"; VM tests `vm-share` (two
+  machines through the interface) and `vm-hotspot` (a simulated phone).
+
+### Security
+- An independent review of the community network before release; its
+  fixes are in ADR 0025 (sharing never follows a card onto another
+  network, hotspot activated by its own identifier, nginx kept to the
+  shared interface by the kernel, no forwarding at all while the hotspot
+  is on, both loopbacks held for the browser, a new announce identity
+  each time). Accepted limitations are listed in THREAT_MODEL.md.
+
 ## [0.4.0] — 2026-11-18 — Offline updates
 
 Installed computers can now be updated from a USB stick, without the
