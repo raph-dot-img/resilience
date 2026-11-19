@@ -553,6 +553,55 @@ pub fn packs_in_index(index: &str, catalog: &[&str]) -> Vec<String> {
     out
 }
 
+/// The address to reach a machine heard sharing, from this computer: an
+/// IPv4 address on one of its networks first, then a link-local IPv6
+/// address on an interface that has one (the mesh's `bat0` first), then
+/// a unique-local one on one of its networks.
+pub fn peer_for(h: &HeardShare, route4: &str, route6: &str) -> Option<Peer> {
+    use std::net::IpAddr;
+    let with = |address: IpAddr, interface: Option<String>| Peer {
+        address,
+        interface,
+        port: h.port,
+    };
+    for a in &h.addresses {
+        if a.is_ipv4() {
+            let p = with(*a, None);
+            if on_link(&p, route4, route6) {
+                return Some(p);
+            }
+        }
+    }
+    let mut ifaces: Vec<&str> = route6
+        .lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            (f.len() == 10 && f[0].starts_with("fe80") && f[1] == "40" && f[9] != "lo")
+                .then_some(f[9])
+        })
+        .filter(|i| valid_interface(i))
+        .collect();
+    ifaces.sort_by_key(|i| (*i != "bat0", *i));
+    ifaces.dedup();
+    for a in &h.addresses {
+        if let IpAddr::V6(v) = a
+            && (v.segments()[0] & 0xffc0) == 0xfe80
+            && let Some(i) = ifaces.first()
+        {
+            return Some(with(*a, Some(i.to_string())));
+        }
+    }
+    h.addresses
+        .iter()
+        .filter(|a| a.is_ipv6())
+        .map(|a| with(*a, None))
+        .find(|p| {
+            p.interface.is_none()
+                && !matches!(p.address, IpAddr::V6(v) if (v.segments()[0] & 0xffc0) == 0xfe80)
+                && on_link(p, route4, route6)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -909,5 +958,40 @@ fd000000000000000000000000000000 40 00000000000000000000000000000000 00 00000000
             ["a_en.zim", "b.mbtiles"]
         );
         assert!(packs_in_index("", &["a"]).is_empty());
+    }
+
+    #[test]
+    fn the_address_to_reach_a_heard_machine() {
+        let h = |addrs: &[&str]| HeardShare {
+            destination: "0".repeat(32),
+            name: "x".into(),
+            services: vec![Service::Packs],
+            port: 80,
+            addresses: addrs.iter().map(|a| a.parse().expect(a)).collect(),
+            heard: 0,
+            identity: String::new(),
+        };
+        let p = peer_for(&h(&["fe80::9", "192.168.1.9"]), ROUTE4, ROUTE6).expect("v4");
+        assert_eq!(p.display(), "192.168.1.9:80");
+        let p = peer_for(&h(&["10.9.9.9", "fe80::9"]), ROUTE4, ROUTE6).expect("v6");
+        assert_eq!(p.display(), "[fe80::9%eth1]:80");
+        let mesh = format!(
+            "{ROUTE6}fe800000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000001 00000000 00000001     bat0\n"
+        );
+        assert_eq!(
+            peer_for(&h(&["fe80::9"]), ROUTE4, &mesh)
+                .expect("mesh")
+                .interface
+                .as_deref(),
+            Some("bat0")
+        );
+        assert_eq!(
+            peer_for(&h(&["fd00::9"]), ROUTE4, ROUTE6)
+                .expect("ula")
+                .display(),
+            "[fd00::9]:80"
+        );
+        assert!(peer_for(&h(&["10.9.9.9", "fd01::9"]), ROUTE4, ROUTE6).is_none());
+        assert!(peer_for(&h(&["fe80::9"]), "", "").is_none());
     }
 }

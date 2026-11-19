@@ -136,6 +136,11 @@ description = "Carol the admin"
         comms_client: sys.join("comms-client-config"),
         // Absent: the mesh is off.
         mesh_devices: sys.join("mesh-devices"),
+        // Absent: not sharing.
+        share_state: sys.join("share-state.toml"),
+        route4: sys.join("route"),
+        route6: sys.join("ipv6_route"),
+        sys_net: sys.join("net"),
         // Absent: not a live system (no installer).
         install_config: sys.join("install.toml"),
         efi: sys.join("efi"),
@@ -4701,4 +4706,230 @@ fn the_notice_is_not_shown_once_recorded_or_when_off() {
         l.prompt = false;
     }
     assert!(!a.licence_needed());
+}
+
+/// Community network (ADR 0025): the screen exists only where sharing is
+/// offered; computers heard sharing are listed with how to reach them;
+/// their pages open through `resilience-library open-remote`; sharing asks
+/// for confirmation (Cancel first) and an administrator's password, and
+/// while it is on every screen says so.
+#[test]
+fn community_network_finds_reads_and_shares() {
+    let mut a = app(Mode::UltraStable, "community");
+    assert!(!a.builtin_present(Builtin::Community));
+    let admin = std::fs::read_to_string(&a.paths.admin_config).expect("admin.toml");
+    std::fs::write(
+        &a.paths.admin_config,
+        format!(
+            "share = {{ unit = \"resilience-share\", services = [\"packs\", \"library\", \"files\", \"pages\"], state_dir = \"/run/resilience-share\" }}\n{admin}"
+        ),
+    )
+    .expect("admin.toml");
+    assert!(a.builtin_present(Builtin::Community));
+    assert!(
+        a.search("shelter")
+            .contains(&SearchHit::Entry(Entry::Builtin(Builtin::Community)))
+    );
+    // This computer is on 192.168.1.0/24 (eth1).
+    std::fs::write(
+        &a.paths.route4,
+        "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n\
+         eth1\t0001A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n",
+    )
+    .expect("route");
+    std::fs::write(&a.paths.route6, "").expect("route6");
+    let now = crate::app::chat_now();
+    let store = resilience_core::messages::store_dir(&a.home);
+    std::fs::create_dir_all(&store).expect("mkdir");
+    std::fs::write(
+        store.join("shares.json"),
+        format!(
+            r#"{{"0123456789abcdef0123456789abcdef": {{"name": "School library", "services": ["packs", "library"], "port": 80, "addresses": ["192.168.1.9", "fe80::9"], "heard": {now}}},
+                "fedcba9876543210fedcba9876543210": {{"name": "Far away", "services": ["pages"], "port": 80, "addresses": ["10.9.9.9"], "heard": {now}}},
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {{"name": "Free WiFi", "services": ["packs"], "port": 80, "addresses": ["8.8.8.8"], "heard": {now}}}}}"#
+        ),
+    )
+    .expect("shares");
+
+    let (v, _) = a.activate(Entry::Builtin(Builtin::Community));
+    a.stack.push(v.expect("community"));
+    let screen = render(&mut a, 100, 30);
+    assert!(screen.contains("COMMUNITY NETWORK"), "{screen}");
+    assert!(
+        screen.contains("Share this computer's resources"),
+        "{screen}"
+    );
+    assert!(screen.contains("\"School library\"?"), "{screen}");
+    assert!(screen.contains("192.168.1.9:80"), "{screen}");
+    assert!(screen.contains("not reachable from here"), "{screen}");
+    assert!(!screen.contains("Free WiFi"), "{screen}");
+    assert_console_glyphs(&screen);
+
+    // The reachable computer: its front page, library and packs.
+    let rows = a.community_rows();
+    let school = rows
+        .iter()
+        .position(|r| matches!(r, crate::app::CommunityRow::Machine { heard, .. } if heard.name == "School library"))
+        .expect("school");
+    let far = rows
+        .iter()
+        .position(|r| matches!(r, crate::app::CommunityRow::Machine { heard, .. } if heard.name == "Far away"))
+        .expect("far");
+    press(&mut a, KeyCode::Home);
+    for _ in 0..far {
+        press(&mut a, KeyCode::Down);
+    }
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(a.modal, Some(Modal::Message { ref title, .. }) if title == "NOT REACHABLE"));
+    a.modal = None;
+    press(&mut a, KeyCode::Home);
+    for _ in 0..school {
+        press(&mut a, KeyCode::Down);
+    }
+    press(&mut a, KeyCode::Enter);
+    let View::PeerMenu { actions, .. } = a.view() else {
+        panic!("a computer's menu");
+    };
+    assert_eq!(
+        actions,
+        &[
+            crate::app::PeerAction::Index,
+            crate::app::PeerAction::Library,
+            crate::app::PeerAction::Packs
+        ]
+    );
+    press(&mut a, KeyCode::Down);
+    match press(&mut a, KeyCode::Enter) {
+        Effect::Run(r) => assert_eq!(
+            r.argv,
+            vec![
+                a.sys.tools.library.clone(),
+                "open-remote".into(),
+                "192.168.1.9:80".into(),
+                "library".into()
+            ]
+        ),
+        e => panic!("expected the library to open, got {e:?}"),
+    }
+    press(&mut a, KeyCode::Esc);
+
+    // Typing an address: only local ones on this computer's networks.
+    press(&mut a, KeyCode::Char('a'));
+    type_text(&mut a, "8.8.8.8");
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(
+        a.modal,
+        Some(Modal::ShareInput { error: Some(_), .. })
+    ));
+    for _ in 0..7 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    type_text(&mut a, "192.168.1.20");
+    press(&mut a, KeyCode::Enter);
+    assert!(a.modal.is_none());
+    let View::PeerMenu { actions, .. } = a.view() else {
+        panic!("a computer's menu");
+    };
+    assert_eq!(actions.len(), 4);
+    press(&mut a, KeyCode::Esc);
+
+    // Sharing: the form, the warning (Cancel first), then the helper.
+    let net = &a.paths.sys_net;
+    for (name, flags, kind) in [
+        ("eth1", "0x1003", "1"),
+        ("lo", "0x9", "772"),
+        ("eth2", "0x1002", "1"),
+    ] {
+        std::fs::create_dir_all(net.join(name)).expect("mkdir");
+        std::fs::write(net.join(name).join("flags"), flags).expect("w");
+        std::fs::write(net.join(name).join("type"), kind).expect("w");
+    }
+    press(&mut a, KeyCode::Home);
+    press(&mut a, KeyCode::Enter);
+    let View::ShareSetup { form, .. } = a.view() else {
+        panic!("the share form");
+    };
+    assert_eq!(form.interfaces, vec!["eth1".to_string()]);
+    // The name: a bad one is refused, a good one kept.
+    press(&mut a, KeyCode::Down);
+    press(&mut a, KeyCode::Enter);
+    for _ in 0..12 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    type_text(&mut a, "<b>");
+    press(&mut a, KeyCode::Enter);
+    assert!(matches!(
+        a.modal,
+        Some(Modal::ShareInput { error: Some(_), .. })
+    ));
+    for _ in 0..3 {
+        press(&mut a, KeyCode::Backspace);
+    }
+    type_text(&mut a, "School library");
+    press(&mut a, KeyCode::Enter);
+    assert!(a.modal.is_none());
+    let screen = render(&mut a, 100, 30);
+    assert!(
+        screen.contains("SHARE THIS COMPUTER'S RESOURCES"),
+        "{screen}"
+    );
+    assert!(screen.contains("ANYONE"), "{screen}");
+    press(&mut a, KeyCode::End);
+    press(&mut a, KeyCode::Enter);
+    let Some(Modal::Confirm { ref body, .. }) = a.modal else {
+        panic!("a confirmation");
+    };
+    assert!(body.contains("ANYONE"), "{body}");
+    // Cancel is the default.
+    assert!(matches!(press(&mut a, KeyCode::Enter), Effect::None));
+    press(&mut a, KeyCode::End);
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::Left);
+    match press(&mut a, KeyCode::Enter) {
+        Effect::Run(r) => {
+            assert_eq!(
+                r.argv,
+                vec![
+                    "/run/wrappers/bin/pkexec",
+                    "/store/bin/resilience-admin",
+                    "set-share",
+                    "on",
+                    "eth1",
+                    "--name",
+                    "School library",
+                    "packs",
+                    "library"
+                ]
+            );
+            assert_eq!(r.polkit_agent.as_deref(), Some("/store/bin/pkttyagent"));
+        }
+        e => panic!("expected the helper, got {e:?}"),
+    }
+
+    // While sharing: a line on every screen, and Enter stops it.
+    std::fs::write(
+        &a.paths.share_state,
+        "interface = \"eth1\"\nname = \"School library\"\nservices = [\"packs\", \"library\"]\nconnection = \"\"\n",
+    )
+    .expect("state");
+    a.after_run(
+        crate::app::SET_SHARE_LABEL_FOR_TESTS,
+        &Ok(std::process::ExitStatus::default()),
+    );
+    assert!(matches!(a.view(), View::Community { .. }));
+    let screen = render(&mut a, 100, 30);
+    assert!(
+        screen.contains("SHARING packs, library on eth1"),
+        "{screen}"
+    );
+    assert!(screen.contains("[ON] Sharing"), "{screen}");
+    press(&mut a, KeyCode::Home);
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::Left);
+    match press(&mut a, KeyCode::Enter) {
+        Effect::Run(r) => assert_eq!(&r.argv[2..], ["set-share", "off"]),
+        e => panic!("expected the helper, got {e:?}"),
+    }
+    a.stack.truncate(1);
+    assert!(render(&mut a, 100, 30).contains("SHARING packs, library"));
 }

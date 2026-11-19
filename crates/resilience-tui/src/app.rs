@@ -45,6 +45,8 @@ mod install_ui;
 mod library;
 #[path = "licence_ui.rs"]
 mod licence_ui;
+#[path = "share_ui.rs"]
+mod share_ui;
 #[path = "update_ui.rs"]
 mod update_ui;
 pub use chat_ui::now_secs as chat_now;
@@ -60,6 +62,11 @@ pub use install_ui::{InstallForm, InstallInput, InstallRow};
 pub use library::{ItemPlace, stick_items};
 pub use library::{LibItem, PackRow, PacksScreen};
 pub use licence_ui::LicencePage;
+#[cfg(test)]
+pub use share_ui::SET_SHARE_LABEL as SET_SHARE_LABEL_FOR_TESTS;
+pub use share_ui::{
+    CommunityRow, PeerAction, PeerPack, SHARE_ROWS, ShareForm, ShareInput, service_label,
+};
 #[cfg(test)]
 pub use update_ui::update_rows as update_ui_rows;
 pub use update_ui::{UPDATE_APPLY_LABEL, UPDATE_CHECK_LABEL, UpdateRow};
@@ -98,6 +105,14 @@ pub struct Paths {
     pub comms_client: PathBuf,
     /// Written by the mesh service while the mesh is on (ADR 0021).
     pub mesh_devices: PathBuf,
+    /// Written by the share unit while sharing (ADR 0025).
+    pub share_state: PathBuf,
+    /// The kernel's routes, to tell which addresses are on this
+    /// computer's networks.
+    pub route4: PathBuf,
+    pub route6: PathBuf,
+    /// Network interfaces.
+    pub sys_net: PathBuf,
     /// The installer's configuration: only on live systems (ADR 0022).
     pub install_config: PathBuf,
     /// Present when the computer started with UEFI.
@@ -116,6 +131,10 @@ impl Default for Paths {
             packs_config: resilience_core::packs::PACKS_CONFIG_PATH.into(),
             comms_client: "/run/resilience-reticulum/client/config".into(),
             mesh_devices: "/run/resilience-mesh/devices".into(),
+            share_state: "/run/resilience-share/state.toml".into(),
+            route4: "/proc/net/route".into(),
+            route6: "/proc/net/ipv6_route".into(),
+            sys_net: "/sys/class/net".into(),
             install_config: resilience_core::install::INSTALL_CONFIG_PATH.into(),
             efi: "/sys/firmware/efi".into(),
         }
@@ -202,6 +221,8 @@ pub enum Builtin {
     Chat,
     /// The Wi-Fi mesh network (ADR 0021).
     Mesh,
+    /// Sharing with nearby computers (ADR 0025).
+    Community,
     Notes,
     Network,
     Wifi,
@@ -231,7 +252,7 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 34] = [
+    pub const ALL: [Builtin; 35] = [
         Builtin::Handbook,
         Builtin::Files,
         Builtin::Manual,
@@ -241,6 +262,7 @@ impl Builtin {
         Builtin::MapFiles,
         Builtin::Chat,
         Builtin::Mesh,
+        Builtin::Community,
         Builtin::Notes,
         Builtin::Network,
         Builtin::Wifi,
@@ -279,6 +301,7 @@ impl Builtin {
             Builtin::MapFiles => "Maps on this computer & USB sticks",
             Builtin::Chat => "Local messages",
             Builtin::Mesh => "Mesh network (Wi-Fi without a router)",
+            Builtin::Community => "Community network: share with computers nearby",
             Builtin::Notes => "Notes",
             Builtin::Network => "Network status & diagnostics",
             Builtin::Wifi => "Wi-Fi networks",
@@ -352,6 +375,11 @@ impl Builtin {
                  by Wi-Fi, each one relaying for the others, so that local messages \
                  still get through. Turn it on here; turn it off to use ordinary Wi-Fi \
                  again."
+            }
+            Builtin::Community => {
+                "Find the computers nearby that share their library, packs or pages, \
+                 read them and get packs from them (checked before installing). An \
+                 administrator can share this computer's resources the same way."
             }
             Builtin::Notes => {
                 "Write and keep personal text notes. Notes are private files in your Notes folder."
@@ -442,7 +470,7 @@ impl Builtin {
                 Category::Knowledge
             }
             Builtin::Map | Builtin::MapFiles => Category::Maps,
-            Builtin::Chat | Builtin::Mesh => Category::Communications,
+            Builtin::Chat | Builtin::Mesh | Builtin::Community => Category::Communications,
             Builtin::Notes | Builtin::Files => Category::Productivity,
             Builtin::Network | Builtin::Wifi => Category::Networking,
             Builtin::Encrypt
@@ -501,6 +529,10 @@ impl Builtin {
             Builtin::Mesh => {
                 "mesh batman ad hoc adhoc wifi wi-fi router relay neighbourhood neighborhood \
                  network without router disaster"
+            }
+            Builtin::Community => {
+                "community share sharing nearby neighbour neighbor library packs pages \
+                 shelter school server network hotspot download"
             }
             Builtin::Notes => "write text memo journal",
             Builtin::Network => "wifi ethernet internet offline online dns",
@@ -586,6 +618,7 @@ pub enum HelpTopic {
     Files,
     Crypto,
     Install,
+    Community,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -719,6 +752,31 @@ pub enum View {
         items: Vec<LibItem>,
         list: ListState,
     },
+    /// Community network (ADR 0025): this computer's sharing, then the
+    /// computers heard sharing.
+    Community {
+        rows: Vec<CommunityRow>,
+        list: ListState,
+    },
+    /// What can be done with one nearby computer.
+    PeerMenu {
+        name: String,
+        peer: resilience_core::share::Peer,
+        actions: Vec<PeerAction>,
+        list: ListState,
+    },
+    /// The catalog packs a nearby computer offers; Space ticks.
+    PeerPacks {
+        peer: resilience_core::share::Peer,
+        rows: Vec<PeerPack>,
+        ticked: Vec<bool>,
+        list: ListState,
+    },
+    /// The choices before sharing this computer's resources.
+    ShareSetup {
+        form: ShareForm,
+        list: ListState,
+    },
     /// Local messages: one line per person written to or heard from.
     Chats {
         rows: Vec<ChatRow>,
@@ -769,6 +827,15 @@ pub enum Pending {
     /// Turn the mesh network on or off (ADR 0021).
     SetMesh {
         on: bool,
+    },
+    /// `set-share` with these arguments (ADR 0025).
+    SetShare {
+        args: Vec<String>,
+    },
+    /// Get packs from a nearby computer (ADR 0025).
+    PeerPacks {
+        peer: String,
+        get: Vec<String>,
     },
     SetMode {
         user: String,
@@ -850,6 +917,12 @@ pub enum Modal {
     },
     /// Words to search for in one pack.
     PackSearch { item: LibItem, value: String },
+    /// Community network: an address, or the name to share under.
+    ShareInput {
+        kind: ShareInput,
+        value: String,
+        error: Option<String>,
+    },
     /// Local messages: an address, a message or a contact's name.
     ChatInput {
         kind: ChatInput,
@@ -1056,6 +1129,7 @@ impl App {
         }
         self.poll_wifi_job();
         self.chat_tick();
+        self.community_tick();
         if let Some((rx, _)) = &self.probe.running {
             match rx.try_recv() {
                 Ok(report) => {
@@ -1241,6 +1315,10 @@ impl App {
             | View::Licence { .. } => HelpTopic::Reader,
             View::Notes { .. } => HelpTopic::Notes,
             View::Chats { .. } | View::Nearby { .. } | View::Chat { .. } => HelpTopic::Chat,
+            View::Community { .. }
+            | View::PeerMenu { .. }
+            | View::PeerPacks { .. }
+            | View::ShareSetup { .. } => HelpTopic::Community,
             View::Network { .. } => HelpTopic::Network,
             View::Settings { .. } => HelpTopic::Settings,
             View::Users { .. } | View::ChooseMode { .. } => HelpTopic::Users,
@@ -1357,6 +1435,15 @@ impl App {
         if matches!(view, View::Updates { .. }) {
             return self.updates_key(view, key);
         }
+        if matches!(
+            view,
+            View::Community { .. }
+                | View::PeerMenu { .. }
+                | View::PeerPacks { .. }
+                | View::ShareSetup { .. }
+        ) {
+            return self.community_key(view, key);
+        }
         let mut next: Option<View> = None;
         let mut effect = Effect::None;
         match &mut view {
@@ -1364,6 +1451,10 @@ impl App {
             View::Chats { .. } | View::Nearby { .. } | View::Chat { .. } => {}
             View::Install { .. } | View::InstallDisks { .. } | View::InstallLayouts { .. } => {}
             View::Updates { .. } => {}
+            View::Community { .. }
+            | View::PeerMenu { .. }
+            | View::PeerPacks { .. }
+            | View::ShareSetup { .. } => {}
             // Handled by licence_key in handle_key.
             View::Licence { .. } => {}
             View::Home { list } => {
@@ -2075,6 +2166,7 @@ impl App {
                 self.open_mesh();
                 (None, Effect::None)
             }
+            Builtin::Community => (Some(self.open_community()), Effect::None),
             Builtin::Install => (self.open_install(), Effect::None),
             Builtin::MapFiles => (self.open_map_files(), Effect::None),
             Builtin::Backup => {
@@ -2274,7 +2366,9 @@ impl App {
             | Pending::ChangePacks { .. }
             | Pending::RemoveContact { .. }
             | Pending::RemovePgpKey { .. }
-            | Pending::SetMesh { .. } => return,
+            | Pending::SetMesh { .. }
+            | Pending::SetShare { .. }
+            | Pending::PeerPacks { .. } => return,
             Pending::Logout => (
                 "LOG OUT",
                 "End this session? Programs you started from here will be closed.",
@@ -2448,6 +2542,9 @@ impl App {
             } => self.recipients_key(target, rows, ticked, sel, key),
             Modal::ExpectedSum { file, value, .. } => self.expected_sum_key(file, value, key),
             Modal::ChatInput { kind, value, error } => self.chat_input_key(kind, value, error, key),
+            Modal::ShareInput { kind, value, error } => {
+                self.share_input_key(kind, value, error, key)
+            }
             Modal::InstallText {
                 field,
                 value,
@@ -2533,6 +2630,8 @@ impl App {
                 self.set_mesh(on);
                 return Effect::None;
             }
+            Pending::SetShare { args } => return self.set_share_effect(&args),
+            Pending::PeerPacks { peer, get } => return self.peer_packs_effect(&peer, &get),
             Pending::ForgetWifi { name, uuid } => {
                 self.forget_wifi(&name, &uuid);
                 return Effect::None;
@@ -2615,6 +2714,7 @@ impl App {
         if [BACKUP_LABEL, CHECK_LABEL, RESTORE_LABEL].contains(&label) {
             self.reload_backups();
         }
+        self.share_after_run(label);
         if label == PACKS_LABEL {
             // Back to the packs screen (from the stick list), refreshed.
             while matches!(

@@ -575,6 +575,7 @@ impl App {
         match b {
             Builtin::Chat => self.paths.comms_client.exists(),
             Builtin::Mesh => self.mesh_config().is_some(),
+            Builtin::Community => self.share_offered(),
             Builtin::Install => self.install_present(),
             _ => true,
         }
