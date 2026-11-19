@@ -86,10 +86,16 @@ pub type Point = (f64, f64);
 /// The non-ASCII glyphs the console font has (CLAUDE.md §4).
 pub const CONSOLE_GLYPHS: &str = "▀▄█═║╔╗╚╝─│┌┐└┘░▒▓";
 
-/// True for printable ASCII (space included) and the console glyphs: the
-/// only characters a [`Cell`] may hold.
+/// The accented Latin letters the console font (`ter-i16n`, CP437
+/// repertoire) has, read from its PSF Unicode table (ADR 0016, "Decided
+/// while showing accented names"). Map names keep these letters; every
+/// other accented letter is folded to ASCII (`label::fold`).
+pub const CONSOLE_LETTERS: &str = "ÄÅÆÇÉÑÖÜßàáâäåæçèéêëìíîïñòóôöùúûüÿ";
+
+/// True for printable ASCII (space included), the console glyphs and the
+/// console letters: the only characters a [`Cell`] may hold.
 pub fn is_console_char(c: char) -> bool {
-    c == ' ' || c.is_ascii_graphic() || CONSOLE_GLYPHS.contains(c)
+    c == ' ' || c.is_ascii_graphic() || CONSOLE_GLYPHS.contains(c) || CONSOLE_LETTERS.contains(c)
 }
 
 /// Largest canvas, in cells. Larger requests are reduced to it (no console
@@ -1175,7 +1181,7 @@ mod tests {
         c.put_text(
             1,
             1,
-            "Zürich \u{7}\u{202e}",
+            "Zürich Łódź \u{7}\u{202e}",
             Some(Colour::White),
             None,
             false,
@@ -1183,6 +1189,27 @@ mod tests {
         for cell in c.cells() {
             assert!(is_console_char(cell.ch), "{:?}", cell.ch);
         }
-        assert!(!is_console_char('é') && !is_console_char('\n') && is_console_char('░'));
+        // Letters the font has are kept; others become `?`.
+        assert!(c.text().contains("Zürich ?ód? ??"), "{}", c.text());
+        assert!(is_console_char('é') && is_console_char('ß') && is_console_char('░'));
+        for ch in ['\n', 'Ł', 'Ø', 'À', 'Ê', 'ã', 'Œ', 'ƒ', 'ⁿ', '\u{301}'] {
+            assert!(!is_console_char(ch), "{ch:?}");
+        }
+    }
+
+    #[test]
+    fn console_letters_are_the_fonts_accented_letters() {
+        // ter-i16n's Unicode table (verified 2026-11-19, terminus-font 4.49.1):
+        // the Latin letters above U+007F in the CP437 repertoire, without
+        // ƒ (U+0192) and ⁿ (U+207F), which are not used as accented letters.
+        let want: Vec<u32> = vec![
+            0xC4, 0xC5, 0xC6, 0xC7, 0xC9, 0xD1, 0xD6, 0xDC, 0xDF, 0xE0, 0xE1, 0xE2, 0xE4, 0xE5,
+            0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF, 0xF1, 0xF2, 0xF3, 0xF4,
+            0xF6, 0xF9, 0xFA, 0xFB, 0xFC, 0xFF,
+        ];
+        let got: Vec<u32> = CONSOLE_LETTERS.chars().map(u32::from).collect();
+        assert_eq!(got, want);
+        assert!(CONSOLE_LETTERS.chars().all(char::is_alphabetic));
+        assert!(CONSOLE_LETTERS.chars().all(|c| !CONSOLE_GLYPHS.contains(c)));
     }
 }

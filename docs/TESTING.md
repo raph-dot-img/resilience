@@ -375,6 +375,17 @@ second radio in a network namespace playing the other computer.
 | Spot heights in the real world overview (`map-world`): 711 elevation points written; Mount Everest a `summit` search row and in the R*Tree; Death Valley a `depression`; at least 640 searchable; size 11.9 MB; integrity ok | PASS (2026-11-19; the first run FAILED: the Dead Sea shore point is unnamed in Natural Earth and was dropped; unnamed spot heights are now drawn with their height) |
 | On a real pack (Luxembourg) | NOT TESTED yet (slice 13) |
 
+### Maps: accented names (ADR 0016, `feat/maps-accents`)
+
+| Scenario | Result |
+|---|---|
+| Font: the accented Latin letters of `ter-i16n.psf.gz` (nixpkgs `terminus_font` 4.49.1) read from its PSF1 Unicode table with a Python parser and with kbd's `psfgettable`: the same 34 CP437 letters (plus `ƒ`, `ⁿ`, not used) | PASS (2026-11-19) |
+| Core `label::fold`: the 34 letters kept alone and in context ("Orléans", "Zürich", "Straße", "Æblegård", "Saint-Étienne"); others folded (Île→Ile, Łódź→Lódz, São→Sao, Œ→OE, Ø→O); control, bidirectional and combining characters as before; every character of U+0000–U+2FFFF gives only ASCII or a console letter; 40-character cap counted in characters ("é"×50 → 37 + "..."); placement measures cells in characters | PASS (2026-11-19, unit tests) |
+| `fold_ascii_to` and `search_fold` unchanged (Zürich→Zurich, Straße→Strasse, Æ→AE; every console letter folds to ASCII letters); existing search tests pass | PASS (2026-11-19, unit tests) |
+| `is_console_char` allows exactly the 34 letters (and not Ł, Ø, À, Ê, ã, Œ, ƒ, ⁿ, combining marks); the canvas turns other letters into `?` | PASS (2026-11-19, unit tests) |
+| Viewer (TestBackend): a hostile name with `É` and `Ł` drawn as `ÉvryL…` and only console characters; search "orleans", "Orléans", "ORLÉANS" each show "Orléans (town)"; "ile" shows "Ile-d'Arz (village)" | PASS (2026-11-19) |
+| The letters on a real Linux console (VM or hardware) | NOT TESTED (no VM or ISO run in this slice) |
+
 ### VM: `vm-cable` — computers on a switch with no router (2026-11-19, after the owner's real-hardware case)
 
 alpha, beta and gamma on one switch (vlan 1), with no address from the

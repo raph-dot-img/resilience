@@ -314,6 +314,9 @@ new profile. Never `nmcli --ask` (wrong password = inescapable prompt loop).
   glyphs limited to `▀▄█═║╔╗╚╝─│┌┐└┘░▒▓` (console font `ter-i16n`, CP437
   repertoire, 256 glyphs so the VT keeps 16 colours). Enforced by the test
   `only_console_font_glyphs_are_drawn`. ter-v16n lacks ▀▄ and double lines.
+  The map viewer may also draw the font's 34 accented letters
+  `ÄÅÆÇÉÑÖÜßàáâäåæçèéêëìíîïñòóôöùúûüÿ` in place names (verified from the
+  PSF table; `maps::canvas::CONSOLE_LETTERS`, `is_console_char`; ADR 0016).
 - See `docs/COMPONENTS.md` for every third-party component, version and license.
 - Resilience's own code: **Hippocratic License 2.1** (`LICENSE`, owner's decision
   2026-11-16; SPDX `Hippocratic-2.1` in Cargo.toml; Nix `meta.license = import

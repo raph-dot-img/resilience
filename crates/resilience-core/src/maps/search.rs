@@ -12,7 +12,7 @@
 //! either separators or plain quoted words.
 
 use super::geo::{Compass, LatLon, distance_m, format_distance, initial_bearing};
-use super::label::fold_to;
+use super::label::fold_ascii_to;
 
 /// At most this many words are searched for.
 pub const MAX_TOKENS: usize = 8;
@@ -39,11 +39,12 @@ fn combining(c: char) -> bool {
 /// here from the user's words the same way.
 ///
 /// This is not [`super::label::fold`], which folds for *display*: it keeps
-/// upper case, cuts at 40 characters and turns every non-Latin run into
-/// one `?`. For comparison:
+/// upper case and the console font's accented letters, cuts at 40
+/// characters and turns every non-Latin run into one `?`. For comparison:
 ///
 /// - lower case;
-/// - diacritics removed with the display table for Latin letters
+/// - diacritics removed with the ASCII table for Latin letters
+///   ([`super::label::fold_ascii_to`])
 ///   (`é` -> `e`, `ß` -> `ss`, `Ø` -> `o`);
 /// - letters of other scripts kept (lower-cased), not replaced;
 /// - words separated by exactly one space, splitting where `unicode61`
@@ -62,12 +63,12 @@ pub fn search_fold(name: &str) -> String {
             sep = true;
             continue;
         }
-        // The display fold of one Latin letter is its ASCII letters; for
+        // The ASCII fold of one Latin letter is its ASCII letters; for
         // any other letter it is "?" (or nothing), and the letter is kept.
         let ascii = if c.is_ascii() {
             None
         } else {
-            fold_to(c.encode_utf8(&mut buf), 8)
+            fold_ascii_to(c.encode_utf8(&mut buf), 8)
                 .filter(|s| s.bytes().all(|b| b.is_ascii_alphanumeric()))
         };
         if sep && !out.is_empty() {

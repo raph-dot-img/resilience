@@ -841,6 +841,28 @@ Decided by the project owner on 2026-11-19 (maps resumed for 0.6.0):
   heights (12), accents, catalog and VM test (13), and an independent
   review of the pack builder and viewer before release.
 
+Decided while showing accented names (2026-11-19):
+
+- **The letters**: read from the Unicode table of `ter-i16n.psf.gz` in
+  the pinned nixpkgs (`terminus_font` 4.49.1; a PSF1 font, 256 glyphs),
+  with a small Python parser and checked with kbd's `psfgettable`. Its
+  accented Latin letters are exactly the CP437 ones:
+  `ÄÅÆÇÉÑÖÜßàáâäåæçèéêëìíîïñòóôöùúûüÿ` (34; `canvas::CONSOLE_LETTERS`).
+  `ƒ` and `ⁿ` are in the font too but are not used as letters.
+- **`label::fold` keeps them** and folds every other accented letter as
+  before: `Orléans`, `Zürich`, `Straße`, `Æblegård` are shown as written;
+  `Saint-Étienne` keeps its `É`, but `Île` becomes `Ile`, `Łódź` becomes
+  `Lódz`, `São` becomes `Sao`, `Œ` stays `OE` (À, Â, È, Ê, Ë, Î, Ô, Û, Ø,
+  ã, õ and the Latin Extended letters are not in the font). Lengths are
+  counted in characters (each is one cell), so the 40-character cap is
+  unchanged.
+- **Search is unchanged**: `search::search_fold` (and the pack builder's
+  `rs_place.fold`) uses `label::fold_ascii_to`, the ASCII-only fold, so
+  existing packs still match. Results are shown with `fold`.
+- **The glyph rule**: `canvas::is_console_char` (every map cell and the
+  viewer's screens) allows these 34 letters. The main TUI draws no map
+  names, so its test `only_console_font_glyphs_are_drawn` is unchanged.
+
 Decided by the project owner on 2026-11-15:
 
 - **Hosting**: built packs are published as GitHub Release assets of the
