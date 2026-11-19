@@ -673,7 +673,10 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 ## 16. Roadmap
 
 See ROADMAP.md. Current: release 0.5.0 (Phase 9 done), then maps
-(Phase 5, slices 10-13) for 0.6.0 (owner, 2026-11-19).
+(Phase 5, slices 10-13) for 0.6.0 (owner, 2026-11-19). Requested
+2026-11-19: Phase 11, offline assistant (local model via Ollama or
+llama.cpp, models as hash-pinned packs, answers grounded in the
+libraries and handbook with sources); ADR first; not started.
 
 ## 17. Important decisions (docs/decisions/)
 

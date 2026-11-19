@@ -237,6 +237,51 @@ on Phase 6 (mesh, ADR 0021; Reticulum announces, ADR 0018), resource packs
 Independent architecture and security reviews, `cargo deny`, license audit,
 SBOM, physical hardware tests, release notes.
 
+## Phase 11 — Offline assistant (local AI) ⬜ (requested 2026-11-19)
+A local language model that answers questions from the offline content
+already on the computer: the Resilience handbook, the system
+documentation and the installed resource packs (Wikipedia, WikiMed,
+Wikivoyage, iFixit...), without any network. Order with the other phases
+to be decided by the owner; maps (0.6.0) come first.
+
+- **An ADR comes first.** It settles the points below; THREAT_MODEL.md
+  gets a section on a model running on the machine.
+- **Runtime**: Ollama (0.40.3 in the pinned nixpkgs, MIT, a NixOS module
+  exists) or llama.cpp's server directly (MIT): chosen in the ADR. Either
+  runs unprivileged (DynamicUser), listens on 127.0.0.1 only, no network
+  access of its own (IPAddressDeny except loopback), memory limit, started
+  only while someone uses the assistant. Off by default; probably the
+  standard edition only, or an "extended" edition.
+- **Models are resource packs** (ADR 0013): GGUF files with their size,
+  SHA-256, licence and source pinned in the catalog, installed by the
+  existing store (administrator's password, hash checked, USB stick or
+  download), never pulled by the runtime itself (Ollama's own `pull` and
+  `loadModels` download unchecked files: not used). Each model's licence
+  is shown before installing; some restrict uses (Llama, Gemma), others
+  are Apache 2.0 or MIT (Qwen, Mistral, Phi, ...). Sizes by memory: about
+  1-2 GB for 1-3B parameter models (4 GB machines), 4-5 GB for 7-8B
+  (8 GB+).
+- **Grounded answers, with sources**: retrieval before generation.
+  Kiwix's own full-text index (Xapian, already inside each ZIM) finds the
+  articles, a small index covers the handbook and the NixOS
+  documentation pack, and the model answers from those passages only,
+  listing the articles it used; Enter opens one in the offline library.
+  No embeddings needed at first (an embedding index per pack can come
+  later if search quality requires it).
+- **Honest limits in the interface**: a model can be wrong even with
+  sources; health, safety and legal answers say so plainly and point to
+  the source articles (WikiMed, the handbook); nothing it says is
+  executed. It never sees the user's files unless they choose one.
+- **Interface**: KNOWLEDGE & DOCUMENTATION > Ask the library: a question,
+  the answer streamed as it comes, the sources below; a Stop key; how
+  much memory it takes and how long the computer needs, shown before the
+  first use on that machine (CPU only on most target hardware: several
+  words per second for small models).
+- **Tests**: a tiny test model (or a stub server with the same API) in VM
+  tests: an answer cites the right test ZIM article; no network traffic;
+  the service unprivileged and stopped after use; a model file with a
+  wrong hash refused.
+
 ## Disk space (estimate, 2026-11-16)
 Measured: the system closure (live-standard) is **2.3 GiB**, of which
 `linux-firmware` 825 MiB, a nixpkgs source copy 197 MiB, Python 128 MiB.
