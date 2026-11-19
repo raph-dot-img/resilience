@@ -74,6 +74,7 @@ let
       path = pkgs.writeText "library.conf" ''
         location = /library { return 301 /library/; }
         location /library/ {
+          limit_conn library 12;
           proxy_pass http://127.0.0.1:${toString libraryPort};
           proxy_http_version 1.1;
           proxy_set_header Host $host;
@@ -144,6 +145,9 @@ let
       keepalive_requests 100;
       reset_timedout_connection on;
       limit_conn_zone $binary_remote_addr zone=peraddr:1m;
+      # All of the library's requests reach kiwix-serve from 127.0.0.1:
+      # a limit for everyone together keeps it within its own limit.
+      limit_conn_zone $server_name zone=library:64k;
       limit_req_zone $binary_remote_addr zone=reqs:1m rate=20r/s;
       limit_conn_status 429;
       limit_req_status 429;
@@ -191,8 +195,12 @@ let
     export PATH=${path}
     iface=$1
     d=${stateDir}
-    # Checked again here (the helper did): a name, not a path.
-    echo "$iface" | grep -Eqx '[A-Za-z][A-Za-z0-9_.]{0,14}'
+    # Checked again here (the helper did): a name, not a path. `case`,
+    # not grep: grep would accept a value with a newline line by line.
+    case "$iface" in
+      ""|[!A-Za-z]*|*[!A-Za-z0-9_.]*) echo "bad interface" >&2; exit 1 ;;
+    esac
+    [ ''${#iface} -le 15 ]
     ${lib.optionalString (cfg.autoStart != null) ''
       if [ ! -e "$d/services" ] && [ "$iface" = ${lib.escapeShellArg cfg.autoStart.interface} ]; then
         echo ${lib.escapeShellArg (lib.concatStringsSep " " cfg.autoStart.services)} > "$d/services"
@@ -201,7 +209,10 @@ let
     ''}
     services=$(cat "$d/services")
     name=$(cat "$d/name")
-    echo "$name" | grep -Eqx '[A-Za-z0-9]([A-Za-z0-9 -]{0,30}[A-Za-z0-9])?'
+    case "$name" in
+      ""|[!A-Za-z0-9]*|*[!A-Za-z0-9]|*[!A-Za-z0-9\ -]*) echo "bad name" >&2; exit 1 ;;
+    esac
+    [ ''${#name} -le 32 ]
     rm -rf "$d/conf" "$d/www"
     mkdir -m 0755 "$d/conf" "$d/www"
     rm -f "$d/library"
@@ -242,6 +253,7 @@ let
           for f in ${packsCfg.dir}/*; do
             b=$(basename "$f")
             [ -f "$f" ] && [ ! -L "$f" ] || continue
+            case "$b" in [!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) continue ;; esac
             grep -Fqx -- "$b" ${catalogFiles} || continue
             size=$(stat -c %s -- "$f")
             echo "<li><a href=\"/packs/$b\">$b</a> ($size bytes)</li>"
@@ -255,8 +267,22 @@ let
 
     conn=""
     ${lib.optionalString nm ''
-      conn=$(${nmcli} -t -g UUID,DEVICE connection show --active 2>/dev/null \
-        | grep -E ":$iface\$" | head -n 1 | cut -d: -f1 || true)
+      # An interface NetworkManager manages must be connected, and its
+      # connection is recorded: sharing never follows the card onto
+      # another network (the dispatcher stops it). At boot (autoStart),
+      # wait for the connection a little.
+      if ! ${nmcli} -g GENERAL.STATE device show "$iface" 2>/dev/null | grep -q unmanaged; then
+        for _ in $(seq 60); do
+          conn=$(${nmcli} -t -g UUID,DEVICE connection show --active 2>/dev/null \
+            | grep -E ":$iface\$" | head -n 1 | cut -d: -f1 || true)
+          [ -n "$conn" ] && break
+          sleep 1
+        done
+        if [ -z "$conn" ]; then
+          echo "$iface is not connected to a network: nothing is shared" >&2
+          exit 1
+        fi
+      fi
     ''}
     echo "$conn" > "$d/connection"
     echo "$iface" > "$d/interface"
@@ -300,8 +326,9 @@ let
     case "$action" in
       down|pre-down) stop=yes ;;
       up)
+        # Another connection, or one where none was recorded: stop.
         rec=$(cat "$d/connection" 2>/dev/null || true)
-        if [ -n "$rec" ] && [ "$rec" != "''${CONNECTION_UUID:-}" ]; then stop=yes; fi
+        if [ "$rec" != "''${CONNECTION_UUID:-}" ]; then stop=yes; fi
         ;;
     esac
     if [ "$stop" = yes ]; then
@@ -318,6 +345,7 @@ let
     for f in ${packsCfg.dir}/*.zim; do
       b=$(basename "$f")
       [ -f "$f" ] && [ ! -L "$f" ] || continue
+      case "$b" in [!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) continue ;; esac
       grep -Fqx -- "$b" ${catalogFiles} || continue
       set -- "$@" "$f"
     done
@@ -481,6 +509,10 @@ in
       serviceConfig = hardening // {
         ExecStart = "${pkgs.nginx}/bin/nginx -c ${nginxConf} -p /run/resilience-share-web -e stderr";
         ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
+        # The kernel itself keeps nginx to the loopback, whatever the
+        # firewall does; `set-share` adds the shared interface in a
+        # drop-in for this instance (systemd does not expand %i here).
+        RestrictNetworkInterfaces = [ "lo" ];
         RuntimeDirectory = "resilience-share-web";
         RuntimeDirectoryMode = "0700";
         MemoryMax = "128M";
@@ -495,6 +527,7 @@ in
       unitConfig.ConditionPathExists = "${stateDir}/library";
       serviceConfig = hardening // {
         ExecStart = libraryStart;
+        RestrictNetworkInterfaces = [ "lo" ];
         # kiwix-serve checks its address with getifaddrs (netlink).
         RestrictAddressFamilies = hardening.RestrictAddressFamilies ++ [ "AF_NETLINK" ];
         MemoryMax = "512M";
@@ -554,6 +587,18 @@ in
         RestartSec = 10;
       };
     };
+
+    # autoStart: the same drop-in, from the configuration.
+    systemd.services."resilience-share-web@${
+      if cfg.autoStart != null then cfg.autoStart.interface else "none"
+    }" =
+      lib.mkIf (cfg.autoStart != null) {
+        overrideStrategy = "asDropin";
+        serviceConfig.RestrictNetworkInterfaces = [
+          "lo"
+          cfg.autoStart.interface
+        ];
+      };
 
     systemd.services."resilience-share@${
       if cfg.autoStart != null then cfg.autoStart.interface else "none"

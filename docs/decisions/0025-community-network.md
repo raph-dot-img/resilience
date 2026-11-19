@@ -292,7 +292,53 @@ Communications → **Community network**, an assistant with three choices:
 Shown only where `resilience.share.enable` is on (default: on in the
 standard edition, off in minimal, mkDefault).
 
-## Alternatives considered
+## Independent review (2026-11-19)
+
+An independent review of slices 2 to 6 (server side, discovery, joining,
+the hotspot) found no critical or high issue. Changes that followed:
+
+- **Sharing never follows a card onto another network.** An interface
+  NetworkManager manages must be connected when sharing starts (the unit
+  waits up to a minute, for `autoStart` at boot), and the dispatcher
+  stops sharing on any `up` that is not the recorded connection,
+  including when none was recorded.
+- **The hotspot is activated and stopped by the UUID its unit made**,
+  never by name (any account may create a profile of its own called
+  `resilience-hotspot`), and the unit checks that this connection is the
+  one on the card.
+- **The kernel keeps nginx to the shared interface** (`RestrictNetworkInterfaces`
+  = `lo` and that interface; kiwix-serve `lo` only), so a firewall that
+  failed to reload does not expose it elsewhere.
+- **Nothing is forwarded at all while the hotspot is on** (NetworkManager
+  may turn forwarding on for other cards too), and the drop chain is
+  never touched by the firewall's own scripts.
+- **A limit for the whole library** (`limit_conn` keyed on the server):
+  kiwix-serve sees every request from 127.0.0.1.
+- **`localhost` is ours on both loopbacks:** the relay listens on
+  `127.0.0.1:PORT` and `[::1]:PORT`, and the offline library's local
+  reader holds `[::1]` for its kiwix-serve, so that another account
+  cannot answer the browser instead.
+- **A new announce identity per sharing session** (not saved), so
+  sessions cannot be linked.
+- Root scripts check values with `case`, not line-based `grep`.
+- `set-hotspot on` while it is on is refused (a new password would not
+  be the network's).
+
+Accepted and documented (THREAT_MODEL.md):
+
+- Accounts in the `networkmanager` group (Stable, Advanced) can read
+  and change the running hotspot's profile, password included, through
+  NetworkManager, as they can for any system profile.
+- nginx's listing of the shared folder shows the names and sizes of
+  private files (they cannot be fetched).
+- A nearby computer that stops a pack early leaves a partial file; a
+  later download of that pack continues from it and fails the catalog
+  hash only at the end (nothing wrong is ever installed); the store
+  deletes the partial then, so the next attempt starts afresh.
+- Announces go out on every network Reticulum uses, not only the shared
+  one.
+
+
 
 - **Serving over Reticulum** (as NomadNet serves pages): no new port and
   end-to-end authentication. But it is a protocol and page format of

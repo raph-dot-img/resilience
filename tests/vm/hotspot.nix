@@ -103,6 +103,13 @@
         hot.fail("systemctl is-active resilience-hotspot.service")
 
     with subtest("on: a WPA2 network, the password shown once and nowhere else"):
+        # A decoy with the same name, open, as any account could make for
+        # itself: never the one activated (activation by UUID).
+        hot.succeed(
+            "nmcli connection add type wifi ifname wlan0 con-name resilience-hotspot "
+            "ssid Decoy 802-11-wireless.mode ap ipv4.method shared connection.autoconnect no "
+            "connection.permissions user:alice"
+        )
         out = hot.succeed(f"{HELPER} set-hotspot on")
         print(out)
         m = re.search(r"Password: ([a-z0-9-]{19})", out)
@@ -116,7 +123,13 @@
         assert hot.succeed("stat -c '%a' /run/resilience-hotspot/password").strip() == "600"
         state = hot.succeed("cat /run/resilience-share/hotspot")
         assert 'device = "wlan0"' in state and password not in state, state
-        hot.wait_until_succeeds("nmcli -t -f GENERAL.STATE connection show resilience-hotspot | grep -q activated", timeout=30)
+        hot.wait_until_succeeds("iw dev wlan0 info | grep -q 'ssid Resilience-hotspot'", timeout=30)
+        uuid = hot.succeed("cat /run/resilience-hotspot/uuid").strip()
+        active = hot.succeed("nmcli -t -g UUID,DEVICE connection show --active")
+        assert f"{uuid}:wlan0" in active, active
+        # Already on: refused, no new password.
+        rc, out2 = hot.execute(f"{HELPER} set-hotspot on 2>&1")
+        assert rc == 2 and "already on" in out2, (rc, out2)
         assert "type AP" in hot.succeed("iw dev wlan0 info"), hot.succeed("iw dev wlan0 info")
         # Not in the journal, the audit log, or a command line.
         hot.fail("journalctl -b | grep -F -f /root/pw")
@@ -160,6 +173,8 @@
         # Never emptied by the firewall itself: no gap while it reloads.
         for _ in range(20):
             hot.succeed("iptables -w -S resilience-hotspot-fwd | grep -q 'wlan0 -j DROP'")
+        # Nothing at all is forwarded while it is on.
+        hot.succeed("iptables -w -S resilience-hotspot-fwd | grep -qx -- '-A resilience-hotspot-fwd -j DROP'")
         hot.wait_until_succeeds("iptables -w -S resilience-hotspot | grep -q 'dport 67'", timeout=10)
         hot.fail(CL + f"ping -c 2 -W 2 {out_ip}")
 
@@ -186,7 +201,9 @@
         hot.fail("test -e /run/NetworkManager/system-connections/resilience-hotspot.nmconnection")
         hot.fail("test -e /run/resilience-hotspot/password")
         hot.fail("test -e /run/resilience-share/hotspot")
-        hot.fail("nmcli connection show resilience-hotspot")
+        hot.fail(f"nmcli connection show uuid {uuid}")
+        # The decoy is untouched and was never up.
+        hot.succeed("nmcli -g 802-11-wireless.ssid connection show resilience-hotspot | grep -qx Decoy")
         assert hot.succeed("iptables -w -S resilience-hotspot-fwd").strip() == "-N resilience-hotspot-fwd"
         assert hot.succeed("iptables -w -S resilience-hotspot").strip() == "-N resilience-hotspot"
         hot.wait_until_fails(CL + "iw dev wlan1 link | grep -q 'SSID: Resilience-hotspot'", timeout=60)

@@ -203,6 +203,11 @@ pub fn interface_facts(flags: &str, kind: &str) -> Option<InterfaceFacts> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharePlan {
     pub stop: Vec<String>,
+    /// A drop-in for the web server's instance: the kernel keeps it to
+    /// this one interface (`RestrictNetworkInterfaces`; systemd does not
+    /// expand `%i` there). Written before `reload`, then the units start.
+    pub web_dropin: Option<(PathBuf, String)>,
+    pub reload: Option<Vec<String>>,
     /// Files to write in the state directory: (name, content).
     pub files: Vec<(&'static str, String)>,
     pub start: Option<Vec<String>>,
@@ -243,6 +248,8 @@ pub fn plan_set_share(
     else {
         return Ok(SharePlan {
             stop,
+            web_dropin: None,
+            reload: None,
             files: Vec::new(),
             start: None,
         });
@@ -271,8 +278,22 @@ pub fn plan_set_share(
     if services.contains(&Service::Library) {
         start.push(format!("{}-library@{interface}.service", s.unit));
     }
+    let dropin = PathBuf::from(format!(
+        "/run/systemd/system/{}-web@{interface}.service.d/50-interface.conf",
+        s.unit
+    ));
     Ok(SharePlan {
         stop,
+        web_dropin: Some((
+            dropin,
+            format!(
+                "[Service]\nRestrictNetworkInterfaces=\nRestrictNetworkInterfaces=lo {interface}\n"
+            ),
+        )),
+        reload: Some(vec![
+            systemctl.to_string_lossy().into_owned(),
+            "daemon-reload".into(),
+        ]),
         files: vec![
             ("services", format!("{}\n", ids.join(" "))),
             ("name", format!("{name}\n")),
@@ -877,6 +898,19 @@ mod tests {
                 "resilience-share-library@wlan0.service"
             ]
         );
+        let p2 = plan(&["on", "wlan0", "--name", "x", "packs"], UP).expect("plan");
+        let (path, text) = p2.web_dropin.expect("drop-in");
+        assert_eq!(
+            path,
+            PathBuf::from(
+                "/run/systemd/system/resilience-share-web@wlan0.service.d/50-interface.conf"
+            )
+        );
+        assert_eq!(
+            text,
+            "[Service]\nRestrictNetworkInterfaces=\nRestrictNetworkInterfaces=lo wlan0\n"
+        );
+        assert_eq!(p2.reload.expect("reload"), [SC, "daemon-reload"]);
         let p = plan(&["on", "bat0", "--name", "x", "files"], UP).expect("plan");
         assert_eq!(p.start.expect("start").len(), 5, "no library unit");
     }
@@ -885,7 +919,7 @@ mod tests {
     fn off_only_stops() {
         let p = plan(&["off"], None).expect("off");
         assert_eq!(p.stop[1], "stop");
-        assert!(p.files.is_empty() && p.start.is_none());
+        assert!(p.files.is_empty() && p.start.is_none() && p.web_dropin.is_none());
     }
 
     #[test]

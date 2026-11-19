@@ -624,6 +624,12 @@ fn set_share(args: &[&str]) -> Result<()> {
         return Err(fail("sharing is not configured".into()));
     };
     write_share_request(&settings.state_dir, &plan.files).map_err(fail)?;
+    // The kernel keeps the web server to this interface (a drop-in for
+    // its instance: systemd does not expand `%i` in that setting).
+    if let (Some((path, text)), Some(reload)) = (&plan.web_dropin, &plan.reload) {
+        write_dropin(path, text).map_err(fail)?;
+        run(reload).map_err(fail)?;
+    }
     if let Err(e) = run(&start) {
         // Leave nothing half on (the firewall rule goes with the unit).
         let _ = run(&plan.stop);
@@ -643,6 +649,28 @@ fn set_share(args: &[&str]) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Write a systemd drop-in (root, 0644) in a directory under /run/systemd.
+fn write_dropin(path: &std::path::Path, text: &str) -> std::result::Result<(), String> {
+    let dir = path
+        .parent()
+        .filter(|d| d.starts_with("/run/systemd/system"))
+        .ok_or_else(|| format!("{}: not a drop-in path", path.display()))?;
+    fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let tmp = dir.join(".resilience.tmp");
+    let _ = fs::remove_file(&tmp);
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o644)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&tmp)
+        .map_err(|e| format!("{}: {e}", tmp.display()))?;
+    f.write_all(text.as_bytes())
+        .and_then(|()| f.sync_all())
+        .map_err(|e| format!("{}: {e}", tmp.display()))?;
+    fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Write the request files for the share units: root-owned, 0644, each
@@ -725,6 +753,19 @@ fn set_hotspot(requested: &str) -> Result<()> {
     let Some(h) = cfg.hotspot.clone() else {
         return Err(err("no hotspot settings"));
     };
+    // Already on: starting it again would do nothing, and a new password
+    // shown here would not be the network's.
+    if on
+        && run_full(
+            &[args_systemctl(&argv), "is-active", "--quiet", "--", &h.unit],
+            Duration::from_secs(10),
+        )
+        .is_some_and(|o| o.success())
+    {
+        let reason = "the hotspot is already on (turn it off first for a new password)";
+        outcome(&[("result", "refused"), ("reason", reason)]);
+        return Err(Failure::Refused(reason.into()));
+    }
     let password_file = h.state_dir.join("password");
     let mut password = String::new();
     if on {
@@ -797,6 +838,11 @@ fn set_hotspot(requested: &str) -> Result<()> {
             Err(Failure::Error("systemctl did not finish".into()))
         }
     }
+}
+
+/// The systemctl path of a planned argv (its first element).
+fn args_systemctl(argv: &[String]) -> &str {
+    argv.first().map(String::as_str).unwrap_or("systemctl")
 }
 
 /// Set the system clock and the hardware clock to an exact UTC time.

@@ -124,6 +124,14 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
   on the network can answer at a peer's address first (ARP or neighbour
   spoofing); for packs this only wastes the download. An open network can
   be flooded; the limits keep the machine usable, not the service up.
+  Accepted after the independent review (ADR 0025): accounts in the
+  `networkmanager` group (Stable, Advanced) can read and change the
+  running hotspot's profile, password included, through NetworkManager;
+  nginx's listing of the shared folder shows names and sizes of private
+  files (they cannot be fetched); a partial pack left by a nearby
+  computer that stopped early makes a later download of that pack fail
+  its hash at the end (nothing wrong is installed); announces go out on
+  every network Reticulum uses.
 
 - The privileged helper offers `set-mode`, `set-time` and
   `set-default-generation` so far. The time zone can only be changed in the

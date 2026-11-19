@@ -374,6 +374,7 @@ udhcpc, dig, curl); `outside` is on hot's cable (vlan 1).
 | Sharing on the hotspot: pages reachable from the phone at `http://resilience.home.arpa/pages/`; stopped again | PASS (2026-11-19) |
 | `set-mesh on` refused while the hotspot is on, no `bat0`, the hotspot still on | PASS (2026-11-19) |
 | `set-hotspot off`: unit inactive; profile, password and state files gone; NetworkManager no longer knows the connection; both chains empty; the phone loses the network; turning it on again gives a different password | PASS (2026-11-19) |
+| After the independent review: a decoy profile named `resilience-hotspot` (open, as an account could make) is never activated: the unit's own UUID is the connection on wlan0, the decoy untouched; `set-hotspot on` while on is refused ("already on"); an unconditional DROP in the forward chain; the DROP rules present in 20 checks right after a firewall reload (the hotspot's own reload no longer empties the chain first) | PASS (2026-11-19; the first run after the review FAILED on that last point: the reload emptied and refilled the chain) |
 | On real Wi-Fi cards and phones | NOT TESTED |
 
 ### Check: `comms-messages`, community network part (ADR 0025 slice 3)
@@ -407,6 +408,7 @@ in the catalog, and files in the shared folder: public (0644), private
 | Joining through near's TUI (slice 4; Ultra-Stable alice, Advanced carol's password): Communications > Community network lists "Test shelter"? with eth1's address; its menu; "Get packs from it" lists the catalog packs it offers; both ticked; the store installs the field notes (same SHA-256 as the server's) and refuses the tampered pack ("not the expected file"), nothing left in `.staging` for either | PASS (2026-11-19; the first run FAILED on the test's own check: the store's `lock` file lives in `.staging`) |
 | "Read its library" opens lynx on `http://localhost:PORT/library/nojs` through the relay (lynx's argv has `-localhost` and not the server's address); the test pack is listed; q quits back to the menu, no lynx left | PASS (2026-11-19; the first run FAILED: `/library/` is kiwix's JavaScript page, now `/library/nojs`) |
 | Shared folder (slice 5) through the TUI: `notice.txt` copied into ~/Received (content intact, 0600); `private.txt` (0600 on the server, listed by nginx) refused with "Nothing was kept", no partial file left | PASS (2026-11-19) |
+| After the independent review: nginx kept to eth1 by the kernel (`RestrictNetworkInterfaces` in a drop-in the helper writes for the instance): with TCP 80 opened on eth2 in the firewall by hand, `far` still gets no answer; sharing on a disconnected interface (eth2 after `nmcli device disconnect`) refused | PASS (2026-11-19; the first run FAILED: systemd does not expand `%i` in `RestrictNetworkInterfaces`, which kept nginx to the loopback; now a per-instance drop-in) |
 | The helper reports a failing library unit (kiwix-serve exits after the start job) | NOT TESTED (the helper only sees systemctl's start job; the unit restarts and is visible in the journal) |
 | Real Wi-Fi cards (IBSS on iwlwifi and others), radio range, several hops over the air, battery use | NOT TESTED |
 

@@ -105,31 +105,69 @@ pub struct Relay {
 }
 
 impl Relay {
+    /// Listen on `127.0.0.1:PORT` and `[::1]:PORT` (the browser asks for
+    /// `localhost`, which may resolve to either: another account must not
+    /// be able to take the other one first).
     pub fn start(target: SocketAddr) -> io::Result<Relay> {
-        let listener = TcpListener::bind("127.0.0.1:0")?;
-        listener.set_nonblocking(true)?;
-        let port = listener.local_addr()?.port();
+        for _ in 0..10 {
+            let v4 = TcpListener::bind("127.0.0.1:0")?;
+            let port = v4.local_addr()?.port();
+            match TcpListener::bind(("::1", port)) {
+                Ok(v6) => return Relay::serve(vec![v4, v6], port, target),
+                // Taken by someone else: try another port.
+                Err(e) if e.kind() == io::ErrorKind::AddrInUse => continue,
+                // No IPv6 loopback here: `localhost` is 127.0.0.1 only.
+                Err(_) => return Relay::serve(vec![v4], port, target),
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AddrInUse,
+            "no free pair of local ports",
+        ))
+    }
+
+    /// Guard `[::1]:port` for a server of ours on `127.0.0.1:port` (the
+    /// offline library's kiwix-serve): relay it there too.
+    pub fn guard_v6(port: u16) -> io::Result<Option<Relay>> {
+        match TcpListener::bind(("::1", port)) {
+            Ok(v6) => {
+                Relay::serve(vec![v6], port, SocketAddr::from(([127, 0, 0, 1], port))).map(Some)
+            }
+            Err(e) if e.kind() == io::ErrorKind::AddrInUse => Err(e),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn serve(listeners: Vec<TcpListener>, port: u16, target: SocketAddr) -> io::Result<Relay> {
+        for l in &listeners {
+            l.set_nonblocking(true)?;
+        }
         let stop = Arc::new(AtomicBool::new(false));
         let active = Arc::new(AtomicUsize::new(0));
         let s = stop.clone();
         let thread = std::thread::spawn(move || {
             while !s.load(Ordering::Relaxed) {
-                match listener.accept() {
-                    Ok((client, _)) => {
-                        if active.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
-                            continue; // dropped: the browser tries again
+                let mut idle = true;
+                for l in &listeners {
+                    match l.accept() {
+                        Ok((client, _)) => {
+                            idle = false;
+                            if active.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
+                                continue; // dropped: the browser tries again
+                            }
+                            active.fetch_add(1, Ordering::Relaxed);
+                            let a = active.clone();
+                            std::thread::spawn(move || {
+                                let _ = carry(client, target);
+                                a.fetch_sub(1, Ordering::Relaxed);
+                            });
                         }
-                        active.fetch_add(1, Ordering::Relaxed);
-                        let a = active.clone();
-                        std::thread::spawn(move || {
-                            let _ = carry(client, target);
-                            a.fetch_sub(1, Ordering::Relaxed);
-                        });
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                        Err(_) => {}
                     }
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(50));
-                    }
-                    Err(_) => std::thread::sleep(Duration::from_millis(200)),
+                }
+                if idle {
+                    std::thread::sleep(Duration::from_millis(50));
                 }
             }
         });
@@ -228,6 +266,13 @@ mod tests {
             s.write_all(&buf).expect("w");
         });
         let relay = Relay::start(target).expect("relay");
+        // Whichever loopback `localhost` gives, it is ours.
+        if TcpListener::bind(("::1", 0)).is_ok() {
+            assert!(
+                TcpListener::bind(("::1", relay.port)).is_err(),
+                "[::1] left free"
+            );
+        }
         let mut c = TcpStream::connect(("127.0.0.1", relay.port)).expect("connect");
         c.write_all(b"hello").expect("w");
         let mut got = String::new();

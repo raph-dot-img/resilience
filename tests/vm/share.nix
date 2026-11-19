@@ -256,6 +256,11 @@ in
         assert 'interface = "eth1"' in state and "Test shelter" in state, state
         near.wait_until_succeeds(f"curl -sf --max-time 5 http://{ip1}/ | grep -q 'Test shelter'", timeout=30)
         assert get(far, f"http://{ip2}/") == "000", "served on the other network"
+        # Even with the firewall opened on eth2 by hand, the kernel keeps
+        # nginx to eth1 (RestrictNetworkInterfaces).
+        server.succeed("iptables -w -I resilience-share -i eth2 -p tcp --dport 80 -j nixos-fw-accept")
+        assert get(far, f"http://{ip2}/") == "000", "nginx answered on eth2"
+        server.succeed("iptables -w -D resilience-share -i eth2 -p tcp --dport 80 -j nixos-fw-accept")
         # Not root: a dynamic user.
         users = server.succeed("ps -o user= -C nginx").split()
         assert users and "root" not in users, users
@@ -420,6 +425,11 @@ in
     with subtest("the interface's connection goes down: sharing stops"):
         server.succeed("nmcli device disconnect eth2")
         server.wait_until_fails("systemctl is-active resilience-share@eth2.service", timeout=30)
+        # Not connected: refused, so that it can never follow the card
+        # onto whatever network it joins next (review finding).
+        rc, out = server.execute(f"{HELPER} set-share on eth2 --name Later pages 2>&1")
+        assert rc != 0, out
+        server.fail("systemctl is-active resilience-share@eth2.service")
         server.fail("test -e /run/resilience-share/state.toml")
         assert server.succeed("iptables -S resilience-share").strip() == "-N resilience-share"
   '';

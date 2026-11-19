@@ -42,10 +42,16 @@ let
       set -- $p
       iptables -w -A resilience-hotspot -i "$DEV" -p "$1" --dport "$2" -j nixos-fw-accept
     done
+    # Nothing in Resilience routes: while the hotspot is on, NetworkManager
+    # may turn forwarding on for other cards too, so nothing is forwarded
+    # at all (the two first rules name the hotspot's card for clarity).
+    # Added only if missing, never emptied first: a reload must leave no
+    # moment without them (the stop script empties the chain).
     for t in iptables ip6tables; do
-      $t -w -F resilience-hotspot-fwd
-      $t -w -A resilience-hotspot-fwd -i "$DEV" -j DROP
-      $t -w -A resilience-hotspot-fwd -o "$DEV" -j DROP
+      for r in "-i $DEV -j DROP" "-o $DEV -j DROP" "-j DROP"; do
+        # shellcheck disable=SC2086
+        $t -w -C resilience-hotspot-fwd $r 2>/dev/null || $t -w -A resilience-hotspot-fwd $r
+      done
     done
   '';
 
@@ -75,7 +81,10 @@ let
     esac
     # Written first: a start that fails half way is undone from it.
     echo "$dev" > "$d/device"
+    # Activated and stopped by this UUID, never by name: any account may
+    # create a profile of its own with the same name.
     uuid=$(cat /proc/sys/kernel/random/uuid)
+    echo "$uuid" > "$d/uuid"
     install -d -m 0700 /run/NetworkManager/system-connections
     umask 077
     cat > ${profile}.tmp <<EOF
@@ -113,8 +122,14 @@ let
       esac
     done
     ${nmcli} connection reload
-    if ! ${nmcli} --wait 45 connection up id resilience-hotspot; then
+    if ! ${nmcli} --wait 45 connection up uuid "$uuid"; then
       ${nmcli} device >&2 || true
+      exit 1
+    fi
+    # The card must now carry exactly this connection.
+    on=$(${nmcli} -t -g UUID,DEVICE connection show --active | grep -E ":$dev\$" | cut -d: -f1 || true)
+    if [ "$on" != "$uuid" ]; then
+      echo "another connection took $dev" >&2
       exit 1
     fi
     # For the interface (no secret): which card, which network.
@@ -127,14 +142,18 @@ let
   stop = pkgs.writeShellScript "resilience-hotspot-stop" ''
     set -u
     export PATH=${path}
-    ${nmcli} --wait 20 connection down id resilience-hotspot 2>/dev/null
+    uuid=$(cat /run/resilience-hotspot/uuid 2>/dev/null || true)
+    case "$uuid" in
+      ""|*[!0-9a-f-]*) ;;
+      *) ${nmcli} --wait 20 connection down uuid "$uuid" 2>/dev/null ;;
+    esac
     rm -f ${profile} ${profile}.tmp /run/resilience-share/hotspot
     ${nmcli} connection reload 2>/dev/null
     for t in iptables ip6tables; do
       $t -w -F resilience-hotspot-fwd 2>/dev/null
     done
     iptables -w -F resilience-hotspot 2>/dev/null
-    rm -f /run/resilience-hotspot/device
+    rm -f /run/resilience-hotspot/device /run/resilience-hotspot/uuid
     exit 0
   '';
 

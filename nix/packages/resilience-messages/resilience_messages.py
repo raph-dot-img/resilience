@@ -1185,7 +1185,9 @@ class Beacon:
         attach(RNS, os.path.join(root, "reticulum"), client_config)
         self.client_config = client_config
         self.state_file = state_file
-        identity = load_identity(RNS, os.path.join(root, "identity"))
+        # A new identity each time sharing starts, never saved: announces
+        # from one sharing session cannot be linked to the next.
+        identity = RNS.Identity()
         self.dest = RNS.Destination(identity, RNS.Destination.IN, RNS.Destination.SINGLE, *SHARE_ASPECTS)
         self.dest.set_proof_strategy(RNS.Destination.PROVE_NONE)
         try:

@@ -291,7 +291,8 @@ runCommand "resilience-messages-check"
            and .port == 80 and .addresses == ["192.168.1.5", "fe80::1"] and (.identity | test("^[0-9a-f]{32}$"))
            and (.heard > 0))' bob/shares.json
     test "$(stat -c %a bob/shares.json)" = 600
-    test "$(stat -c %a beacon/identity)" = 600
+    # The announcer keeps no identity between sessions.
+    test ! -e beacon/identity
     if grep -q "Free WiFi\|<b>" bob/shares.json; then exit 1; fi
 
     kill $(jobs -p) 2>/dev/null || true

@@ -810,6 +810,18 @@ fn open(cfg: &PackConfig, args: &[String]) -> Result<(), Failure> {
         let _ = io::stdin().lock().read_line(&mut String::new());
     }
     let (mut server, port) = start_server(cfg, &file).map_err(Failure::Error)?;
+    // `localhost` may be [::1]: hold that port too, so that no other
+    // account can answer there instead of our server.
+    let _guard = match peer::Relay::guard_v6(port) {
+        Ok(g) => g,
+        Err(e) => {
+            let _ = server.kill();
+            let _ = server.wait();
+            return Err(Failure::Error(format!(
+                "Another program holds the local port {port} ({e}); try again."
+            )));
+        }
+    };
     let mut argv = cfg.browser.clone();
     argv.push(packs::reader_url(port, book, search));
     let status = launch::run_foreground(&argv, &[], &[]);
