@@ -6,10 +6,12 @@
 //! `main.rs` (or a test) takes with [`MapApp::take_requests`].
 //!
 //! **Screens** ([`Screen`]): the map, the information screen (`i`), the
-//! legend (`L`) and the help (`?`, F1). Later slices add search (`/`),
-//! nearby (`n`) and go-to (`g`) as more screens or dialogs: those keys are
-//! reserved and do nothing yet, and [`MapApp::search`] keeps the text of
-//! `--search` for them.
+//! legend (`L`), the help (`?`, F1) and the search (`/`, or `--search`):
+//! the words typed are turned into an FTS5 query by
+//! `resilience_core::maps::search` (never passed as typed), every open
+//! pack with search tables is asked by the reader, and Enter on a result
+//! centres the map on it. Nearby (`n`) and go-to (`g`) come with a later
+//! slice: those keys are reserved and do nothing yet.
 //!
 //! **Packs**: each `--pack` is a [`Slot`] (opening, open, failed). An open
 //! pack has a [`Role`]:
@@ -40,6 +42,7 @@ use resilience_core::config::ThemeName;
 use resilience_core::maps::canvas::Canvas;
 use resilience_core::maps::geo::{LatLon, MAX_SCALE, View, ZOOM_LADDER};
 use resilience_core::maps::label::fold_to;
+use resilience_core::maps::search::{self, Hit};
 
 use crate::area::Area;
 use crate::cache::{BadKind, Insert, Key, Lookup, TileCache};
@@ -76,6 +79,34 @@ pub enum Screen {
     },
     Help {
         scroll: u16,
+    },
+    /// Find a place (`/`): see [`Find`].
+    Search,
+}
+
+/// The search screen's state, kept when it is closed so that `/` shows
+/// the last results again.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Find {
+    pub input: String,
+    pub results: Vec<Hit>,
+    pub sel: usize,
+    pub status: FindStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum FindStatus {
+    /// Nothing searched for the text as it is.
+    #[default]
+    Typing,
+    Searching {
+        generation: u64,
+    },
+    /// The packs searched (titles) and those that could not be.
+    Done {
+        query: String,
+        searched: Vec<String>,
+        failed: Vec<String>,
     },
 }
 
@@ -227,8 +258,11 @@ pub struct MapApp {
     reported: HashSet<(usize, bool)>,
     too_much: bool,
     reader_lost: bool,
-    /// The text of `--search`, for the search of a later slice.
-    pub search: Option<String>,
+    /// The search screen (`/`).
+    pub find: Find,
+    /// `--search` waits for the packs to open.
+    search_pending: bool,
+    search_generation: u64,
     pub theme: ThemeName,
     now: Instant,
     /// Last map size in cells, for panning by a quarter screen.
@@ -265,7 +299,6 @@ impl MapApp {
             })
             .collect();
         MapApp {
-            screen: Screen::Map,
             view,
             center_known: center.is_some(),
             scale_known: scale.is_some(),
@@ -280,7 +313,21 @@ impl MapApp {
             reported: HashSet::new(),
             too_much: false,
             reader_lost: false,
-            search: s.search,
+            screen: if s.search.is_some() {
+                Screen::Search
+            } else {
+                Screen::Map
+            },
+            find: Find {
+                input: s
+                    .search
+                    .as_deref()
+                    .map(|t| t.chars().take(search::MAX_INPUT_CHARS).collect())
+                    .unwrap_or_default(),
+                ..Find::default()
+            },
+            search_pending: s.search.is_some(),
+            search_generation: 0,
             theme: s.theme,
             now: s.now,
             map_size: (80, 20),
@@ -455,7 +502,119 @@ impl MapApp {
                 result,
                 ..
             } => self.on_tile(generation, key, result),
+            Response::Found {
+                generation,
+                hits,
+                searched,
+                failed,
+            } => self.on_found(generation, hits, &searched, &failed),
         }
+        if self.search_pending && !self.slots.iter().any(|s| matches!(s, Slot::Opening { .. })) {
+            self.search_pending = false;
+            self.start_search();
+        }
+    }
+
+    /// Keys of the search screen: typing edits the words, Enter searches
+    /// (or, on results of these very words, goes to the chosen one).
+    fn search_key(&mut self, k: KeyEvent) {
+        let n = self.find.results.len();
+        match k.code {
+            KeyCode::Esc => self.screen = Screen::Map,
+            KeyCode::Enter => {
+                let current = matches!(&self.find.status,
+                    FindStatus::Done { query, .. } if *query == self.find.input);
+                if current && n > 0 {
+                    self.go_to_result(self.find.sel.min(n - 1));
+                } else {
+                    self.start_search();
+                }
+            }
+            KeyCode::Up if n > 0 => self.find.sel = self.find.sel.saturating_sub(1),
+            KeyCode::Down if n > 0 => self.find.sel = (self.find.sel + 1).min(n - 1),
+            KeyCode::PageUp if n > 0 => self.find.sel = self.find.sel.saturating_sub(10),
+            KeyCode::PageDown if n > 0 => self.find.sel = (self.find.sel + 10).min(n - 1),
+            KeyCode::Home if n > 0 => self.find.sel = 0,
+            KeyCode::End if n > 0 => self.find.sel = n - 1,
+            KeyCode::Backspace => {
+                self.find.input.pop();
+                self.find.status = FindStatus::Typing;
+            }
+            KeyCode::Char(c) if !c.is_control() && !k.modifiers.contains(KeyModifiers::CONTROL) => {
+                if self.find.input.chars().count() < search::MAX_INPUT_CHARS {
+                    self.find.input.push(c);
+                }
+                self.find.status = FindStatus::Typing;
+            }
+            _ => {}
+        }
+    }
+
+    /// Ask the reader to search the open packs for the words typed.
+    fn start_search(&mut self) {
+        let Some(fts) = search::fts_query(&search::tokens(&self.find.input)) else {
+            self.notify(
+                Level::Info,
+                "Type the name of a place, a street or a point of interest.".into(),
+            );
+            return;
+        };
+        if self
+            .open_packs()
+            .all(|(_, p)| p.summary.capabilities.search.is_err())
+        {
+            self.find.results.clear();
+            self.find.status = FindStatus::Done {
+                query: self.find.input.clone(),
+                searched: Vec::new(),
+                failed: Vec::new(),
+            };
+            return;
+        }
+        self.search_generation += 1;
+        self.find.status = FindStatus::Searching {
+            generation: self.search_generation,
+        };
+        self.outbox.push(Request::Search {
+            generation: self.search_generation,
+            fts,
+        });
+    }
+
+    fn on_found(
+        &mut self,
+        generation: u64,
+        hits: Vec<Hit>,
+        searched: &[usize],
+        failed: &[(usize, String)],
+    ) {
+        if self.find.status != (FindStatus::Searching { generation }) {
+            return; // an older search, or the words changed meanwhile
+        }
+        self.find.results = search::rank(hits, &self.find.input, self.view.center());
+        self.find.sel = 0;
+        self.find.status = FindStatus::Done {
+            query: self.find.input.clone(),
+            searched: searched.iter().map(|i| self.title_of(*i)).collect(),
+            failed: failed.iter().map(|(i, _)| self.title_of(*i)).collect(),
+        };
+    }
+
+    /// Centre the map on a result, at a scale that suits its kind.
+    fn go_to_result(&mut self, i: usize) {
+        let Some(h) = self.find.results.get(i).cloned() else {
+            return;
+        };
+        self.view.set_center(h.at);
+        self.view.set_scale(resilience_core::maps::geo::clamp_scale(
+            h.kind.scale(&h.class),
+        ));
+        self.center_known = true;
+        self.scale_known = true;
+        self.screen = Screen::Map;
+        self.moved();
+        let name = fold_to(&h.name, 60).unwrap_or_else(|| "The place".into());
+        self.notify(Level::Info, format!("{name}: at the crosshair."));
     }
 
     fn on_tile(&mut self, generation: u64, key: Key, result: TileResult) {
@@ -835,6 +994,10 @@ impl MapApp {
         let shift = k.modifiers.contains(KeyModifiers::SHIFT);
         match self.screen {
             Screen::Map => self.map_key(k.code, shift),
+            Screen::Search => {
+                self.search_key(k);
+                Effect::None
+            }
             Screen::Info { scroll } | Screen::Help { scroll } | Screen::Legend { scroll, .. } => {
                 let scroll = match k.code {
                     KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
@@ -871,6 +1034,7 @@ impl MapApp {
                     Screen::Help { .. } => Screen::Help { scroll },
                     Screen::Legend { all, .. } => Screen::Legend { all, scroll },
                     Screen::Map => Screen::Map,
+                    Screen::Search => Screen::Search,
                 };
                 Effect::None
             }
@@ -883,7 +1047,7 @@ impl MapApp {
             Screen::Info { scroll } | Screen::Help { scroll } | Screen::Legend { scroll, .. } => {
                 *scroll = (*scroll).min(max);
             }
-            Screen::Map => {}
+            Screen::Map | Screen::Search => {}
         }
     }
 
@@ -940,8 +1104,9 @@ impl MapApp {
             }
             KeyCode::Char('?') | KeyCode::F(1) => self.screen = Screen::Help { scroll: 0 },
             KeyCode::Char('c') => self.offer_check(),
-            // Reserved for later slices: search, nearby, go to coordinates.
-            KeyCode::Char('/' | 'n' | 'g') => {}
+            KeyCode::Char('/') => self.screen = Screen::Search,
+            // Reserved for a later slice: nearby, go to coordinates.
+            KeyCode::Char('n' | 'g') => {}
             _ => {}
         }
         Effect::None

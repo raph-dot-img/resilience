@@ -388,6 +388,20 @@ pub struct PackSpec {
     pub tiles: Vec<(TileId, Vec<u8>)>,
     /// Stored exactly as given (damaged tiles).
     pub raw_tiles: Vec<(TileId, Vec<u8>)>,
+    /// Search rows (`rs_place` + its FTS index + R*Tree); empty: none.
+    pub places: Vec<Place>,
+}
+
+/// One `rs_place` row of a test pack.
+#[derive(Debug, Clone)]
+pub struct Place {
+    pub kind: &'static str,
+    pub class: &'static str,
+    pub name: String,
+    pub near: Option<String>,
+    pub lat: f64,
+    pub lon: f64,
+    pub rank: i64,
 }
 
 impl PackSpec {
@@ -406,6 +420,7 @@ impl PackSpec {
             coverage: Some(vec![(b.0, b.1), (b.2, b.1), (b.2, b.3), (b.0, b.3)]),
             tiles: Vec::new(),
             raw_tiles: Vec::new(),
+            places: Vec::new(),
         }
     }
 
@@ -423,7 +438,30 @@ impl PackSpec {
             coverage: None,
             tiles: Vec::new(),
             raw_tiles: Vec::new(),
+            places: Vec::new(),
         }
+    }
+
+    /// Add a search row.
+    pub fn place(
+        mut self,
+        kind: &'static str,
+        class: &'static str,
+        name: &str,
+        near: Option<&str>,
+        at: (f64, f64),
+        rank: i64,
+    ) -> PackSpec {
+        self.places.push(Place {
+            kind,
+            class,
+            name: name.into(),
+            near: near.map(String::from),
+            lat: at.0,
+            lon: at.1,
+            rank,
+        });
+        self
     }
 
     pub fn tile(mut self, t: TileMaker) -> PackSpec {
@@ -488,6 +526,38 @@ impl PackSpec {
                 [profile::encode_ring(&ring)],
             )
             .expect("coverage");
+        }
+        if !self.places.is_empty() {
+            for sql in [
+                profile::RS_PLACE,
+                profile::RS_PLACE_FTS,
+                profile::RS_POI_RTREE,
+            ] {
+                c.execute_batch(sql).expect("rs_place tables");
+            }
+            for (i, p) in self.places.iter().enumerate() {
+                let m = Micro::from_degrees(p.lon, p.lat).expect("in the world");
+                c.execute(
+                    "INSERT INTO rs_place (id, kind, class, name, fold, near, lon, lat, rank, bbox) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)",
+                    rusqlite::params![
+                        i as i64 + 1,
+                        p.kind,
+                        p.class,
+                        p.name,
+                        resilience_core::maps::search::search_fold(&p.name),
+                        p.near,
+                        m.lon,
+                        m.lat,
+                        p.rank
+                    ],
+                )
+                .expect("rs_place row");
+            }
+            c.execute_batch(
+                "INSERT INTO rs_place_fts (rowid, name) SELECT id, name FROM rs_place;",
+            )
+            .expect("fts");
         }
         c.execute_batch("COMMIT").expect("commit");
         c.close().expect("close pack");

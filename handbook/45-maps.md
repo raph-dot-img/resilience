@@ -8,6 +8,7 @@ OPENING THE MAP
   Open MAPS & NAVIGATION > Map.
     Arrows           move the map (with Shift: one small step)
     + / -            zoom in / out
+    /                find a place, a street or a point of interest
     d                coordinates as degrees, minutes and seconds
     i                what each map covers, its date, source and licence
     L                legend: what the colours and signs mean
@@ -16,6 +17,16 @@ OPENING THE MAP
   The bottom lines give the position of the cross in the middle of the
   screen, a scale bar, and which map is shown. The map remembers where
   you were for the next time.
+
+FINDING A PLACE
+  Press / and type a name, or its beginning ("esch al" finds
+  Esch-sur-Alzette); accents and capitals do not matter. Enter searches
+  every open map. Each result says what it is, the place it is near, and
+  how far and in which direction it is from the cross ("15 km SW").
+  Up/Down chooses a result and Enter shows it on the map. Only the open
+  maps are searched: the world overview knows towns and cities, a
+  detailed map also knows villages, streets and points of interest.
+  "Nothing found" lists the maps that were searched.
 
 WHAT THE WORLD OVERVIEW SHOWS
   Coasts, country and region borders, large lakes and rivers, and about

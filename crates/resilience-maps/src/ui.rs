@@ -303,6 +303,7 @@ pub fn draw(f: &mut Frame, app: &mut MapApp) {
                 "Up/Down Scroll  Esc Back",
             );
         }
+        Screen::Search => search_page(f, app, &t, area),
         Screen::Legend { all, scroll } => {
             let (title, lines) = legend_lines(app, all, &t);
             let hint = if all {
@@ -462,6 +463,91 @@ fn failures_page(f: &mut Frame, app: &mut MapApp, t: &Theme, area: Rect) {
         lines,
         scroll,
         "i Information  q Quit",
+    );
+}
+
+/// The search screen (`/`): the words, what happened, the results.
+fn search_page(f: &mut Frame, app: &mut MapApp, t: &Theme, area: Rect) {
+    use crate::app::FindStatus;
+    use resilience_core::maps::search::{Kind, where_from};
+    let w = usize::from(area.width.saturating_sub(4)).max(20);
+    let mut lines: Vec<Line<'static>> = vec![
+        Line::from(vec![
+            Span::styled("Find: ", t.title),
+            Span::styled(fold(&app.find.input, 80), t.accent),
+            Span::styled("_", t.base),
+        ]),
+        Line::raw(""),
+    ];
+    let status = match &app.find.status {
+        FindStatus::Typing => "Type a place, a street or a point of interest, then Enter. \
+             Only the open maps are searched."
+            .to_string(),
+        FindStatus::Searching { .. } => "Searching...".into(),
+        FindStatus::Done {
+            searched, failed, ..
+        } => {
+            let names = if searched.is_empty() {
+                "no open map can be searched".to_string()
+            } else {
+                searched.join(", ")
+            };
+            let mut s = if app.find.results.is_empty() {
+                format!("Nothing found in: {names}. Places outside these maps cannot be found.")
+            } else {
+                format!(
+                    "{} found in: {names}. Enter goes there.",
+                    app.find.results.len()
+                )
+            };
+            if !failed.is_empty() {
+                s.push_str(&format!(" Could not be searched: {}.", failed.join(", ")));
+            }
+            s
+        }
+    };
+    lines.extend(text_lines(&status, w, 0, t.dim));
+    lines.push(Line::raw(""));
+    let centre = app.view().center();
+    let first = lines.len();
+    for (i, h) in app.find.results.iter().enumerate() {
+        let kind = match h.kind {
+            Kind::Settlement | Kind::Natural => fold(&h.class, 20),
+            Kind::Street => "street".into(),
+            Kind::Poi => fold(&h.class, 20).replace('_', " "),
+        };
+        let near = h
+            .near
+            .as_deref()
+            .and_then(|n| fold_to(n, 30))
+            .map(|n| format!(", near {n}"))
+            .unwrap_or_default();
+        let text = format!(
+            "{} ({kind}{near})  {}",
+            fold(&h.name, 40),
+            where_from(centre, h.at)
+        );
+        let text: String = text.chars().take(w).collect();
+        let style = if i == app.find.sel {
+            t.accent.add_modifier(Modifier::REVERSED)
+        } else {
+            t.base
+        };
+        lines.push(Line::from(Span::styled(text, style)));
+    }
+    // Keep the chosen result in sight.
+    let visible = usize::from(area.height.saturating_sub(4));
+    let want = first + app.find.sel;
+    let scroll = want.saturating_sub(visible.saturating_sub(1)) as u16;
+    page(
+        f,
+        app,
+        t,
+        area,
+        "FIND A PLACE",
+        lines,
+        scroll,
+        "Type  Enter Search / Go there  Up/Down Choose  Esc Back",
     );
 }
 
@@ -664,6 +750,8 @@ pub fn help_lines(width: usize) -> Vec<Line<'static>> {
         "  The + in the middle is the crosshair: the line below the map gives its",
         "  coordinates, then the scale bar (true at the crosshair), the map in use",
         "  there and who made the map data.",
+        "  /                   Find a place, a street or a point of interest in the",
+        "                      open maps (Enter goes to the chosen result)",
         "  d                   Coordinates in degrees, minutes and seconds, or decimal",
         "  L                   Legend: what the colours and signs mean (a: all scales)",
         "  i                   Information about each map: what it covers, how old the",

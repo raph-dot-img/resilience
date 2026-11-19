@@ -359,6 +359,16 @@ second radio in a network namespace playing the other computer.
 | Wi-Fi (delta): `set-mesh on` with no device configured takes the first card (wlan0): type IBSS, joined cell `02:52:45:53:4d:31`; a BATMAN-adv neighbour (the other radio); ping6 to it over `bat0` | PASS (2026-11-17) |
 | Wi-Fi: `set-mesh off` → no `bat0`, the card back to type managed and to its NetworkManager state | PASS (2026-11-17) |
 
+### Maps: search (ADR 0016 slice 10, `feat/maps-search`)
+
+| Scenario | Result |
+|---|---|
+| Core: user words to an FTS5 expression; 15 hostile inputs (quotes, `*`, `^`, `-`, `:`, `NEAR(...)`, `AND`, parentheses, braces, NUL, bidirectional override) give only quoted words of letters and digits; at most 8 words of 32 characters; folding shared with the pack builder (accents, case, ß, Œ, decomposed accents, other scripts kept) | PASS (2026-11-19, unit tests) |
+| Ranking: exact folded name first, then kind, rank, distance; the same place in two packs once; "15 km SW" | PASS (2026-11-19, unit tests) |
+| Pack reader: real FTS5 queries through the hardened connection (authorizer, budget): prefixes, accents/case, two words, nothing found, hostile words harmless, empty query, a pack without the search tables; nothing written beside the file | PASS (2026-11-19) |
+| Viewer (TestBackend): `/`, typing, Enter; results from the overview and the detailed pack ranked (town before pharmacy, "near Testville", distance and direction); Enter centres the map at a scale for the kind; `/` again keeps the results, Down + Enter takes the second; new words search again; "Nothing found in: World overview, Testland … cannot be found"; hostile words; Esc does not move; `--search` runs once the packs are open; a map without search tables says so and asks nothing | PASS (2026-11-19) |
+| On a real pack (Luxembourg) | NOT TESTED yet (slice 13) |
+
 ### VM: `vm-cable` — computers on a switch with no router (2026-11-19, after the owner's real-hardware case)
 
 alpha, beta and gamma on one switch (vlan 1), with no address from the

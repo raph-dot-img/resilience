@@ -776,13 +776,163 @@ fn reserved_keys_do_nothing_yet() {
         Some(50.0),
     );
     let before = *h.app.view();
-    for c in ['/', 'n', 'g'] {
+    for c in ['n', 'g'] {
         assert_eq!(h.key(KeyCode::Char(c)), Effect::None);
         assert_eq!(h.app.screen, Screen::Map);
     }
     assert_eq!(*h.app.view(), before);
     let s = h.screen(160, 50);
-    assert!(!s.contains("/ Search") && !s.contains("n Nearby"), "{s}");
+    assert!(!s.contains("n Nearby"), "{s}");
+}
+
+fn type_text(h: &mut Harness, text: &str) {
+    for c in text.chars() {
+        h.key(KeyCode::Char(c));
+    }
+}
+
+/// Search (ADR 0016 slice 10): `/`, words, Enter, results from every
+/// open pack ranked, Enter centres the map; nothing found says which maps
+/// were searched; `--search` runs once the packs are open.
+#[test]
+fn search_finds_places_and_centres_the_map() {
+    let t = testland("Testland", "2026-01-01")
+        .place("settlement", "town", "Testville", None, TESTVILLE, 1)
+        .place(
+            "poi",
+            "pharmacy",
+            "Pharmacie du Test",
+            Some("Testville"),
+            (49.6110, 6.1320),
+            1,
+        )
+        .place(
+            "street",
+            "residential",
+            "Rue de l'Essai",
+            Some("Testville"),
+            (49.6120, 6.1310),
+            1,
+        )
+        .place("settlement", "village", "Farbourg", None, (49.69, 6.29), 3);
+    let w = world().place("settlement", "city", "Bigcity", None, (48.5, 4.0), 1);
+    let mut h = Harness::new(
+        "search",
+        &[("w.mbtiles", &w), ("t.mbtiles", &t)],
+        Some((49.0, 5.0)),
+        Some(20_000.0),
+    );
+    assert_eq!(h.key(KeyCode::Char('/')), Effect::None);
+    assert_eq!(h.app.screen, Screen::Search);
+    let s = h.screen(100, 30);
+    assert!(s.contains("FIND A PLACE") && s.contains("Find:"), "{s}");
+    type_text(&mut h, "tes");
+    h.key(KeyCode::Enter);
+    let s = h.screen(100, 30);
+    // The town first (settlements before points of interest), with where it is.
+    let town = s.find("Testville (town)").unwrap_or_else(|| panic!("{s}"));
+    let shop = s
+        .find("Pharmacie du Test (pharmacy, near Testville)")
+        .unwrap_or_else(|| panic!("{s}"));
+    assert!(town < shop, "{s}");
+    assert!(s.contains("2 found in: World overview, Testland"), "{s}");
+    assert!(s.contains("km NE"), "{s}");
+    assert_console_glyphs(&s);
+    // Enter goes to the first result.
+    h.key(KeyCode::Enter);
+    assert_eq!(h.app.screen, Screen::Map);
+    let c = h.app.view().center();
+    assert!((c.lat() - TESTVILLE.0).abs() < 1e-6 && (c.lon() - TESTVILLE.1).abs() < 1e-6);
+    assert!(h.app.view().scale() <= 20.0);
+    // `/` again: the same words and results; Down + Enter takes the second.
+    h.key(KeyCode::Char('/'));
+    assert!(h.screen(100, 30).contains("Testville (town)"));
+    h.key(KeyCode::Down);
+    h.key(KeyCode::Enter);
+    let c = h.app.view().center();
+    assert!((c.lat() - 49.6110).abs() < 1e-6, "{c:?}");
+    // Changing the words searches again; the overview's city is found too.
+    h.key(KeyCode::Char('/'));
+    for _ in 0..3 {
+        h.key(KeyCode::Backspace);
+    }
+    type_text(&mut h, "big");
+    h.key(KeyCode::Enter);
+    assert!(h.screen(100, 30).contains("Bigcity (city)"));
+    // Nothing found: which maps were searched, and that others cannot be.
+    for _ in 0..3 {
+        h.key(KeyCode::Backspace);
+    }
+    type_text(&mut h, "nowhere");
+    h.key(KeyCode::Enter);
+    let s = flat(&h.screen(100, 30));
+    assert!(
+        s.contains("Nothing found in: World overview, Testland"),
+        "{s}"
+    );
+    assert!(s.contains("outside these maps cannot be found"), "{s}");
+    // Hostile words are only words.
+    for _ in 0..7 {
+        h.key(KeyCode::Backspace);
+    }
+    type_text(&mut h, "\" OR \"x*");
+    h.key(KeyCode::Enter);
+    assert!(flat(&h.screen(100, 30)).contains("Nothing found"));
+    // Esc leaves the search without moving.
+    let before = *h.app.view();
+    h.key(KeyCode::Esc);
+    assert_eq!(h.app.screen, Screen::Map);
+    assert_eq!(*h.app.view(), before);
+}
+
+#[test]
+fn search_given_at_start_and_maps_without_search() {
+    let t = testland("Testland", "2026-01-01").place(
+        "settlement",
+        "town",
+        "Testville",
+        None,
+        TESTVILLE,
+        1,
+    );
+    let dir = TempDir::new("search-start");
+    let p = dir.file("t.mbtiles");
+    t.write(&p);
+    let now = Instant::now();
+    let mut app = MapApp::new(Start {
+        packs: vec![p],
+        at: None,
+        scale: None,
+        search: Some("Testville".into()),
+        saved: None,
+        theme: ThemeName::Green,
+        now,
+    });
+    let mut worker = Worker::new(Catalog::none());
+    for _ in 0..10 {
+        let reqs = app.take_requests();
+        if reqs.is_empty() {
+            break;
+        }
+        for r in worker.handle_all(reqs) {
+            app.on_response(r);
+        }
+    }
+    assert_eq!(app.screen, Screen::Search);
+    assert_eq!(app.find.results.len(), 1);
+    // A map without search tables: said plainly, no request.
+    let plain = testland("Plain", "2026-01-01");
+    let mut h = Harness::new(
+        "nosearch",
+        &[("p.mbtiles", &plain)],
+        Some(TESTVILLE),
+        Some(50.0),
+    );
+    h.key(KeyCode::Char('/'));
+    type_text(&mut h, "test");
+    h.key(KeyCode::Enter);
+    assert!(!h.app.has_requests());
+    assert!(flat(&h.screen(100, 30)).contains("no open map can be searched"));
 }
 
 #[test]
@@ -1088,7 +1238,8 @@ fn the_last_position_is_used_unless_overridden() {
         now: Instant::now(),
     });
     assert_eq!(app.view_to_save(), None);
-    assert_eq!(app.search.as_deref(), Some("essai"));
+    assert_eq!(app.find.input, "essai");
+    assert_eq!(app.screen, Screen::Search);
 }
 
 // ---------------------------------------------------------------------------
