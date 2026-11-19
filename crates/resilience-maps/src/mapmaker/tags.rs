@@ -629,7 +629,7 @@ pub fn natural_rank(class: &str) -> i64 {
     match class {
         "lake" | "reservoir" => 0,
         "river" => 1,
-        "peak" | "volcano" => 2,
+        "peak" | "volcano" | "summit" => 2,
         _ => 3,
     }
 }

@@ -35,7 +35,7 @@ WHAT IS NEAR
   nearest first, with the distance and direction: health (hospital,
   doctor, pharmacy), water (drinking water, spring), shelter, safety
   (police, fire station, defibrillator), food, fuel, toilets, post, town
-  hall, other named places and peaks. Tab shows one kind at a time, most
+  hall, other named places and peaks (with their height when known). Tab shows one kind at a time, most
   urgent first. Enter shows the chosen one on the map. It looks up to
   10 km away, in the open detailed maps only.
 
@@ -46,8 +46,10 @@ GOING TO COORDINATES
   map gives the cross's coordinates in the same forms.
 
 WHAT THE WORLD OVERVIEW SHOWS
-  Coasts, country and region borders, large lakes and rivers, and about
-  7,300 towns and cities. It has no streets and no villages. It comes
+  Coasts, country and region borders, large lakes and rivers, about
+  7,300 towns and cities, and 711 spot heights: major summits (^) and
+  places below sea level such as the Dead Sea shore (v), with their
+  height. It has no streets and no villages. It comes
   from Natural Earth (public domain), data of 2022. Every border is
   drawn the same way, whether or not it is disputed.
 

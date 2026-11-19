@@ -188,6 +188,11 @@ names! {
         Peak = "peak",
         Volcano = "volcano",
         Saddle = "saddle",
+        /// A major summit of the world overview (Natural Earth's elevation
+        /// points), drawn from overview scales with its height.
+        Summit = "summit",
+        /// A place below its surroundings (the Dead Sea shore), overview.
+        Depression = "depression",
     }
 }
 
@@ -423,6 +428,8 @@ impl Class {
                 PeakClass::Peak => "peak",
                 PeakClass::Volcano => "volcano",
                 PeakClass::Saddle => "mountain pass",
+                PeakClass::Summit => "major summit (height in metres)",
+                PeakClass::Depression => "depression (height in metres)",
             },
         }
     }
@@ -605,6 +612,25 @@ const fn peak(class: PeakClass) -> Rule {
     }
 }
 
+/// A spot height of the world overview: visible, with its name and height,
+/// from overview scales (ADR 0016 §5); the overview's own minimum zooms
+/// keep only the major ones at the coarsest scales.
+const fn spot(class: PeakClass, marker: char) -> Rule {
+    Rule {
+        class: Class::Peak(class),
+        max_scale: 10_000.0,
+        colour: Colour::White,
+        draw: Draw::Label(LabelRule {
+            marker: Some(marker),
+            priority: PEAK_PRIORITY,
+            name_max_scale: 10_000.0,
+            detail_max_scale: Some(10_000.0),
+            keep_marker: true,
+        }),
+        rank: PEAK_PRIORITY,
+    }
+}
+
 const fn poi(cat: PoiCategory, priority: u16) -> Rule {
     Rule {
         class: Class::Poi(cat),
@@ -703,6 +729,8 @@ pub static RULES: &[Rule] = &[
     peak(PeakClass::Peak),
     peak(PeakClass::Volcano),
     peak(PeakClass::Saddle),
+    spot(PeakClass::Summit, '^'),
+    spot(PeakClass::Depression, 'v'),
     place(PlaceClass::Village, 200.0, 70),
     place(PlaceClass::Hamlet, 50.0, 60),
     poi(PoiCategory::Health, 59),
@@ -994,6 +1022,17 @@ mod tests {
             .copied();
         let poi = poi.expect("poi rule");
         assert!(poi.name_visible(10.0) && !poi.name_visible(20.0));
+        // The overview's spot heights are visible, named and with their
+        // height at overview scales; a depression is not drawn as a peak.
+        for (c, m) in [(PeakClass::Summit, '^'), (PeakClass::Depression, 'v')] {
+            let r = rule(Class::Peak(c)).expect("spot height rule");
+            assert!(r.visible(5_000.0) && !r.visible(20_000.0));
+            let Draw::Label(l) = r.draw else {
+                panic!("a label")
+            };
+            assert_eq!(l.marker, Some(m));
+            assert!(l.name_visible(5_000.0) && l.detail_visible(5_000.0));
+        }
         let peak = rule(Class::Peak(PeakClass::Peak))
             .and_then(Rule::label)
             .copied();

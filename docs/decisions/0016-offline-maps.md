@@ -812,6 +812,22 @@ Decided while adding maps to the TUI (slice 9, 2026-11-16):
 - The entries exist only on a system with resource packs
   (`/etc/resilience/packs.toml`), like the Offline library.
 
+Decided while adding spot heights (slice 12, 2026-11-19):
+
+- **Two new classes in the `peaks` layer**: `summit` (Natural Earth's
+  mountains, plateaus and spot elevations: `^`) and `depression` (`v`,
+  so that the Dead Sea shore is not drawn as a peak); Natural Earth's two
+  passes are `saddle`. A viewer that does not know a class skips it, so
+  older viewers still read new packs.
+- **The rule**: `summit` and `depression` are drawn, named and with their
+  height (`ele`) up to 10,000 m per pixel; which ones appear at the
+  coarsest scales is Natural Earth's own `min_zoom` (4 to 8; points beyond
+  zoom 7 are kept at 7, like places). OSM peaks keep their rule (200 m per
+  pixel, height from 100 m per pixel). The 711 points are search rows and
+  in the R*Tree, so they are found with `/` and listed under `n`.
+- Heights outside the accepted range (-500 to 9,000 m) are left out; the
+  point stays.
+
 Decided by the project owner on 2026-11-19 (maps resumed for 0.6.0):
 
 - **Catalog regions**: Luxembourg and Bretagne (built, hashed and
