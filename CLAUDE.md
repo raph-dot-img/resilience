@@ -73,13 +73,31 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            (root oneshot: card out of NM, IBSS cell resilience-mesh 2412 MHz fixed
    │                            BSSID, batman_adv bat0 link-local only, restarts rnsd); started/stopped
    │                            only by `resilience-admin set-mesh on|off` (allow_active=yes)
+   │            share.nix       community network, server side (ADR 0025): resilience.share.{enable
+   │                            (standard: on, mkDefault), autoStart}; template units
+   │                            resilience-share@IF (root oneshot: TCP 80 on IF only in iptables
+   │                            chain `resilience-share`, nginx includes + index page in
+   │                            /run/resilience-share, state.toml), resilience-share-web@IF (nginx,
+   │                            DynamicUser, GET/HEAD), resilience-share-library@IF (kiwix-serve
+   │                            127.0.0.1:81); NM dispatcher stops it when IF's connection changes;
+   │                            shared folders /var/lib/resilience/shared/{files,pages} root:wheel 2775;
+   │                            with comms: resilience-share-announce@IF (`resilience-messages share`,
+   │                            DynamicUser, IPAddressDeny=any) announces aspect resilience.share;
+   │                            each account's program writes heard machines to shares.json
+   │            hotspot.nix     ADR 0025 §6-7: resilience.share.hotspot.{enable (= share.enable),
+   │                            ssid, device, dnsRecords}; resilience-hotspot.service (root oneshot:
+   │                            NM profile in /run/NetworkManager/system-connections 0600, WPA2,
+   │                            ipv4 shared 10.42.0.1/24, IPv6 off; chains resilience-hotspot (DHCP/DNS
+   │                            on the card) and resilience-hotspot-fwd in FORWARD (DROP in and out,
+   │                            never flushed by the firewall's own scripts)); dnsmasq-shared.d:
+   │                            no-resolv, home.arpa only; mesh and hotspot exclude each other
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
    ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
    ├─ packages: resilience, resilience-session, resilience-handbook, resilience-world-map, iso, iso-minimal, vm
    ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
               vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-install,
-              vm-install-uefi, vm-maps, vm-comms, vm-mesh, vm-update, vm-licence,
+              vm-install-uefi, vm-maps, vm-comms, vm-mesh, vm-share, vm-hotspot, vm-update, vm-licence,
               security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world,
               comms-messages (the messaging program with real Reticulum + LXMF, no VM)
 
@@ -101,12 +119,17 @@ crates/resilience-core  library: status, network (passive + on-demand probe),
 crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR 0007):
                         list | set-mode USER MODE | set-time UTC |
                         set-default-generation N | set-keymap LAYOUT | set-mesh on|off |
+                        set-share on IF --name NAME SERVICE... | set-share off (auth_admin) |
+                        set-hotspot on|off (auth_admin; prints a new password once) |
                         apply-update DIR | record-licence SHA256 | apply-state; check-update DIR
                         (any user, read-only)
 crates/resilience-backup binary `resilience-backup` (UNPRIVILEGED, ADR 0008):
                         create MOUNT | check FILE | restore FILE
 crates/resilience-library binaries (ADR 0013): `resilience-library` (as the user: list |
-                        change [--from M] [--remove F].. [--get ID].. | open FILE [--search W])
+                        change [--from M] [--remove F].. [--get ID].. | open FILE [--search W] |
+                        change --from-peer ADDR --get ID.. | peer-list ADDR |
+                        open-remote ADDR index|library|pages | peer-files ADDR |
+                        peer-get ADDR NAME; src/peer.rs = relay, ADR 0025)
                         and `resilience-pack-store` (as resilience-packs via pkexec --user,
                         never root: change; stdin bytes only hashed, never parsed)
 crates/resilience-crypto binary `resilience-crypto` (UNPRIVILEGED, ADR 0015, foreground):
@@ -234,6 +257,25 @@ script (ExecStart / ExecStopPost) → `systemctl --no-block try-restart
 resilience-reticulum` (AutoInterface lists interfaces only at start);
 the messaging programs and stores re-announce when the client config's
 mtime changes (instance restarted).
+
+Community network flow (ADR 0025): server side = `set-share on IF --name
+N SERVICE...` (auth_admin) → `/run/resilience-share/{services,name}` →
+`resilience-share@IF` (root: TCP 80 on IF only, nginx includes, index,
+state.toml) + `-web@IF` (nginx DynamicUser) + `-library@IF` (kiwix-serve
+127.0.0.1:81) + `-announce@IF` (`resilience-messages share`, aspect
+`resilience.share`). Each account's messaging program records heard
+announces in `shares.json`. TUI Communications → Community network
+(`Builtin::Community`, `share_ui.rs`, shown when admin.toml has `share`):
+rows = sharing state / "Share this computer's resources" / "Type the
+address" / heard machines (`share::parse_heard` + `peer_for`) → PeerMenu
+→ `resilience-library open-remote ADDR index|library|pages` (loopback
+`peer::Relay`, lynx `-localhost`) or `peer-list ADDR` → PeerPacks (Space
+ticks) → `change --from-peer ADDR --get ID...` (plain HTTP to local
+addresses only, `share::on_link` against /proc/net/route*, no redirects,
+store checks the catalog hash). While sharing, a line on every screen.
+Hotspot: Community network row → Confirm → `pkexec <helper> set-hotspot on`
+in the foreground (pause_after: the password the helper prints stays on
+screen) → helper writes /run/resilience-hotspot/password (0600) → unit.
 
 Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
 with `connection.permissions user:U`, no secret → thread: `nmcli connection
@@ -443,13 +485,31 @@ needlessly. Watch `free -h` during VM tests.
 4. The build-time catalog check ensures the binary exists. Add a VM test
    assertion if the app is important.
 
-## 14. Current implementation status (2026-11-18)
+## 14. Current implementation status (2026-11-19)
 
 **Now: release 0.4.0 (offline updates ADR 0023, licence notice ADR 0024,
 the owner's release key, `scripts/make-release.sh`) is released
 (2026-11-18): `main` merged and pushed, tag `v0.4.0` on `82f3152`, release
-folder signed by the owner, ISO boot-tested (BIOS, UEFI); next work: ask
-the owner.** Release flow: version bump + CHANGELOG on `develop`, full
+folder signed by the owner, ISO boot-tested (BIOS, UEFI).** **Next (owner's
+choice, 2026-11-19): Phase 9 community network on `feat/community-network`;
+ADR 0025 accepted by the owner (slice 1); slice 2 (server side: share.nix,
+`set-share`, core `share.rs`, `vm-share`) and slice 3 (discovery:
+`resilience-messages share` beacon, `shares.json`, `parse_heard`) done;
+slice 4 (joining: `--from-peer`, `peer-list`, `open-remote` + relay, TUI
+Community network screens, vm-share through near's TUI) and slice 5
+(shared folder: `peer-files`/`peer-get` into ~/Received) and slice 6
+(hotspot + expert DNS, `vm-hotspot`) done; next: slice 7 (handbook,
+docs, the independent review of the server side), then the 0.5.0 steps.** **Release plan (owner, 2026-11-19): 0.5.0 = Phase 9
+complete, released BEFORE resuming maps (maps then = 0.6.0). Before
+tagging 0.5.0: slices 5-7; an independent review of the server side
+(nginx config, firewall chain, `set-share`, relay, announce parser) with
+its findings fixed; the full test run (24 checks) + ISO boot BIOS/UEFI;
+an offline update 0.4.0 → 0.5.0 → rollback in QEMU (first real use of
+ADR 0023 between releases); ideally two real laptops (sharing, discovery,
+a pack over real Wi-Fi/mesh), otherwise the release notes say "VM-tested
+only"; the notes say plainly that 0.5.0 is the first release that can
+run a network server (offered in standard, off until an administrator
+turns it on).** Release flow: version bump + CHANGELOG on `develop`, full
 test run, `make-release.sh --update-key NIXKEY --sign MINISIGNKEY V OUT` at
 tag `vV` (the owner signs in their own terminal; secret keys under
 `~/.resilience-keys`, later a VeraCrypt container), merge into `main`, tag
@@ -635,6 +695,7 @@ Phase 5 (maps) is parked.
 - 0022 Installer: prebuilt generic installed systems (per edition, UEFI/BIOS, plain/LUKS), accounts as local accounts in modes.toml, keyboard in /var/lib/resilience/keyboard (+ initrd secret), `resilience-install` via polkit allow_active on the live ISO only
 - 0023 Offline updates: signed Nix binary cache on a USB stick (release key in nix/release-keys.nix, passed per import, never in nix.conf), helper `apply-update` (auth_admin, newer version of this edition and variant only, switch-to-configuration boot), `check-update` as the user, TUI Recovery → Update from a USB stick
 - 0024 Licence notice: before an account's first use of the TUI, Hippocratic License 2.1 summary + original text, "I certify that I have read" → helper `record-licence SHA256` (allow_active=yes) appends to /var/lib/resilience/licence-acceptances.log (root 0644); `resilience.licence.prompt` off only in VM tests (flake wrapper, mkDefault); live ISO asks at every start
+- 0025 Community network (accepted 2026-11-19; slice 2 = server side): sharing packs/library/folder/pages over HTTP (one read-only nginx, TCP 80, one interface) only via helper `set-share` (auth_admin, not kept across reboots), discovery by Reticulum announces, joining as the user (peer packs hash-checked by the store, pages via a loopback relay + restricted lynx), hotspot via `set-hotspot` (auth_admin, WPA2, no forwarding), expert DNS in the hotspot's dnsmasq (`home.arpa`)
 
 ## 18. How to continue safely
 

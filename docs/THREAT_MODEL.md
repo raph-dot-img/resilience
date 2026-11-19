@@ -1,6 +1,6 @@
 # Threat model
 
-Version 0.4 (2026-11-18, Phase 8: offline updates and licence notice; first version 2026-11-14). Reviewed whenever a security-relevant feature is
+Version 0.5 (2026-11-19, Phase 9 design: serving to the local network, ADR 0025; first version 2026-11-14). Reviewed whenever a security-relevant feature is
 added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 
 ## 1. What we protect
@@ -20,7 +20,7 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 | **Inexperienced user** (Ultra-Stable) | Keyboard at the TUI; may press anything | Yes — primary design driver: *mistakes* must not damage the system |
 | **Curious/hostile local user** (Ultra-Stable/Stable account) | Arbitrary code as their own UID (assume shell escapes exist) | Yes — must not gain root, read others' files, change the system, or fill the Nix store (Ultra-Stable) |
 | **Malicious program or document** (e.g. a crafted handbook page, ZIM, map tile, resource pack) | Data parsed by our code or by integrated tools | Yes — parsers must fail safely; packs verified before install (Phase 3/8) |
-| **Local-network attacker** | Packets on the LAN / Wi-Fi | Yes — no listening services by default; future local messaging must authenticate peers |
+| **Local-network attacker** | Packets on the LAN / Wi-Fi | Yes — no listening services by default; messaging authenticates peers (ADR 0018); sharing (ADR 0025) only on one network while an administrator wants it |
 | **Supply chain** | Compromised upstream source or binary cache | Partly — pinned nixpkgs, hash-locked Cargo deps, signed caches; we cannot audit all of nixpkgs |
 | **Physical attacker** | Boots other media, removes the disk, keyboard at boot menu | **Out of scope for integrity** unless full-disk encryption and firmware passwords are used. Documented, not hidden. |
 | **Remote Internet attacker** | Nothing listens; outbound connections only on request | Yes, but surface is minimal |
@@ -85,6 +85,11 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
 | T43 | The mesh network (ADR 0021) used to reach or misroute the computer: a neighbour in radio range sends router advertisements or DHCP to become its gateway, reaches services on it, or the mesh is turned on behind the user's back | bat0 has only an IPv6 link-local address (accept_ra=0, autoconf=0, no forwarding, no IPv4, NetworkManager never manages it); the firewall is unchanged (only Reticulum's two UDP ports); the mesh starts only when the person at the console asks (`set-mesh`, polkit allow_active only, audited) or with `autoStart` set by the administrator; turning it off restores the card | Implemented (vm-mesh, security-invariants, unit tests). Frames from anyone in range are parsed by the kernel's batman_adv and mac80211; the mesh is open by design (traffic on it is Reticulum's, end-to-end encrypted) |
 | T44 | The installer (ADR 0022) erases the wrong disk, or is used to take over a computer: a person at a live system's console erases an internal disk, the program is run with chosen arguments, the live stick itself is chosen, or secrets end up on the disk or in the Nix store | `resilience-install` runs as root only through pkexec and the polkit action `org.resilience.install.run`, which exists on live systems only (assertion: never with local accounts) and allows only the active local session; such a person can already boot anything and erase the disk. Only whole, writable, unused disks of at least 16 GiB are offered; disks with a mounted partition (the live stick) are "in use"; the TUI requires the disk's name to be typed; the root program re-checks every argument and that the disk still has the size and model shown. Passphrase and passwords are typed into cryptsetup and passwd, never passed in arguments, files or the store; the installed systems are prebuilt and identical for every machine (no secret in them) | Implemented; `vm-install`, `vm-install-uefi` (wrong name refused and the disk unchanged; the running disk listed "in use") and installs from the ISO with the stick "in use" (TESTING.md) |
 | T45 | The licence record (ADR 0024) forged or used to write as root | `record-licence` takes only a SHA-256 that must equal the hash of the licence file named in root-owned admin.toml; the helper writes one line with the caller's uid as set by pkexec (`PKEXEC_UID`, not an argument) and its account name and the system clock, `O_APPEND \| O_NOFOLLOW`, root-owned 0644; polkit allows it without a password to the active local session only; audited | Implemented (vm-licence, unit tests). The record shows the screen was shown and the box ticked; it is not a signature |
+| T46 | Sharing (ADR 0025) turned on without the administrator, on more networks than intended, or kept on another network | Only `resilience-admin set-share` with an administrator's password every time (own action, auth_admin, also to stop); one interface only, TCP 80 opened on it alone in the `resilience-share` chain, flushed at stop or failure; not kept across reboots (except `autoStart` in the configuration); stopped when the interface disappears or its NetworkManager connection changes; a line on the main screen while sharing; audited | Implemented (vm-share, security-invariants, unit tests) |
+| T47 | Hostile requests from the network against the server: parser bugs, path traversal, symlinks, dotfiles, uploads, exhausting the machine | nginx only while sharing, DynamicUser, CAP_NET_BIND_SERVICE only, read-only file system, MemoryMax/TasksMax; GET/HEAD only, body size 0, `disable_symlinks on`, dotfiles refused, only the turned-on paths; limit_conn/limit_req per address, short timeouts; kiwix-serve behind it on 127.0.0.1, its own hardened unit; no access log | Implemented (vm-share). nginx and kiwix-serve parse hostile requests: accepted risk while sharing |
+| T48 | Private files published by mistake through the shared folder or pages | Served by a dynamic user: only world-readable files; root:wheel 2775 folders under /var/lib/resilience/shared, nothing from home folders; the Share screen lists every served file; the warning "anyone on this network can read it" before sharing | Implemented (vm-share: 0600 file 403, dotfile and symbolic link refused). An administrator who makes a private file world-readable there publishes it |
+| T49 | A hostile machine on the network: fake announces pointing clients at the Internet or at themselves, forged packs, hostile pages or files, lynx used to escape | Announced and typed addresses accepted only in local ranges on an interface whose network holds them; names shown as claims with the announcing identity; packs from peers go through the store and the catalog hash (plain HTTP allowed for local addresses only); pages read through a loopback relay with restricted lynx `-localhost` (T33); folder files into ~/Received with the ADR 0020 rules and read-only viewers (T34, T42); records of heard machines bounded | Implemented: discovery (comms-messages: public address and markup in a name not recorded), joining (vm-share: a tampered pack from the server refused through the TUI, the library read through the relay with lynx on localhost; unit tests: addresses not on this computer's networks refused, curl without redirects or proxy). Shared folder (vm-share: copied into ~/Received 0600 at its listed size only, a refused file leaves nothing). Content other than packs is unverified, by design, and said so |
+| T50 | The hotspot used as a gateway or listened to | `set-hotspot` auth_admin; WPA2 with a random password made by the helper (getrandom), shown once on the console, never in a log, a pipe or a command line (root-only file, NetworkManager in-memory profile 0600); every packet forwarded from or to the hotspot's card dropped although shared mode turns forwarding on (no NAT to the Internet); IPv6 off on it; DHCP/DNS (NetworkManager's dnsmasq) opened on that card only and only while it is on; `home.arpa` answered locally, nothing forwarded (`no-resolv`); never at boot (invariant) | Implemented (vm-hotspot, unit tests, security-invariants). dnsmasq parses DHCP and DNS from anyone with the password while it is on |
 | T33 | Shell or Internet access from the offline library for Ultra-Stable accounts | lynx with `-restrictions=… -localhost` (no shell escape, no external programs, no typed address, no remote host); kiwix-serve on 127.0.0.1 only, `--blockexternal`, one file, stopped with the browser | Implemented (vm-packs: `!` refused, no shell process, loopback only). Usability measure, not a sandbox |
 
 ## 5. Known gaps (honest list)
@@ -102,6 +107,31 @@ added. "Implemented" means implemented **and tested**; see docs/TESTING.md.
   Files in messages (ADR 0020) are accepted from any address, verified
   or not, within 64 MB per account; their names and content are the
   sender's choice.
+
+- **Serving to the local network** (ADR 0025; server side, discovery, joining and the shared folder implemented; the hotspot not yet). Other local accounts can use a user's relay port while it is open: they reach the same peer they could reach directly.
+  A machine that shares runs servers for strangers: whoever is on the
+  chosen network (a café's Wi-Fi, a campus, the open mesh, a hotspot
+  whose password was given out) can read everything shared and send
+  requests that nginx, and through it kiwix-serve, parse. The defences
+  are limiting *when* (only while an administrator wants it, never after
+  a reboot unless declared), *where* (one interface), *what* (read-only,
+  world-readable files under one folder, packs, the library) and *how
+  much* (per-address limits, a memory cap). Confidentiality of shared
+  content is not a goal: it is public by design. Integrity is
+  guaranteed only for packs (catalog hashes). Library pages, pages and
+  folder files from a peer are as trustworthy as the peer, which cannot
+  be identified beyond a claimed name and a Reticulum identity. Someone
+  on the network can answer at a peer's address first (ARP or neighbour
+  spoofing); for packs this only wastes the download. An open network can
+  be flooded; the limits keep the machine usable, not the service up.
+  Accepted after the independent review (ADR 0025): accounts in the
+  `networkmanager` group (Stable, Advanced) can read and change the
+  running hotspot's profile, password included, through NetworkManager;
+  nginx's listing of the shared folder shows names and sizes of private
+  files (they cannot be fetched); a partial pack left by a nearby
+  computer that stopped early makes a later download of that pack fail
+  its hash at the end (nothing wrong is installed); announces go out on
+  every network Reticulum uses.
 
 - The privileged helper offers `set-mode`, `set-time` and
   `set-default-generation` so far. The time zone can only be changed in the

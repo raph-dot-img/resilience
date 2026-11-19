@@ -358,6 +358,58 @@ second radio in a network namespace playing the other computer.
 | beta turns it off: unit inactive, `bat0` and the state file gone, each card's NetworkManager state as before; alpha can no longer ping gamma; a new message is not delivered within 40 s | PASS (2026-11-17) |
 | Wi-Fi (delta): `set-mesh on` with no device configured takes the first card (wlan0): type IBSS, joined cell `02:52:45:53:4d:31`; a BATMAN-adv neighbour (the other radio); ping6 to it over `bat0` | PASS (2026-11-17) |
 | Wi-Fi: `set-mesh off` → no `bat0`, the card back to type managed and to its NetworkManager state | PASS (2026-11-17) |
+
+### VM: `vm-hotspot` — the hotspot (ADR 0025 slice 6), a "phone" and the outside
+
+hot has two simulated radios (mac80211_hwsim): wlan0 becomes the hotspot,
+wlan1 is moved into a network namespace as a phone (wpa_supplicant, busybox
+udhcpc, dig, curl); `outside` is on hot's cable (vlan 1).
+
+| Scenario | Result |
+|---|---|
+| `set-hotspot`: polkit auth_admin for any, inactive and active; the account itself refused (77); `""`, `maybe`, `on now`, `ON` refused and audited | PASS (2026-11-19) |
+| `set-hotspot on`: audited `ok`, a 19-character password printed once; the NetworkManager profile in /run (root 0600), the password file 0600, the interface's state file without it; the connection activated, wlan0 in AP mode; the password in no journal line, audit line or command line (`grep -F -f`) | PASS (2026-11-19; the first run FAILED: NetworkManager had not made wlan0 usable yet, the unit now waits for it) |
+| The phone joins with that password (WPA2/RSN), gets 10.42.0.x with 10.42.0.1 as router; `resilience.home.arpa`, `library.home.arpa` and `printer.home.arpa` answered as configured; `example.org` and `outside` not answered (nothing forwarded) | PASS (2026-11-19) |
+| Never routed: NetworkManager turns forwarding on for wlan0; with forwarding on everywhere (as on a machine with an Internet connection) the phone cannot ping `outside`; control: without our rule it can; `systemctl reload resilience-hotspot` puts it back; through a firewall reload the DROP rules stay in place (checked 20 times right after) | PASS (2026-11-19; two runs FAILED on the test's setup, and one on a real gap: the firewall's reload ran our stop commands, which emptied the drop chain for a moment; that chain is no longer touched by the firewall's own scripts) |
+| Sharing on the hotspot: pages reachable from the phone at `http://resilience.home.arpa/pages/`; stopped again | PASS (2026-11-19) |
+| `set-mesh on` refused while the hotspot is on, no `bat0`, the hotspot still on | PASS (2026-11-19) |
+| `set-hotspot off`: unit inactive; profile, password and state files gone; NetworkManager no longer knows the connection; both chains empty; the phone loses the network; turning it on again gives a different password | PASS (2026-11-19) |
+| After the independent review: a decoy profile named `resilience-hotspot` (open, as an account could make) is never activated: the unit's own UUID is the connection on wlan0, the decoy untouched; `set-hotspot on` while on is refused ("already on"); an unconditional DROP in the forward chain; the DROP rules present in 20 checks right after a firewall reload (the hotspot's own reload no longer empties the chain first) | PASS (2026-11-19; the first run after the review FAILED on that last point: the reload emptied and refilled the chain) |
+| On real Wi-Fi cards and phones | NOT TESTED |
+
+### Check: `comms-messages`, community network part (ADR 0025 slice 3)
+
+| Scenario | Result |
+|---|---|
+| Parsers: local addresses only (public, loopback, documentation, CGNAT refused), 17 malformed announces refused (bad name, service, duplicate, port 0 or boolean, no or 9 addresses, a public address, other format version, a map, bad msgpack, empty, over 400 bytes), the sharing state file checked, machines older than an hour dropped | PASS (2026-11-19) |
+| Without a sharing state the announcer announces nothing; with one, Bob's program records the machine with its name, services, port, addresses and identity (0600); announces with a public address or markup in the name are not recorded | PASS (2026-11-19) |
+
+### VM: `vm-share` — community network, server side (ADR 0025 slice 2), one server between two networks
+
+near (vlan 1) ── server (vlans 1 and 2, eth1/eth2) ── far (vlan 2). The
+server has a catalog pack (a real ZIM built by the test), a ZIM file not
+in the catalog, and files in the shared folder: public (0644), private
+(0600), a dotfile and a symbolic link to `/etc/os-release`.
+
+| Scenario | Result |
+|---|---|
+| Nothing listens on TCP 80 and no share unit runs until an administrator shares; `near` gets no answer | PASS (2026-11-19) |
+| `set-share`: polkit does not allow the TUI's process without authentication (auth_admin); the account itself is refused (exit 77); 11 malformed requests refused (missing name or service, `lo`, an absent interface, an unknown or repeated service, two interfaces, `-x` as a name, `eth1;id`, `off now`), audited `result=refused` | PASS (2026-11-19) |
+| `set-share on eth1 --name 'Test shelter' packs library files pages`: audited `ok`, the three units start, `state.toml` written; `near` reads the index; `far` (eth2) gets no answer; nginx runs as a dynamic user, not root | PASS (2026-11-19) |
+| Packs: the index lists the catalog pack and not the other file; the download has the server's exact SHA-256; a range request gives 206; the file outside the catalog, `/packs/` and `../` paths are refused | PASS (2026-11-19; the first run FAILED: a regular-expression location served any `.zim` in the folder, replaced by one exact location per catalog file) |
+| Library: kiwix-serve answers behind nginx under `/library/` and listens on 127.0.0.1 only; the test pack's content is reachable | PASS (2026-11-19; the first run FAILED: the unit's sandbox refused netlink, which kiwix-serve needs for getifaddrs) |
+| Files and pages: the public file is listed and served; the 0600 file gives 403, the dotfile 404, the symbolic link 403/404; pages served with `Content-Security-Policy: default-src 'none'` and `nosniff`; no nginx version in the headers | PASS (2026-11-19) |
+| Read-only: POST, PUT, DELETE and OPTIONS refused (405/413), nothing written | PASS (2026-11-19) |
+| `systemctl reload firewall` while sharing: still reachable on eth1, still not on eth2 | PASS (2026-11-19) |
+| `set-share off`: the three units inactive, `state.toml` gone, the `resilience-share` chain empty, no answer on eth1 | PASS (2026-11-19) |
+| Only `packs` shared: `/library/` and `/files/` give 404, no library unit; sharing on eth2 then replaces eth1 (eth1 no longer answers) | PASS (2026-11-19) |
+| `nmcli device disconnect eth2`: the dispatcher stops sharing, state gone, chain empty | PASS (2026-11-19) |
+| Discovery (slice 3; server and near with local messaging): near's account records the server in `shares.json` with its name, the four services, port 80 and only eth1's addresses (IPv4 and link-local), not eth2's; the announcer runs as a dynamic user and stops with sharing | PASS (2026-11-19) |
+| Joining through near's TUI (slice 4; Ultra-Stable alice, Advanced carol's password): Communications > Community network lists "Test shelter"? with eth1's address; its menu; "Get packs from it" lists the catalog packs it offers; both ticked; the store installs the field notes (same SHA-256 as the server's) and refuses the tampered pack ("not the expected file"), nothing left in `.staging` for either | PASS (2026-11-19; the first run FAILED on the test's own check: the store's `lock` file lives in `.staging`) |
+| "Read its library" opens lynx on `http://localhost:PORT/library/nojs` through the relay (lynx's argv has `-localhost` and not the server's address); the test pack is listed; q quits back to the menu, no lynx left | PASS (2026-11-19; the first run FAILED: `/library/` is kiwix's JavaScript page, now `/library/nojs`) |
+| Shared folder (slice 5) through the TUI: `notice.txt` copied into ~/Received (content intact, 0600); `private.txt` (0600 on the server, listed by nginx) refused with "Nothing was kept", no partial file left | PASS (2026-11-19) |
+| After the independent review: nginx kept to eth1 by the kernel (`RestrictNetworkInterfaces` in a drop-in the helper writes for the instance): with TCP 80 opened on eth2 in the firewall by hand, `far` still gets no answer; sharing on a disconnected interface (eth2 after `nmcli device disconnect`) refused | PASS (2026-11-19; the first run FAILED: systemd does not expand `%i` in `RestrictNetworkInterfaces`, which kept nginx to the loopback; now a per-instance drop-in) |
+| The helper reports a failing library unit (kiwix-serve exits after the start job) | NOT TESTED (the helper only sees systemctl's start job; the unit restarts and is visible in the journal) |
 | Real Wi-Fi cards (IBSS on iwlwifi and others), radio range, several hops over the air, battery use | NOT TESTED |
 
 ### VM: `vm-install` — the text installer (ADR 0022), driven through the TUI

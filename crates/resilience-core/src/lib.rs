@@ -32,6 +32,7 @@ pub mod openpgp;
 pub mod packs;
 pub mod proc;
 pub mod recovery;
+pub mod share;
 pub mod status;
 pub mod update;
 pub mod wifi;

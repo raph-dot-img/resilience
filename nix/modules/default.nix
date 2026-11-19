@@ -13,6 +13,8 @@
     ./networking.nix
     ./comms.nix
     ./mesh.nix
+    ./share.nix
+    ./hotspot.nix
     ./installer.nix
     ./updates.nix
     ./licence.nix

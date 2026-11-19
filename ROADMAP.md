@@ -180,12 +180,18 @@ the netinstall is an addition, never a requirement.
   on stdin), and nothing is downloaded before the user confirms the
   summary with the total size.
 
-## Phase 9 — Community network ⬜ (requested 2026-11-18)
+## Phase 9 — Community network 🟡 (requested 2026-11-18; design in ADR 0025, proposed 2026-11-19)
 An assisted tool that lets a person with little experience join or create
 a network of Resilience machines and share offline resources on it. Builds
 on Phase 6 (mesh, ADR 0021; Reticulum announces, ADR 0018), resource packs
 (ADR 0013) and maps (ADR 0016).
 
+- ✅ **ADR 0025 (accepted by the owner 2026-11-19)** settles it: one read-only nginx on TCP 80 on one interface while an administrator shares (`set-share`, auth_admin), discovery by Reticulum announces (no mDNS), joining as the user (packs through the store's hash check, pages through a loopback relay and restricted lynx), hotspot with WPA2 and no forwarding (`set-hotspot`), expert names in the hotspot's DNS (`home.arpa`). Slices 2 to 7 in the ADR; THREAT_MODEL T46 to T50.
+- ✅ Slice 2, server side: `nix/modules/share.nix` (nginx, kiwix-serve, firewall chain, NetworkManager dispatcher), helper `set-share`, `vm-share`
+- ✅ Slice 3, discovery: `resilience-messages share` announces while sharing (`resilience-share-announce@IF`); each account's program records what it hears in `shares.json` (checked, local addresses only, 64 machines, 1 hour); `resilience_core::share::parse_heard`
+- ✅ Slice 4, joining: `resilience-library change --from-peer`, `peer-list`, `open-remote` (loopback relay, lynx `-localhost`), TUI Communications → Community network (computers heard, their library, pages and packs, sharing this computer), `vm-share` through the TUI
+- ✅ Slice 5, shared folder: `resilience-library peer-files` / `peer-get` (exact listed size, hidden `.partial`, then into ~/Received under a safe name, never replacing), TUI "Files in its shared folder"; the share form counts what will and will not be served
+- ✅ Slice 6, hotspot and expert DNS: `nix/modules/hotspot.nix`, helper `set-hotspot` (auth_admin, password made by the helper and shown once), WPA2, no forwarding (also through firewall reloads), DNS for `home.arpa` only (`dnsRecords`), mesh and hotspot exclusive; TUI rows to create a network (hotspot, mesh); `vm-hotspot`
 - **An ADR comes first.** This is the first time a Resilience service
   accepts requests from the network: today nothing listens beyond
   `127.0.0.1` and the firewall allows nothing by default. The ADR settles

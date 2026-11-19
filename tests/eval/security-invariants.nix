@@ -54,6 +54,39 @@ let
               p: lib.hasInfix "reticulum" (p.name or "") || lib.hasInfix "rns" (p.pname or "")
             ) c.environment.systemPackages)
           );
+        # ADR 0025: sharing never starts by itself on a real system, and
+        # its servers have no privilege but binding port 80/81.
+        "sharing is never on at boot" =
+          !c.resilience.share.enable
+          || (
+            c.resilience.share.autoStart == null
+            && (c.systemd.services."resilience-share@".wantedBy or [ ]) == [ ]
+          );
+        "sharing servers run unprivileged" =
+          !c.resilience.share.enable
+          ||
+            lib.all
+              (
+                u:
+                let
+                  s = c.systemd.services.${u}.serviceConfig;
+                in
+                s.DynamicUser && s.NoNewPrivileges && s.CapabilityBoundingSet == [ "CAP_NET_BIND_SERVICE" ]
+              )
+              [
+                "resilience-share-web@"
+                "resilience-share-library@"
+              ];
+        "the hotspot is never on at boot" =
+          !c.resilience.share.hotspot.enable
+          || (c.systemd.services.resilience-hotspot.wantedBy or [ ]) == [ ];
+        "the hotspot's DNS forwards nothing" =
+          !c.resilience.share.hotspot.enable
+          ||
+            lib.hasInfix "no-resolv"
+              c.environment.etc."NetworkManager/dnsmasq-shared.d/resilience.conf".text;
+        "the minimal edition offers no sharing" =
+          c.resilience.edition != "minimal" || !c.resilience.share.enable;
         "the minimal edition has no local messaging" =
           c.resilience.edition != "minimal" || !c.resilience.comms.enable;
         # ADR 0024: every real system shows the licence notice.
