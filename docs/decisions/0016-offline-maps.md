@@ -828,6 +828,19 @@ Decided while adding spot heights (slice 12, 2026-11-19):
 - Heights outside the accepted range (-500 to 9,000 m) are left out; the
   point stays.
 
+Open (found 2026-11-19, to settle before the maps review):
+
+- **Letters `unicode61` does not fold**: the FTS index of `rs_place_fts`
+  is built on the raw name with `remove_diacritics 2`, which removes
+  combining accents but does not turn `Ł` into `l`, `Ø` into `o` or `Đ`
+  into `d`. Typing "lodz" therefore does not find "Łódź" (the query side
+  folds it to `lodz`, the index has `łódź`). A fix changes the profile:
+  index `rs_place.fold` (which the builder already writes with the
+  display table) instead of `name`; that is a new FTS definition, so
+  packs built before it would lose search until rebuilt, unless the
+  reader accepts both definitions. To decide with slice 13, when the
+  first catalog packs are built.
+
 Decided by the project owner on 2026-11-19 (maps resumed for 0.6.0):
 
 - **Catalog regions**: Luxembourg and Bretagne (built, hashed and

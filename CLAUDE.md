@@ -665,7 +665,9 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 - Keyboard: all consoles share one keymap (kernel); a login prompt starting
   on any console resets it to the system layout, and the TUI reloads its
   user's layout only at session start (ADR 0017).
-- Maps: no search, nearby or go-to yet; no regional pack in the catalog
+- Maps: search, nearby and go-to exist on `feat/maps-search` (0.6.0);
+  search does not fold letters SQLite's unicode61 keeps (Ł, Ø, Đ: "lodz"
+  does not find "Łódź"; ADR 0016 open point); no regional pack in the catalog
   (packs are built with `nix build .#mapPacks.ID` and opened from a
   stick); the world overview has no elevation points and draws disputed
   borders like any other; too many point-of-interest names at city scales
