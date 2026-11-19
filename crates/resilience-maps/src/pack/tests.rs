@@ -1003,3 +1003,51 @@ fn the_profile_schema_includes_the_shadow_tables() {
     // Nothing else (no autoindex needed: the keys are INTEGER PRIMARY KEY).
     assert_eq!(rows.len(), 11, "{names:?}");
 }
+
+#[test]
+fn search_finds_places_through_the_hardened_connection() {
+    use resilience_core::maps::search::{Kind, fts_query, tokens};
+    let dir = TempDir::new("search");
+    let path = dir.file("map.mbtiles");
+    write_pack(&path);
+    let pack = open(&path).expect("open");
+    unchanged(dir.path(), || {
+        let q = |s: &str| fts_query(&tokens(s)).expect("query");
+        let names = |s: &str| -> Vec<String> {
+            let mut v: Vec<String> = pack
+                .search(&q(s))
+                .expect("search")
+                .into_iter()
+                .map(|h| h.name)
+                .collect();
+            v.sort();
+            v
+        };
+        // A prefix of the last word; accents and case do not matter.
+        assert_eq!(names("tes"), ["Pharmacie du Test", "Testville"]);
+        assert_eq!(names("ESSAI"), ["Rue de l'Essai"]);
+        assert_eq!(names("pharmacie test"), ["Pharmacie du Test"]);
+        assert!(names("nowhere").is_empty());
+        let t = pack.search(&q("testville")).expect("search");
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].kind, Kind::Settlement);
+        assert_eq!(t[0].class, "town");
+        assert!((t[0].at.lat() - 49.6116).abs() < 1e-6 && (t[0].at.lon() - 6.1319).abs() < 1e-6);
+        let p = pack.search(&q("pharmacie")).expect("search");
+        assert_eq!(p[0].near.as_deref(), Some("Testville"));
+        // Hostile words are only words: no FTS5 syntax error, no rows.
+        for hostile in ["\" OR \"", "NEAR(a b)", "a*:b", "^x -y"] {
+            if let Some(f) = fts_query(&tokens(hostile)) {
+                pack.search(&f).expect("only quoted words");
+            }
+        }
+        assert!(pack.search("").expect("empty").is_empty());
+    });
+    // A pack without the search tables answers with nothing.
+    let (_dir, r) = open_altered("nosearch", |c| {
+        c.execute_batch("DROP TABLE rs_place_fts; DROP TABLE rs_place;")
+            .expect("drop");
+    });
+    let pack = r.expect("still opens");
+    assert!(pack.search("\"testville\"*").expect("no search").is_empty());
+}

@@ -7,6 +7,8 @@
 //! - [`mvt`]: the bounded Mapbox Vector Tile decoder.
 //! - [`canvas`], [`style`], [`label`]: the pixel canvas, the
 //!   `resilience-1` style table and label placement.
+//! - [`search`]: the user's words to an FTS5 query, name folding shared
+//!   with the pack builder, ranking of results.
 
 pub mod canvas;
 pub mod geo;
@@ -14,4 +16,5 @@ pub mod label;
 pub mod mvt;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mvt_encode;
+pub mod search;
 pub mod style;
