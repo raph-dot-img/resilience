@@ -13,15 +13,15 @@ Last full run: 2026-11-18 on `develop` for release 0.4.0 (version bump `f1bfa51`
 | Rust unit + TUI tests | `cargo test` | ~5 s |
 | Lints | `cargo clippy --all-targets` (must be clean), `nix fmt` | ~10 s |
 | Screen dump for review | `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` | ~2 s |
-| Evaluate everything | `nix flake check --no-build` | ~30 s |
-| Everything incl. VM tests | `nix flake check --no-build`, then each check's `drvPath` evaluated alone and all built with one `nix build --no-link --keep-going -L DRV^*...` | ~1 h |
+| Evaluate everything | one `nix eval --raw` per system toplevel and per check `drvPath` (not `nix flake check`: 10+ GB in one process on 2026-11-19) | a few min |
+| Everything incl. VM tests | each system's and check's `drvPath` evaluated alone, all built with one `nix build --no-link --keep-going -L --max-jobs 1 DRV^*...`, inside `systemd-run --user --scope -p MemoryMax=7G` | ~1 h |
 | One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-backup`, `vm-wifi`, `vm-generations`, `vm-packs`, `vm-documents`, `vm-crypto`, `vm-boot-offline`, `vm-update`) | ~1–2 min |
 | ISO boot smoke test | `nix build .#iso -o result-iso && python3 -I tests/iso/smoke.py result-iso/iso/*.iso /tmp/shots [--uefi OVMF.fd]` | ~2 min |
 
-Do not run a building `nix flake check` on the 12 GB development host:
-its evaluator keeps 8+ GB for the whole run and, with VM tests running,
-the host ran out of memory (2026-11-18). Evaluating one check per
-process frees that memory before the VM tests start.
+Do not run `nix flake check` on the 12 GB development host, not even
+with `--no-build`: its single evaluator reached 10.5 GB and was killed
+by the kernel (2026-11-19; the session itself on 2026-11-18). Evaluating
+one system or check per process frees that memory each time.
 
 VM tests read the console through `/dev/vcsuN` (UTF-32) instead of the test
 driver's `get_tty_text()`: the latter decodes 8-bit glyph indices as UTF-8,
