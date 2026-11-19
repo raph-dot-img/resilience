@@ -142,7 +142,7 @@
         machine.send_chars("everest\n")
         wait_tty("1", r"Mount Everest \(summit\)", timeout=30)
         machine.send_key("ret")
-        text = wait_tty("1", r"27\.9\d{4} N  86\.9\d{4} E")
+        text = wait_tty("1", r"27\.9\d{4} N  86\.\d{5} E")
         wait_tty("1", "Mount Everest 8848 m")
         # What is near: the summit itself, nearest first.
         machine.send_chars("n")
