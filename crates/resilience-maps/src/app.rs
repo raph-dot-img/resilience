@@ -163,7 +163,7 @@ pub struct OpenPack {
     /// Where its data is drawn and what it covers: the coverage polygon,
     /// or the bounds rectangle (approximate packs), or `None` (everywhere).
     pub area: Option<Area>,
-    /// Folded to ASCII for the console.
+    /// Folded for the console (`label::fold_to`).
     pub title: String,
     pub attribution: String,
 }

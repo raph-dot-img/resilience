@@ -2,8 +2,9 @@
 //! interface (`resilience-tui/src/ui.rs`): the 8 basic colours only, the
 //! user's theme for everything but the map itself, key hints on the bottom
 //! line, a plain notice below 40x12. Every character drawn is printable
-//! ASCII or one of the console glyphs: text from map files is folded to
-//! ASCII before it gets here (`label::fold_to`).
+//! ASCII, one of the console glyphs or one of the accented letters the
+//! console font has (`canvas::is_console_char`): text from map files is
+//! folded before it gets here (`label::fold_to`).
 //!
 //! The map screen, from the top:
 //! - the map, with the crosshair in its middle cell;

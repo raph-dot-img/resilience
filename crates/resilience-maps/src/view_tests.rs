@@ -998,6 +998,39 @@ fn search_finds_places_and_centres_the_map() {
     assert_eq!(*h.app.view(), before);
 }
 
+/// Accented names (ADR 0016, "Decided while showing accented names"):
+/// results show the letters the console font has and fold the others;
+/// typing with or without accents finds the same place.
+#[test]
+fn search_shows_accented_names() {
+    let t = testland("Testland", "2026-01-01")
+        .place("settlement", "town", "Orléans", None, TESTVILLE, 1)
+        .place("settlement", "village", "Île-d'Arz", None, (49.69, 6.29), 1);
+    let mut h = Harness::new("accents", &[("t.mbtiles", &t)], None, None);
+    for words in ["orleans", "Orléans", "ORLÉANS"] {
+        h.key(KeyCode::Char('/'));
+        for _ in 0..20 {
+            h.key(KeyCode::Backspace);
+        }
+        type_text(&mut h, words);
+        h.key(KeyCode::Enter);
+        let s = h.screen(100, 30);
+        assert!(s.contains("Orléans (town)"), "{words}: {s}");
+        assert_console_glyphs(&s);
+        h.key(KeyCode::Esc);
+    }
+    h.key(KeyCode::Char('/'));
+    for _ in 0..20 {
+        h.key(KeyCode::Backspace);
+    }
+    type_text(&mut h, "ile");
+    h.key(KeyCode::Enter);
+    let s = h.screen(100, 30);
+    // Î is not in the font: folded.
+    assert!(s.contains("Ile-d'Arz (village)"), "{s}");
+    assert_console_glyphs(&s);
+}
+
 #[test]
 fn search_given_at_start_and_maps_without_search() {
     let t = testland("Testland", "2026-01-01").place(
@@ -1613,7 +1646,7 @@ fn names_from_the_file_are_folded_and_cannot_reach_the_terminal() {
             ("class", Attr::S("town")),
             (
                 "name",
-                Attr::S("\u{c9}vry\x1b]0;pwned\x07\x1b[2J\u{202e}x \u{43c}\u{43e}\u{441}"),
+                Attr::S("\u{c9}vry\u{141}\x1b]0;pwned\x07\x1b[2J\u{202e}x \u{43c}\u{43e}\u{441}"),
             ),
         ],
         (49.6125, 6.1319),
@@ -1640,7 +1673,8 @@ fn names_from_the_file_are_folded_and_cannot_reach_the_terminal() {
         }],
     );
     let text = c.text();
-    assert!(text.contains("Evry]0;pwned[2Jx ?"), "{text}");
+    // É is in the console font and kept; Ł is not and folds to L.
+    assert!(text.contains("\u{c9}vryL]0;pwned[2Jx ?"), "{text}");
     for cell in c.cells() {
         assert!(is_console_char(cell.ch), "{:?}", cell.ch);
     }
