@@ -167,8 +167,12 @@ in
         beta.fail("systemctl is-active resilience-mesh.service")
         beta.fail("ip link show bat0")
         beta.fail("test -e /run/resilience-mesh/devices")
+        # Each card is NetworkManager's again (managed as before; its exact
+        # state may move on, e.g. to "Wired without router" when no DHCP
+        # server answers).
         for d, state in before["beta"].items():
-            beta.wait_until_succeeds(f"nmcli -g GENERAL.STATE device show {d} | grep -qx '{state}'", timeout=30)
+            assert "unmanaged" not in state, (d, state)
+            beta.wait_until_succeeds(f"nmcli -g GENERAL.STATE device show {d} | grep -qv unmanaged", timeout=30)
         beta.wait_for_unit("resilience-reticulum.service")
         alpha.fail(f"ping -6 -c 2 -W 2 {g_ll}%bat0")
         send(alpha, "m2", g_addr, "Not without the relay")
