@@ -506,8 +506,10 @@ needlessly. Watch `free -h` during VM tests.
 **Now: release 0.4.0 (offline updates ADR 0023, licence notice ADR 0024,
 the owner's release key, `scripts/make-release.sh`) is released
 (2026-11-18): `main` merged and pushed, tag `v0.4.0` on `82f3152`, release
-folder signed by the owner, ISO boot-tested (BIOS, UEFI).** **Now (2026-11-19): release 0.5.0 (Phase 9, community network, ADR 0025)
-is being prepared on `develop`: `feat/community-network` merged (slices
+folder signed by the owner, ISO boot-tested (BIOS, UEFI).** **Release 0.5.0 (Phase 9, community network, ADR 0025) is released
+(tag `v0.5.0` pushed, `main` merged; published on the mirror 2026-11-20,
+every file HTTP 200, sums and signature checked). History of its
+preparation (2026-11-19), done: `feat/community-network` merged (slices
 1-7 and the independent review's fixes), version 0.5.0 + CHANGELOG
 done; next: the full test run (25 checks incl. `vm-share`,
 `vm-hotspot`), ISO build + boot BIOS/UEFI, offline update 0.4.0 → 0.5.0
