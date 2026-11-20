@@ -667,19 +667,28 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
   user's layout only at session start (ADR 0017).
 - Maps: search, nearby and go-to exist on `feat/maps-search` (0.6.0);
   search does not fold letters SQLite's unicode61 keeps (Ł, Ø, Đ: "lodz"
-  does not find "Łódź"; ADR 0016 open point); no regional pack in the catalog
-  (packs are built with `nix build .#mapPacks.ID` and opened from a
-  stick); the world overview has no elevation points and draws disputed
-  borders like any other; too many point-of-interest names at city scales
+  does not find "Łódź"; ADR 0016 open point); two regional packs in the
+  catalog (Luxembourg, Bretagne: nix/packs/maps.nix, hosted on the owner's
+  mirror under packs/maps/; others are built with `nix build
+  .#mapPacks.ID` and opened from a stick); the world overview draws
+  disputed borders like any other; too many point-of-interest names at city scales
   (style question open); osmium tags-filter needs ~2 GB RAM to build a pack.
+- TUI: keys typed within milliseconds of quitting the map viewer (Esc,
+  then `q`, then Esc x4 in one burst from the VM test driver) made the
+  interface exit with code 1 and no line in tui.log; the session wrapper
+  restarted it (2026-11-20, vm-maps, reproduced 3 times; with pauses it
+  never happens). Cause not found yet; probably also in 0.5.0 (same
+  `run_program`). vm-maps now waits for the interface after `q`. To fix
+  in 0.6.0 (owner, 2026-11-20; 0.5.0 released with it).
 - Physical hardware: the live ISO has booted once on a ThinkPad L15 Gen 1
   (owner, 2026-11-16); nothing else has been tested outside QEMU.
 
 ## 16. Roadmap
 
 See ROADMAP.md. Current: release 0.5.0 (Phase 9 done), then maps
-(Phase 5, slices 10-13) for 0.6.0 (owner, 2026-11-19). Requested
-2026-11-19: Phase 11, offline assistant (local model via Ollama or
+(Phase 5, slices 10-13, plus the TUI bug of §15 after quitting the
+viewer: owner, 2026-11-20) for 0.6.0 (owner, 2026-11-19). Release
+0.7.0 (owner, 2026-11-20): Phase 11, offline assistant (local model via Ollama or
 llama.cpp, models as hash-pinned packs, answers grounded in the
 libraries and handbook with sources); ADR first; not started.
 
