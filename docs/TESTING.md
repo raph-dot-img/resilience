@@ -328,6 +328,28 @@ Note: the status screen's "userland v0.3.0" on 0.3.1 comes from the trial
 (only `resilience.version` was raised, not the package); a real release
 raises both.
 
+### Release 0.5.0 — offline update 0.4.0 → 0.5.0 → back (manual, QEMU, screenshots reviewed)
+
+The signed release folder made by the owner with `make-release.sh` at tag
+`v0.5.0` (2026-11-20): `SHA256SUMS.minisig` verified with
+`keys/resilience-release.minisign.pub` (key 5CC1E51F72AC25E7), all sums
+OK, the ISO byte-identical to the boot-tested one (`7a921038…`), the
+source archive identical to `git archive v0.5.0`. The 0.4.0 release ISO
+(from the mirror) installed with `tests/iso/install.py --uefi` (OVMF
+202602, no encryption); the update bundle extracted onto a FAT32 image
+attached as a USB stick. QEMU note: a `usb-storage` device needs
+`removable=on`, otherwise Linux shows RM=0 HOTPLUG=0 and the TUI rightly
+does not list it as a stick.
+
+| Check | Result |
+|---|---|
+| 0.4.0 installed: STANDARD v0.4.0, OPERATIONAL | PASS (2026-11-20) |
+| Recovery → Update from a USB stick: "UPDATESTICK 2.1 GiB not open" → Enter → "The stick says Resilience standard 0.5.0" | PASS (2026-11-20) |
+| `c` (as `user`): Intact yes, Authentic (signed by a release key) yes, Complete yes | PASS (2026-11-20) |
+| Install (Cancel default, `y`) → polkit `org.resilience.admin.apply-update` as administrator → missing paths copied → "Resilience 0.5.0 is installed. It starts at the next restart" | PASS (2026-11-20) |
+| Restart without the stick: STANDARD v0.5.0, OPERATIONAL, the account and its licence acceptance kept; generations: 2 "started, default", 1 kept | PASS (2026-11-20) |
+| Back: generation 1 → Make default (Cancel default, `y`) → administrator password → "Generation 1 is now started by default (it was 2)" → restart: STANDARD v0.4.0, generation 2 still in the list | PASS (2026-11-20) |
+
 
 ### VM: `vm-licence` — the licence notice (ADR 0024), driven through the TUI
 
