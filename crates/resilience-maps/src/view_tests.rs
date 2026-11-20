@@ -766,6 +766,21 @@ fn legend_follows_the_scale_and_shows_all_on_request_and_help() {
     assert_eq!(h.key(KeyCode::Char('q')), Effect::Quit);
 }
 
+/// Real packs (2026-11-20): an unnamed point is "(no name)", not "(cannot
+/// be shown)", and a bare `yes` class (shop=yes) shows no kind.
+#[test]
+fn nearby_names_unnamed_points_plainly() {
+    let t = testland("Testland", "2026-01-01")
+        .place("poi", "defibrillator", "", None, (49.6121, 6.1319), 3)
+        .place("poi", "yes", "uewen&feier", None, (49.6143, 6.1319), 3);
+    let mut h = Harness::new("unnamed", &[("t.mbtiles", &t)], Some(TESTVILLE), Some(50.0));
+    h.key(KeyCode::Char('n'));
+    let s = h.screen(110, 30);
+    assert!(s.contains("(no name) (defibrillator)"), "{s}");
+    assert!(!s.contains("cannot be shown"), "{s}");
+    assert!(s.contains("uewen&feier  ") && !s.contains("(yes)"), "{s}");
+}
+
 /// Nearby (`n`, slice 11): points around the crosshair, nearest first,
 /// one kind at a time with Tab, Enter centres the map; peaks count,
 /// settlements and streets do not.

@@ -185,10 +185,17 @@ pub fn rank(mut hits: Vec<Hit>, query: &str, centre: LatLon) -> Vec<Hit> {
             .then(a.name.cmp(&b.name))
     });
     let mut out: Vec<Hit> = Vec::new();
+    // Every row looked at, kept or not: the pieces of one road form a chain
+    // (each near the next), so a piece is compared with all of them.
+    let mut seen: Vec<(String, Kind, LatLon)> = Vec::new();
     for h in hits {
-        let dup = out
+        let reach = same_place_m(h.kind);
+        let dup = seen
             .iter()
-            .any(|o| o.fold == h.fold && o.kind == h.kind && distance_m(o.at, h.at) < 200.0);
+            .any(|(f, k, at)| *f == h.fold && *k == h.kind && distance_m(*at, h.at) < reach);
+        if seen.len() < 4 * MAX_RESULTS {
+            seen.push((h.fold.clone(), h.kind, h.at));
+        }
         if !dup {
             out.push(h);
         }
@@ -197,6 +204,21 @@ pub fn rank(mut hits: Vec<Hit>, query: &str, centre: LatLon) -> Vec<Hit> {
         }
     }
     out
+}
+
+/// Two rows of one kind with the same name closer than this are one place.
+/// A long road is mapped as many pieces, each a row near its own hamlet:
+/// streets are merged over 2 km (same-name streets of two villages are
+/// normally further apart); other kinds over 200 m (a place found in two
+/// packs).
+pub const SAME_STREET_M: f64 = 2_000.0;
+pub const SAME_PLACE_M: f64 = 200.0;
+
+fn same_place_m(kind: Kind) -> f64 {
+    match kind {
+        Kind::Street => SAME_STREET_M,
+        _ => SAME_PLACE_M,
+    }
 }
 
 /// "15 km SW" from `centre` (or "here" closer than a metre).
@@ -300,6 +322,36 @@ mod tests {
             at: LatLon::new(lat, lon).expect("in range"),
             rank,
         }
+    }
+
+    #[test]
+    fn pieces_of_one_road_are_one_result() {
+        let c = LatLon::new(48.0, -4.1).expect("c");
+        // Five pieces of one road over 4 km (about 1 km apart), the same
+        // name 8 km away (another village), and a town of that name.
+        let mut v: Vec<Hit> = (0..5)
+            .map(|i| {
+                hit(
+                    Kind::Street,
+                    "Route de Quimper",
+                    0,
+                    48.0 + 0.009 * f64::from(i),
+                    -4.0,
+                )
+            })
+            .collect();
+        v.push(hit(Kind::Street, "Route de Quimper", 0, 48.1, -4.0));
+        v.push(hit(Kind::Settlement, "Route de Quimper", 0, 48.0, -4.0));
+        let got = rank(v, "quimper", c);
+        let streets = got.iter().filter(|h| h.kind == Kind::Street).count();
+        assert_eq!(streets, 2, "{got:?}");
+        assert_eq!(got.len(), 3);
+        // Other kinds still merge only when (almost) at the same place.
+        let towns = vec![
+            hit(Kind::Settlement, "Kirchberg", 0, 49.62, 6.15),
+            hit(Kind::Settlement, "Kirchberg", 0, 49.63, 6.15),
+        ];
+        assert_eq!(rank(towns, "kirchberg", c).len(), 2);
     }
 
     #[test]

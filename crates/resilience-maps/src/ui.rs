@@ -515,19 +515,23 @@ fn search_page(f: &mut Frame, app: &mut MapApp, t: &Theme, area: Rect) {
     let first = lines.len();
     for (i, h) in app.find.results.iter().enumerate() {
         let kind = match h.kind {
-            Kind::Settlement | Kind::Natural => fold(&h.class, 20),
-            Kind::Street => "street".into(),
-            Kind::Poi => fold(&h.class, 20).replace('_', " "),
+            Kind::Street => Some("street".into()),
+            _ => kind_text(&h.class),
         };
         let near = h
             .near
             .as_deref()
             .and_then(|n| fold_to(n, 30))
-            .map(|n| format!(", near {n}"))
-            .unwrap_or_default();
+            .map(|n| format!("near {n}"));
+        let about: Vec<String> = kind.into_iter().chain(near).collect();
+        let about = if about.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", about.join(", "))
+        };
         let text = format!(
-            "{} ({kind}{near})  {}",
-            fold(&h.name, 40),
+            "{}{about}  {}",
+            name_text(&h.name),
             where_from(centre, h.at)
         );
         let text: String = text.chars().take(w).collect();
@@ -596,11 +600,13 @@ fn nearby_page(f: &mut Frame, app: &mut MapApp, t: &Theme, area: Rect) {
     let first = lines.len();
     let shown = app.around.shown();
     for (i, n) in shown.iter().enumerate() {
-        let what = fold(&n.hit.class, 20).replace('_', " ");
+        let what = kind_text(&n.hit.class)
+            .map(|k| format!(" ({k})"))
+            .unwrap_or_default();
         let text = format!(
-            "{:<9} {} ({what})  {}",
+            "{:<9} {}{what}  {}",
             category_name(n.category),
-            fold(&n.hit.name, 40),
+            name_text(&n.hit.name),
             where_from(at, n.hit.at)
         );
         let text: String = text.chars().take(w).collect();
@@ -665,6 +671,23 @@ fn goto_page(f: &mut Frame, app: &mut MapApp, t: &Theme, area: Rect) {
         0,
         "Type  Enter Go  Esc Back",
     );
+}
+
+/// A place's name for a list: "(no name)" when it has none (an unnamed
+/// tap or defibrillator), else folded for the console.
+fn name_text(s: &str) -> String {
+    if s.trim().is_empty() {
+        "(no name)".into()
+    } else {
+        fold(s, 40)
+    }
+}
+
+/// A point's kind for a list, from its class: underscores as spaces, and
+/// nothing for the bare `yes` some features carry (`shop=yes`).
+fn kind_text(class: &str) -> Option<String> {
+    let k = fold(class, 20).replace('_', " ");
+    (!k.is_empty() && k != "yes").then_some(k)
 }
 
 /// Fold any text for the console, or say it could not be shown.

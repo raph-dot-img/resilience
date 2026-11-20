@@ -378,7 +378,10 @@ second radio in a network namespace playing the other computer.
 | Keys typed at once after quitting the viewer (Esc, `q`, Esc x4 in one burst): the interface stayed up; before the fix it stopped with "The cursor position could not be read within a normal duration" (ratatui `Terminal::clear` querying the cursor). Stress: 15 trials x 2 VM runs, all kept; regression subtest in `vm-maps` (5 trials) | PASS (2026-11-20) |
 | Catalog entries `map-luxembourg` and `map-bretagne` (nix/packs/maps.nix): uploaded to https://mirror.canevet.eu/files/resilience/packs/maps/ (with SHA256SUMS), downloaded back over HTTPS: HTTP 200, exact sizes, `sha256sum -c` OK; the live ISO's catalog lists both; vm-packs and vm-maps PASS with them | PASS (2026-11-20) |
 | Installing a catalog map pack through Resource packs (download, store hash check) | NOT TESTED (needs the Internet in a VM; the same path as ZIM packs, tested in vm-packs) |
-| On a real pack in the viewer (search, nearby at 170x48 in QEMU) | NOT TESTED yet (slice 13) |
+| Real packs in the viewer, ad hoc VM (not committed: the packs exist only in a local store), 1366x768 = 170x48, Luxembourg + Bretagne + overview opened from the TUI: search (quimper, pharmacie, rue de la gare, cesson sevigne, clervaux, kirchberg) finds and jumps; nearby with Tab; go-to Brest; viewer peak memory 27 MiB | PASS (2026-11-20) |
+| Findings of that run, fixed: the pieces of one road listed many times ("Route de Quimper" x15: streets with one name now merge over 2 km, chained); unnamed points "(cannot be shown)" (now "(no name)"); kind "(yes)" from shop=yes (now no kind) | PASS (unit and TestBackend tests, 2026-11-20); not yet re-run on the real packs |
+| Findings still open: inside a regional pack at 500 m/px and finer the sea is black (land) with only coastline lines, because OSM extracts have coastlines but no sea polygons and osmcoastline is not in nixpkgs (needs sea polygons built by the mapmaker: pack format change, packs rebuilt, new hashes); too many names at city scales (style question); "pharmacie" ranks an exact name 63 km away before one 2 km away | OPEN |
+
 
 ### Maps: accented names (ADR 0016, `feat/maps-accents`)
 
