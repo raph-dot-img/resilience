@@ -1,4 +1,4 @@
-# The messaging program against the real libraries (ADR 0018, 0019): one
+# The messaging program against the real libraries (ADR 0018, 0019, 0025): one
 # Reticulum instance, two accounts' programs and the message store in the
 # build sandbox (no network needed: programs attach through the instance's
 # local socket).
@@ -201,6 +201,99 @@ runCommand "resilience-messages-check"
     got=$(grep -l '"map.txt"' bob/messages/in-*.json)
     id=$(jq -r .id "$got")
     cmp map "bob/files/$id.txt"
+
+    # Community network (ADR 0025): a sharing machine's announce is heard
+    # and recorded, checked; hostile announces are not.
+    cat > share_driver.py <<'PY'
+    import sys
+    sys.path.insert(0, sys.argv[1])
+    import resilience_messages as m
+    mode, rest = sys.argv[2], sys.argv[3:]
+    if mode == "unit":
+        assert m.local_address("192.168.1.5") == "192.168.1.5"
+        assert m.local_address("fe80::0001") == "fe80::1"
+        assert m.local_address("fd00::5") == "fd00::5"
+        assert m.local_address("169.254.3.4") == "169.254.3.4"
+        for bad in ("8.8.8.8", "127.0.0.1", "::1", "2001:db8::1", "x", 5, None, "192.168.1.5\n", "100.64.0.1"):
+            assert m.local_address(bad) is None, bad
+        good = m.share_app_data("School library", ["packs", "library"], 80, ["192.168.1.5", "fe80::1"])
+        got = m.parse_share_app_data(good)
+        assert got == {"name": "School library", "services": ["packs", "library"], "port": 80,
+                       "addresses": ["192.168.1.5", "fe80::1"]}, got
+        import RNS.vendor.umsgpack as mp
+        bads = [
+            m.share_app_data("bad/name", ["packs"], 80, ["10.0.0.1"]),
+            m.share_app_data(" x", ["packs"], 80, ["10.0.0.1"]),
+            m.share_app_data("x", ["shell"], 80, ["10.0.0.1"]),
+            m.share_app_data("x", ["packs", "packs"], 80, ["10.0.0.1"]),
+            m.share_app_data("x", [], 80, ["10.0.0.1"]),
+            m.share_app_data("x", ["packs"], 0, ["10.0.0.1"]),
+            m.share_app_data("x", ["packs"], True, ["10.0.0.1"]),
+            m.share_app_data("x", ["packs"], 80, []),
+            m.share_app_data("x", ["packs"], 80, ["8.8.8.8"]),
+            m.share_app_data("x", ["packs"], 80, ["10.0.0.%d" % i for i in range(9)]),
+            mp.packb([2, "x", ["packs"], 80, ["10.0.0.1"]]),
+            mp.packb({"name": "x"}),
+            b"\xc1", b"", b"x" * 401, None, "text",
+        ]
+        for b in bads:
+            assert m.parse_share_app_data(b) is None, b
+        open("state.toml", "w").write('interface = "eth1"\nname = "School library"\nservices = ["packs"]\nconnection = ""\n')
+        assert m.read_share_state("state.toml") == {"name": "School library", "services": ["packs"], "interface": "eth1"}
+        for text in ('interface = "a/b"\nname = "x"\nservices = ["packs"]\n',
+                     'interface = "eth1"\nname = "x\\n"\nservices = ["packs"]\n',
+                     'interface = "eth1"\nname = "x"\nservices = ["shell"]\n', "garbage ["):
+            open("bad.toml", "w").write(text)
+            assert m.read_share_state("bad.toml") is None, text
+        assert m.read_share_state("missing.toml") is None
+        assert all(m.local_address(a) for a in m.interface_addresses("lo"))
+        # Machines not heard for an hour are dropped.
+        import json, time
+        json.dump({"old": {"heard": 1}, "new": {"heard": int(time.time())}}, open("shares-test.json", "w"))
+        sh = m.Shares("shares-test.json")
+        sh.save(time.time())
+        assert list(json.load(open("shares-test.json"))) == ["new"]
+        print("share unit checks passed")
+    else:
+        b = m.Beacon(rest[0], rest[1], rest[2])
+        if mode == "beacon":
+            m.interface_addresses = lambda i: rest[3].split(",")
+        else:  # hostile: these exact bytes, whatever they are
+            raw = bytes.fromhex(rest[3])
+            b.app_data = lambda: raw
+        b.run()
+    PY
+    py() { ${reticulum}/bin/python -B share_driver.py ${messages}/libexec "$@"; }
+    py unit
+
+    # No sharing state: the announcer runs and announces nothing.
+    ${messages}/bin/resilience-messages share --dir $PWD/beacon --client-config $PWD/client-config \
+      --state $PWD/nothing.toml > beacon0.log 2>&1 &
+    b0=$!
+    ${messages}/bin/resilience-messages share --client-config $PWD/client-config && exit 1
+    sleep 8
+    kill $b0; wait $b0 || true
+    test "$(jq 'length' bob/shares.json 2>/dev/null || echo 0)" = 0
+
+    printf 'interface = "eth1"\nname = "School library"\nservices = ["packs", "library"]\nconnection = ""\n' > share-state.toml
+    py beacon $PWD/beacon $PWD/client-config $PWD/share-state.toml "192.168.1.5,fe80::1" > beacon.log 2>&1 &
+    # Hostile: a public address, a name with markup, an oversized record.
+    pub=$(${reticulum}/bin/python -c 'import RNS.vendor.umsgpack as m; print(m.packb([1, "Free WiFi", ["packs"], 80, ["8.8.8.8"]]).hex())')
+    tag=$(${reticulum}/bin/python -c 'import RNS.vendor.umsgpack as m; print(m.packb([1, "<b>x</b>", ["packs"], 80, ["10.0.0.1"]]).hex())')
+    py hostile $PWD/h1 $PWD/client-config none "$pub" > h1.log 2>&1 &
+    py hostile $PWD/h2 $PWD/client-config none "$tag" > h2.log 2>&1 &
+    for _ in $(seq 60); do
+      [ "$(jq 'length' bob/shares.json 2>/dev/null || echo 0)" -ge 1 ] && break; sleep 1
+    done
+    sleep 10
+    cat bob/shares.json
+    jq -e 'length == 1 and (to_entries[0].value | .name == "School library" and .services == ["packs", "library"]
+           and .port == 80 and .addresses == ["192.168.1.5", "fe80::1"] and (.identity | test("^[0-9a-f]{32}$"))
+           and (.heard > 0))' bob/shares.json
+    test "$(stat -c %a bob/shares.json)" = 600
+    # The announcer keeps no identity between sessions.
+    test ! -e beacon/identity
+    if grep -q "Free WiFi\|<b>" bob/shares.json; then exit 1; fi
 
     kill $(jobs -p) 2>/dev/null || true
     mkdir $out

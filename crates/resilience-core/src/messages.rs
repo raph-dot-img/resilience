@@ -219,6 +219,30 @@ pub fn safe_file_name(name: &str) -> String {
     n
 }
 
+/// Move `from` into `dest` (created 0700 if needed) under `name` made
+/// safe, never replacing a file: `NAME (2)` and so on. Where it went.
+/// Used for received files (ADR 0020) and files from a nearby computer's
+/// shared folder (ADR 0025).
+pub fn move_into(from: &Path, dest: &Path, name: &str) -> io::Result<PathBuf> {
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dest)?;
+    let name = safe_file_name(name);
+    for n in 1..=100 {
+        let to = dest.join(numbered(&name, n));
+        match crate::crypto::rename_noreplace(from, &to) {
+            Ok(()) => return Ok(to),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "too many files with this name",
+    ))
+}
+
 /// `name`, then `stem (2).ext`, `stem (3).ext`...
 fn numbered(name: &str, n: usize) -> String {
     if n < 2 {
@@ -650,23 +674,8 @@ impl Store {
         let from = self
             .received_file(rec)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "the file is no longer here"))?;
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dest)?;
-        let name = safe_file_name(&rec.file.as_ref().map(FileInfo::shown).unwrap_or_default());
-        for n in 1..=100 {
-            let to = dest.join(numbered(&name, n));
-            match crate::crypto::rename_noreplace(&from, &to) {
-                Ok(()) => return Ok(to),
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(e),
-            }
-        }
-        Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "too many files with this name",
-        ))
+        let name = rec.file.as_ref().map(FileInfo::shown).unwrap_or_default();
+        move_into(&from, dest, &name)
     }
 
     /// Ask the program to give up on a waiting message.

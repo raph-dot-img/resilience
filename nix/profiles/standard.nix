@@ -9,4 +9,7 @@
   # with `resilience.comms.enable = false;`. The minimal edition has none
   # of it.
   resilience.comms.enable = lib.mkDefault true;
+  # Sharing offline resources with nearby machines (ADR 0025): offered,
+  # but nothing is shared until an administrator turns it on.
+  resilience.share.enable = lib.mkDefault true;
 }

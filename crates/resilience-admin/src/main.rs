@@ -17,6 +17,9 @@
 //! resilience-admin set-default-generation N   root (pkexec / sudo), ADR 0011
 //! resilience-admin set-keymap LAYOUT     root (pkexec, no password), ADR 0017
 //! resilience-admin set-mesh on|off       root (pkexec, no password), ADR 0021
+//! resilience-admin set-share on IF --name NAME SERVICE... | off
+//!                                        root (pkexec / sudo), ADR 0025
+//! resilience-admin set-hotspot on|off    root (pkexec / sudo), ADR 0025
 //! resilience-admin record-licence SHA256  root (pkexec, no password), ADR 0024
 //! resilience-admin check-update DIR      any user, read-only, ADR 0023
 //! resilience-admin apply-update DIR      root (pkexec / sudo), ADR 0023
@@ -55,6 +58,11 @@ Usage:
                                          Start system generation N at every boot
   resilience-admin set-keymap LAYOUT     Load a console keyboard layout of this system
   resilience-admin set-mesh on|off       Turn the Wi-Fi mesh on or off (ADR 0021)
+  resilience-admin set-share on INTERFACE --name NAME SERVICE...
+                                         Share on one network (ADR 0025); SERVICE is
+                                         packs, library, files or pages
+  resilience-admin set-share off         Stop sharing
+  resilience-admin set-hotspot on|off    This computer as a Wi-Fi network (ADR 0025)
   resilience-admin record-licence SHA256 Record that you read the licence (ADR 0024)
   resilience-admin check-update DIR      Check the update in DIR without installing it
   resilience-admin apply-update DIR      Install the update in DIR (USB stick, ADR 0023)
@@ -71,6 +79,8 @@ fn main() -> ExitCode {
         ["set-default-generation", n] => set_default_generation(n),
         ["set-keymap", id] => set_keymap(id),
         ["set-mesh", state] => set_mesh(state),
+        ["set-share", rest @ ..] => set_share(rest),
+        ["set-hotspot", state] => set_hotspot(state),
         ["record-licence", hash] => record_licence(hash),
         ["check-update", dir] => apply_update::check_update(dir),
         ["apply-update", dir] => apply_update::apply_update(dir),
@@ -543,6 +553,296 @@ fn set_mesh(requested: &str) -> Result<()> {
             Err(Failure::Error("systemctl did not finish".into()))
         }
     }
+}
+
+/// Share offline resources on one network (ADR 0025), or stop: start or
+/// stop the share units of that one interface, after writing the
+/// validated request for them. An administrator's password every time
+/// (polkit auth_admin), also to stop.
+fn set_share(args: &[&str]) -> Result<()> {
+    use resilience_core::share::{self, ShareRequest};
+    if !is_root() {
+        return Err(Failure::Permission);
+    }
+    let cfg = AdminConfig::load().map_err(err)?;
+    let (uid, by) = caller();
+    let uid_s = uid.to_string();
+    let _lock = lock(&cfg)?;
+    let shown: String = args.join(" ");
+    let base = [
+        ("op", "set-share"),
+        ("caller", by.as_str()),
+        ("caller_uid", uid_s.as_str()),
+        ("request", shown.as_str()),
+    ];
+    let outcome = |extra: &[(&str, &str)]| {
+        let mut f = base.to_vec();
+        f.extend_from_slice(extra);
+        audit(&cfg, &f);
+    };
+    let refuse = |reason: String| {
+        outcome(&[("result", "refused"), ("reason", &reason)]);
+        Failure::Refused(reason)
+    };
+    let req = share::parse_request(args).map_err(|r| refuse(r.to_string()))?;
+    let facts = match &req {
+        ShareRequest::On { interface, .. } => {
+            // A validated name: no `/`, no `..`.
+            let dir = std::path::Path::new("/sys/class/net").join(interface);
+            match (
+                fs::read_to_string(dir.join("flags")),
+                fs::read_to_string(dir.join("type")),
+            ) {
+                (Ok(f), Ok(t)) => share::interface_facts(&f, &t),
+                _ => None,
+            }
+        }
+        ShareRequest::Off => None,
+    };
+    let plan = share::plan_set_share(cfg.share.as_ref(), cfg.systemctl.as_deref(), &req, facts)
+        .map_err(|r| refuse(r.to_string()))?;
+    let run = |argv: &[String]| -> std::result::Result<(), String> {
+        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+        match run_full(&a, Duration::from_secs(90)) {
+            Some(o) if o.success() => Ok(()),
+            Some(o) => Err(o.stderr.trim().to_string()),
+            None => Err("systemctl did not finish".into()),
+        }
+    };
+    let fail = |reason: String| {
+        outcome(&[("result", "error"), ("reason", &reason)]);
+        Failure::Error(format!("sharing could not be changed: {reason}"))
+    };
+    // Whatever was shared before stops first: one network at a time.
+    run(&plan.stop).map_err(fail)?;
+    let Some(start) = plan.start else {
+        outcome(&[("result", "ok")]);
+        println!("Sharing is off.");
+        return Ok(());
+    };
+    let Some(settings) = cfg.share.as_ref() else {
+        return Err(fail("sharing is not configured".into()));
+    };
+    write_share_request(&settings.state_dir, &plan.files).map_err(fail)?;
+    // The kernel keeps the web server to this interface (a drop-in for
+    // its instance: systemd does not expand `%i` in that setting).
+    if let (Some((path, text)), Some(reload)) = (&plan.web_dropin, &plan.reload) {
+        write_dropin(path, text).map_err(fail)?;
+        run(reload).map_err(fail)?;
+    }
+    if let Err(e) = run(&start) {
+        // Leave nothing half on (the firewall rule goes with the unit).
+        let _ = run(&plan.stop);
+        return Err(fail(e));
+    }
+    outcome(&[("result", "ok")]);
+    if let ShareRequest::On {
+        interface,
+        name,
+        services,
+    } = &req
+    {
+        let ids: Vec<&str> = services.iter().map(|s| s.id()).collect();
+        println!(
+            "Sharing {} on {interface} as \"{name}\". Anyone on this network can read it.",
+            ids.join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// Write a systemd drop-in (root, 0644) in a directory under /run/systemd.
+fn write_dropin(path: &std::path::Path, text: &str) -> std::result::Result<(), String> {
+    let dir = path
+        .parent()
+        .filter(|d| d.starts_with("/run/systemd/system"))
+        .ok_or_else(|| format!("{}: not a drop-in path", path.display()))?;
+    fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let tmp = dir.join(".resilience.tmp");
+    let _ = fs::remove_file(&tmp);
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o644)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&tmp)
+        .map_err(|e| format!("{}: {e}", tmp.display()))?;
+    f.write_all(text.as_bytes())
+        .and_then(|()| f.sync_all())
+        .map_err(|e| format!("{}: {e}", tmp.display()))?;
+    fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Write the request files for the share units: root-owned, 0644, each
+/// through a temporary file and a rename, never following a link.
+fn write_share_request(
+    dir: &std::path::Path,
+    files: &[(&str, String)],
+) -> std::result::Result<(), String> {
+    if !dir.is_absolute() {
+        return Err(format!("{} is not an absolute path", dir.display()));
+    }
+    match fs::symlink_metadata(dir) {
+        Ok(m) if m.is_dir() && !m.file_type().is_symlink() => {}
+        Ok(_) => return Err(format!("{} is not a directory", dir.display())),
+        Err(_) => {
+            fs::create_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o755))
+                .map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+    }
+    for (name, content) in files {
+        let tmp = dir.join(format!(".{name}.tmp"));
+        let _ = fs::remove_file(&tmp);
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o644)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&tmp)
+            .map_err(|e| format!("{}: {e}", tmp.display()))?;
+        f.write_all(content.as_bytes())
+            .and_then(|()| f.sync_all())
+            .map_err(|e| format!("{}: {e}", tmp.display()))?;
+        fs::rename(&tmp, dir.join(name)).map_err(|e| format!("{name}: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Turn this computer into a Wi-Fi network for others (ADR 0025 §6), or
+/// stop it. The password is made here from the kernel's random generator,
+/// left for the unit in a root-only file, and shown once on this terminal;
+/// it is never logged or passed on a command line.
+fn set_hotspot(requested: &str) -> Result<()> {
+    use resilience_core::share;
+    if !is_root() {
+        return Err(Failure::Permission);
+    }
+    let cfg = AdminConfig::load().map_err(err)?;
+    let (uid, by) = caller();
+    let uid_s = uid.to_string();
+    let _lock = lock(&cfg)?;
+    let base = [
+        ("op", "set-hotspot"),
+        ("caller", by.as_str()),
+        ("caller_uid", uid_s.as_str()),
+        ("to", requested),
+    ];
+    let outcome = |extra: &[(&str, &str)]| {
+        let mut f = base.to_vec();
+        f.extend_from_slice(extra);
+        audit(&cfg, &f);
+    };
+    let mesh_on = cfg
+        .hotspot
+        .as_ref()
+        .is_some_and(|h| h.mesh_devices.exists());
+    let (argv, on) = match share::plan_set_hotspot(
+        cfg.hotspot.as_ref(),
+        cfg.systemctl.as_deref(),
+        requested,
+        mesh_on,
+    ) {
+        Ok(p) => p,
+        Err(r) => {
+            let reason = r.to_string();
+            outcome(&[("result", "refused"), ("reason", &reason)]);
+            return Err(Failure::Refused(reason));
+        }
+    };
+    let Some(h) = cfg.hotspot.clone() else {
+        return Err(err("no hotspot settings"));
+    };
+    // Already on: starting it again would do nothing, and a new password
+    // shown here would not be the network's.
+    if on
+        && run_full(
+            &[args_systemctl(&argv), "is-active", "--quiet", "--", &h.unit],
+            Duration::from_secs(10),
+        )
+        .is_some_and(|o| o.success())
+    {
+        let reason = "the hotspot is already on (turn it off first for a new password)";
+        outcome(&[("result", "refused"), ("reason", reason)]);
+        return Err(Failure::Refused(reason.into()));
+    }
+    let password_file = h.state_dir.join("password");
+    let mut password = String::new();
+    if on {
+        let mut random = [0u8; 16];
+        // SAFETY: getrandom writes at most `random.len()` bytes into it.
+        let n = unsafe { libc::getrandom(random.as_mut_ptr().cast(), random.len(), 0) };
+        if n != random.len() as isize {
+            return Err(err("the random generator failed"));
+        }
+        password = share::hotspot_password(&random);
+        let written = (|| -> std::io::Result<()> {
+            match fs::symlink_metadata(&h.state_dir) {
+                Ok(m) if m.is_dir() && !m.file_type().is_symlink() => {}
+                Ok(_) => return Err(std::io::Error::other("not a directory")),
+                Err(_) => {
+                    fs::create_dir(&h.state_dir)?;
+                    fs::set_permissions(&h.state_dir, fs::Permissions::from_mode(0o700))?;
+                }
+            }
+            let _ = fs::remove_file(&password_file);
+            let mut f = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(&password_file)?;
+            f.write_all(password.as_bytes())?;
+            f.sync_all()
+        })();
+        if let Err(e) = written {
+            let reason = format!("{}: {e}", password_file.display());
+            outcome(&[("result", "error"), ("reason", &reason)]);
+            return Err(Failure::Error(reason));
+        }
+    }
+    let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let result = run_full(&args, Duration::from_secs(90));
+    if !on {
+        let _ = fs::remove_file(&password_file);
+    }
+    match result {
+        Some(o) if o.success() => {
+            outcome(&[("result", "ok")]);
+            if on {
+                println!(
+                    "The Wi-Fi network \"{}\" is on.\n\n  Password: {password}\n\n\
+                     Give it to the people who should join. Anyone who has it is on the \
+                     network; it gives no access to the Internet through this computer.\n\
+                     A new password is made each time the hotspot is turned on.",
+                    h.ssid
+                );
+            } else {
+                println!("The Wi-Fi network \"{}\" is off.", h.ssid);
+            }
+            Ok(())
+        }
+        Some(o) => {
+            let reason = o.stderr.trim().to_string();
+            outcome(&[("result", "error"), ("reason", &reason)]);
+            if on {
+                let _ = run_full(&[args[0], "stop", "--", args[3]], Duration::from_secs(60));
+                let _ = fs::remove_file(&password_file);
+            }
+            Err(Failure::Error(format!(
+                "the hotspot could not be changed: {reason}"
+            )))
+        }
+        None => {
+            outcome(&[("result", "error"), ("reason", "systemctl did not finish")]);
+            Err(Failure::Error("systemctl did not finish".into()))
+        }
+    }
+}
+
+/// The systemctl path of a planned argv (its first element).
+fn args_systemctl(argv: &[String]) -> &str {
+    argv.first().map(String::as_str).unwrap_or("systemctl")
 }
 
 /// Set the system clock and the hardware clock to an exact UTC time.

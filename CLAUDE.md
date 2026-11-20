@@ -50,7 +50,10 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │            security.nix    sudo (wheel+password), pam_faillock, sysctls, no ssh,
    │                            user namespaces off on Ultra-Stable-only machines (ADR 0012)
    │            networking.nix  NetworkManager (no connectivity check), polkit allowlist for
-   │                            accounts without its group (ADR 0010), firewall, no NTP
+   │                            accounts without its group (ADR 0010), firewall, no NTP; wired:
+   │                            no-auto-default, profiles "Wired" (DHCP, prio 10, 1 retry) then
+   │                            "Wired without router" (link-local v4+v6, prio -10) (vm-cable);
+   │                            comms.nix adds an NM dispatcher: `up` → try-restart rnsd
    │            comms.nix       local messaging network (ADR 0018): resilience.comms.enable
    │                            (default off; the STANDARD profile turns it on)
    │                            -> resilience-reticulum.service (rnsd, DynamicUser, AutoInterface
@@ -73,13 +76,31 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            (root oneshot: card out of NM, IBSS cell resilience-mesh 2412 MHz fixed
    │                            BSSID, batman_adv bat0 link-local only, restarts rnsd); started/stopped
    │                            only by `resilience-admin set-mesh on|off` (allow_active=yes)
+   │            share.nix       community network, server side (ADR 0025): resilience.share.{enable
+   │                            (standard: on, mkDefault), autoStart}; template units
+   │                            resilience-share@IF (root oneshot: TCP 80 on IF only in iptables
+   │                            chain `resilience-share`, nginx includes + index page in
+   │                            /run/resilience-share, state.toml), resilience-share-web@IF (nginx,
+   │                            DynamicUser, GET/HEAD), resilience-share-library@IF (kiwix-serve
+   │                            127.0.0.1:81); NM dispatcher stops it when IF's connection changes;
+   │                            shared folders /var/lib/resilience/shared/{files,pages} root:wheel 2775;
+   │                            with comms: resilience-share-announce@IF (`resilience-messages share`,
+   │                            DynamicUser, IPAddressDeny=any) announces aspect resilience.share;
+   │                            each account's program writes heard machines to shares.json
+   │            hotspot.nix     ADR 0025 §6-7: resilience.share.hotspot.{enable (= share.enable),
+   │                            ssid, device, dnsRecords}; resilience-hotspot.service (root oneshot:
+   │                            NM profile in /run/NetworkManager/system-connections 0600, WPA2,
+   │                            ipv4 shared 10.42.0.1/24, IPv6 off; chains resilience-hotspot (DHCP/DNS
+   │                            on the card) and resilience-hotspot-fwd in FORWARD (DROP in and out,
+   │                            never flushed by the firewall's own scripts)); dnsmasq-shared.d:
+   │                            no-resolv, home.arpa only; mesh and hotspot exclude each other
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
    ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
    ├─ packages: resilience, resilience-session, resilience-handbook, resilience-world-map, iso, iso-minimal, vm
    ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
               vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-install,
-              vm-install-uefi, vm-maps, vm-comms, vm-mesh, vm-update, vm-licence,
+              vm-install-uefi, vm-maps, vm-comms, vm-mesh, vm-share, vm-hotspot, vm-cable, vm-update, vm-licence,
               security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world,
               comms-messages (the messaging program with real Reticulum + LXMF, no VM)
 
@@ -101,12 +122,17 @@ crates/resilience-core  library: status, network (passive + on-demand probe),
 crates/resilience-admin binary `resilience-admin`: the ONLY privileged code (ADR 0007):
                         list | set-mode USER MODE | set-time UTC |
                         set-default-generation N | set-keymap LAYOUT | set-mesh on|off |
+                        set-share on IF --name NAME SERVICE... | set-share off (auth_admin) |
+                        set-hotspot on|off (auth_admin; prints a new password once) |
                         apply-update DIR | record-licence SHA256 | apply-state; check-update DIR
                         (any user, read-only)
 crates/resilience-backup binary `resilience-backup` (UNPRIVILEGED, ADR 0008):
                         create MOUNT | check FILE | restore FILE
 crates/resilience-library binaries (ADR 0013): `resilience-library` (as the user: list |
-                        change [--from M] [--remove F].. [--get ID].. | open FILE [--search W])
+                        change [--from M] [--remove F].. [--get ID].. | open FILE [--search W] |
+                        change --from-peer ADDR --get ID.. | peer-list ADDR |
+                        open-remote ADDR index|library|pages | peer-files ADDR |
+                        peer-get ADDR NAME; src/peer.rs = relay, ADR 0025)
                         and `resilience-pack-store` (as resilience-packs via pkexec --user,
                         never root: change; stdin bytes only hashed, never parsed)
 crates/resilience-crypto binary `resilience-crypto` (UNPRIVILEGED, ADR 0015, foreground):
@@ -235,6 +261,25 @@ resilience-reticulum` (AutoInterface lists interfaces only at start);
 the messaging programs and stores re-announce when the client config's
 mtime changes (instance restarted).
 
+Community network flow (ADR 0025): server side = `set-share on IF --name
+N SERVICE...` (auth_admin) → `/run/resilience-share/{services,name}` →
+`resilience-share@IF` (root: TCP 80 on IF only, nginx includes, index,
+state.toml) + `-web@IF` (nginx DynamicUser) + `-library@IF` (kiwix-serve
+127.0.0.1:81) + `-announce@IF` (`resilience-messages share`, aspect
+`resilience.share`). Each account's messaging program records heard
+announces in `shares.json`. TUI Communications → Community network
+(`Builtin::Community`, `share_ui.rs`, shown when admin.toml has `share`):
+rows = sharing state / "Share this computer's resources" / "Type the
+address" / heard machines (`share::parse_heard` + `peer_for`) → PeerMenu
+→ `resilience-library open-remote ADDR index|library|pages` (loopback
+`peer::Relay`, lynx `-localhost`) or `peer-list ADDR` → PeerPacks (Space
+ticks) → `change --from-peer ADDR --get ID...` (plain HTTP to local
+addresses only, `share::on_link` against /proc/net/route*, no redirects,
+store checks the catalog hash). While sharing, a line on every screen.
+Hotspot: Community network row → Confirm → `pkexec <helper> set-hotspot on`
+in the foreground (pause_after: the password the helper prints stays on
+screen) → helper writes /run/resilience-hotspot/password (0600) → unit.
+
 Wi-Fi flow (as the user): nmcli list → password in a TUI dialog → profile
 with `connection.permissions user:U`, no secret → thread: `nmcli connection
 up uuid X passwd-file /dev/stdin` (secret on a pipe) → failure deletes a
@@ -279,7 +324,7 @@ new profile. Never `nmcli --ask` (wrong password = inescapable prompt loop).
 ```sh
 cargo build && cargo test                 # fast Rust loop on the host
 nix build .#resilience                    # Nix build (runs cargo test too)
-nix flake check --no-build                # evaluate everything (seconds)
+# not `nix flake check` here (10+ GB): evaluate per system/check, §6
 nix build .#checks.x86_64-linux.vm-boot-offline -L   # VM test (minutes)
 nix build .#iso                           # live ISO -> result/iso/*.iso (heavy)
 nix run .#vm                              # dev VM on the serial console
@@ -350,13 +395,17 @@ it concurrently with VM tests.
   land and sea differ by colour, which the test counts).
 - Rust: `cargo test` (unit + TUI behaviour via ratatui TestBackend) and
   `cargo clippy --all-targets` must be clean. `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` prints screens.
-- Nix/VM: do NOT run a building `nix flake check` on this host: its
-  evaluator keeps every configuration in memory (8+ GB) for the whole run
-  and, with VM tests, the machine ran out of memory (2026-11-18, the
-  session was killed). Instead: `nix flake check --no-build`, then
-  evaluate each check alone (`nix eval --raw .#checks.x86_64-linux.NAME.drvPath`,
-  peak 6.4 GB for eval-live-iso, freed on exit) and build the list of
-  `.drv^*` with one `nix build --no-link --keep-going -L`. Same coverage.
+- Nix/VM: do NOT run `nix flake check` on this host, not even
+  `--no-build`: one evaluator holds every configuration (live ISOs, the
+  eight installed variants, dev-vm, all checks) and reached 10.5 GB on
+  2026-11-19; the kernel OOM-killed it (and earlier, the session, 2026-11-18).
+  Instead evaluate each `nixosConfigurations.NAME.config.system.build.toplevel.drvPath`
+  and each `checks.x86_64-linux.NAME.drvPath` in its own `nix eval`
+  process (peak ~6.4 GB, freed on exit), then build the list of `.drv^*`
+  with one `nix build --no-link --keep-going -L --max-jobs 1`. Same
+  coverage. Run all of it inside `systemd-run --user --scope -p
+  MemoryMax=7G` so that only our job can be killed. Ask the owner for a
+  time before the full run or an ISO build (see the memory notes).
 - Report each test as PASS / FAIL / BLOCKED / NOT TESTED in docs/TESTING.md.
   Never mark untested things as passing.
 
@@ -443,11 +492,30 @@ needlessly. Watch `free -h` during VM tests.
 4. The build-time catalog check ensures the binary exists. Add a VM test
    assertion if the app is important.
 
-## 14. Current implementation status (2026-11-18)
+## 14. Current implementation status (2026-11-19)
 
 **Now: release 0.4.0 (offline updates ADR 0023, licence notice ADR 0024,
-the owner's release key, `scripts/make-release.sh`) is being prepared on
-`develop`.** Release flow: version bump + CHANGELOG on `develop`, full
+the owner's release key, `scripts/make-release.sh`) is released
+(2026-11-18): `main` merged and pushed, tag `v0.4.0` on `82f3152`, release
+folder signed by the owner, ISO boot-tested (BIOS, UEFI).** **Now (2026-11-19): release 0.5.0 (Phase 9, community network, ADR 0025)
+is being prepared on `develop`: `feat/community-network` merged (slices
+1-7 and the independent review's fixes), version 0.5.0 + CHANGELOG
+done; next: the full test run (25 checks incl. `vm-share`,
+`vm-hotspot`), ISO build + boot BIOS/UEFI, offline update 0.4.0 → 0.5.0
+→ rollback in QEMU (the owner signs the bundle), `make-release.sh` (the
+owner signs), then merge into `main` and tag only when the owner says
+so. The owner is testing 0.4.0 on new hardware meanwhile; findings may
+go into 0.5.0.** **Release plan (owner, 2026-11-19): 0.5.0 = Phase 9
+complete, released BEFORE resuming maps (maps then = 0.6.0). Before
+tagging 0.5.0: slices 5-7; an independent review of the server side
+(nginx config, firewall chain, `set-share`, relay, announce parser) with
+its findings fixed; the full test run (24 checks) + ISO boot BIOS/UEFI;
+an offline update 0.4.0 → 0.5.0 → rollback in QEMU (first real use of
+ADR 0023 between releases); ideally two real laptops (sharing, discovery,
+a pack over real Wi-Fi/mesh), otherwise the release notes say "VM-tested
+only"; the notes say plainly that 0.5.0 is the first release that can
+run a network server (offered in standard, off until an administrator
+turns it on).** Release flow: version bump + CHANGELOG on `develop`, full
 test run, `make-release.sh --update-key NIXKEY --sign MINISIGNKEY V OUT` at
 tag `vV` (the owner signs in their own terminal; secret keys under
 `~/.resilience-keys`, later a VeraCrypt container), merge into `main`, tag
@@ -536,7 +604,7 @@ media and backups (0008), clock (0009), Wi-Fi (0010), default generation
 files and manual pages (0014); Phase 4 guided cryptography (0015).
 See docs/TESTING.md for what has actually been executed and passed.
 
-Git state (2026-11-18): release **0.3.0** is `main`, tagged `v0.3.0`, pushed; `develop` holds 0.4.0 work (pushed). Before: release **0.2.0** (Phases 2 to 6, local part) is `main` = `develop`, tagged `v0.2.0` (and `v0.1.0` on `3a3c629`), pushed; the 0.2.0 ISO boot-tested in QEMU. The installer (`feat/installer`) was merged into `develop` on 2026-11-18 after all 21 checks passed (not pushed); meant for 0.3.0. Earlier: `main` = `develop` at the Phase 6 milestone, merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
+Git state (2026-11-18): release **0.4.0** is `main` = `develop`, tag `v0.4.0`, pushed (0.3.0: tag `v0.3.0` on its merge commit). Before: release **0.2.0** (Phases 2 to 6, local part) is `main` = `develop`, tagged `v0.2.0` (and `v0.1.0` on `3a3c629`), pushed; the 0.2.0 ISO boot-tested in QEMU. The installer (`feat/installer`) was merged into `develop` on 2026-11-18 after all 21 checks passed (not pushed); meant for 0.3.0. Earlier: `main` = `develop` at the Phase 6 milestone, merged and pushed after a full flake check and ISO boot; `develop` = `feat/maps`,
 `feat/maps-overview`, `feat/comms` (Phase 6 slices 1 to 4, ADR 0018 and
 0019) and `feat/comms-files` (slices 5 and 6, ADR 0020) merged, on origin;
 both comms branches are fully merged (new Phase 6 work: a new
@@ -604,8 +672,11 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Current: Phase 6 (networking and communications), see §14.
-Phase 5 (maps) is parked.
+See ROADMAP.md. Current: release 0.5.0 (Phase 9 done), then maps
+(Phase 5, slices 10-13) for 0.6.0 (owner, 2026-11-19). Requested
+2026-11-19: Phase 11, offline assistant (local model via Ollama or
+llama.cpp, models as hash-pinned packs, answers grounded in the
+libraries and handbook with sources); ADR first; not started.
 
 ## 17. Important decisions (docs/decisions/)
 
@@ -633,6 +704,7 @@ Phase 5 (maps) is parked.
 - 0022 Installer: prebuilt generic installed systems (per edition, UEFI/BIOS, plain/LUKS), accounts as local accounts in modes.toml, keyboard in /var/lib/resilience/keyboard (+ initrd secret), `resilience-install` via polkit allow_active on the live ISO only
 - 0023 Offline updates: signed Nix binary cache on a USB stick (release key in nix/release-keys.nix, passed per import, never in nix.conf), helper `apply-update` (auth_admin, newer version of this edition and variant only, switch-to-configuration boot), `check-update` as the user, TUI Recovery → Update from a USB stick
 - 0024 Licence notice: before an account's first use of the TUI, Hippocratic License 2.1 summary + original text, "I certify that I have read" → helper `record-licence SHA256` (allow_active=yes) appends to /var/lib/resilience/licence-acceptances.log (root 0644); `resilience.licence.prompt` off only in VM tests (flake wrapper, mkDefault); live ISO asks at every start
+- 0025 Community network (accepted 2026-11-19, implemented, reviewed; 0.5.0): sharing packs/library/folder/pages over HTTP (one read-only nginx, TCP 80, one interface) only via helper `set-share` (auth_admin, not kept across reboots), discovery by Reticulum announces, joining as the user (peer packs hash-checked by the store, pages via a loopback relay + restricted lynx), hotspot via `set-hotspot` (auth_admin, WPA2, no forwarding), expert DNS in the hotspot's dnsmasq (`home.arpa`)
 
 ## 18. How to continue safely
 

@@ -22,9 +22,9 @@ use resilience_core::network::{LinkLevel, ProbeOutcome};
 use resilience_core::status::format_uptime;
 
 use crate::app::{
-    App, ChatInput, ChatRow, Entry, InstallForm, InstallInput, InstallRow, Level, LibItem,
-    LicencePage, MODES, MediaPurpose, Modal, NearbyRow, PackRow, PacksScreen, SearchHit, UpdateRow,
-    View, category_description, level_tag,
+    App, ChatInput, ChatRow, CommunityRow, Entry, InstallForm, InstallInput, InstallRow, Level,
+    LibItem, LicencePage, MODES, MediaPurpose, Modal, NearbyRow, PackRow, PacksScreen, PeerAction,
+    PeerPack, SearchHit, ShareForm, ShareInput, UpdateRow, View, category_description, level_tag,
 };
 use crate::help;
 use crate::theme::Theme;
@@ -122,6 +122,16 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     ])
     .areas(area);
     draw_header(f, app, header, tall);
+    // While this computer shares (ADR 0025 §3), on every screen.
+    let body = match app.sharing_banner() {
+        Some(b) => {
+            let [line, rest] =
+                Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(body);
+            f.render_widget(Paragraph::new(Span::styled(b, theme.warn)), line);
+            rest
+        }
+        None => body,
+    };
     draw_body(f, app, body);
     draw_footer(f, app, footer);
     draw_modal(f, app, area);
@@ -182,6 +192,11 @@ fn footer_hints(view: &View) -> &'static str {
             "w Write  f File  o Open  s Save  c Cancel  a Name  i Address  Esc Back"
         }
         View::Network { .. } => "p Probe Internet  r Refresh  Esc Back",
+        View::Community { .. } => "Enter Open  a Type an address  r Refresh  Esc Back  F1 Help",
+        View::PeerMenu { .. } => "Enter Open  Esc Back  F1 Help",
+        View::PeerPacks { .. } => "Space Tick  Enter/d Get the ticked packs  Esc Back",
+        View::PeerFiles { .. } => "Enter Copy into Received  Esc Back  F1 Help",
+        View::ShareSetup { .. } => "Enter/Space Change  Up/Down Move  Esc Cancel  F1 Help",
         View::Settings { .. } => "Enter Apply  Esc Back",
         View::Install { .. } => "Enter Change  m Mode  f Full name  a Add  d Remove  Esc  F1 Help",
         View::InstallDisks { .. } => "Enter Choose this disk  r Refresh  Esc Back",
@@ -343,6 +358,21 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         }
         View::Chats { rows, status, list } => draw_chats(f, app, area, rows, status, list),
         View::Nearby { rows, list } => draw_nearby(f, app, area, rows, list),
+        View::Community { rows, list } => draw_community(f, app, area, rows, list),
+        View::PeerMenu {
+            name,
+            peer,
+            actions,
+            list,
+        } => draw_peer_menu(f, app, area, name, peer, actions, list),
+        View::PeerPacks {
+            peer,
+            rows,
+            ticked,
+            list,
+        } => draw_peer_packs(f, app, area, peer, rows, ticked, list),
+        View::PeerFiles { peer, rows, list } => draw_peer_files(f, app, area, peer, rows, list),
+        View::ShareSetup { form, list } => draw_share_setup(f, app, area, form, list),
         View::Chat {
             peer,
             name,
@@ -2577,6 +2607,34 @@ fn draw_modal(f: &mut Frame, app: &App, area: Rect) {
             }
             (title, l, t.base)
         }
+        Modal::ShareInput { kind, value, error } => {
+            let (title, ask, hint) = match kind {
+                ShareInput::Address => (
+                    "ADDRESS OF A COMPUTER",
+                    "Address of the computer that shares (for example 192.168.1.20, or \
+                     fe80::1%bat0 on the mesh):",
+                    "A computer on a network this computer is on | Enter open, Esc cancel",
+                ),
+                ShareInput::Name => (
+                    "NAME OTHERS SEE",
+                    "The name other computers will see (a place, not a person):",
+                    "Up to 32 letters, digits, spaces or dashes | Enter save, Esc cancel",
+                ),
+            };
+            let mut l = vec![
+                Line::from(ask),
+                Line::from(vec![
+                    Span::styled(format!("> {value}"), t.accent),
+                    Span::styled("█", t.base),
+                ]),
+                Line::from(""),
+            ];
+            match error {
+                Some(e) => l.push(Line::from(Span::styled(format!("[!!] {e}"), t.error))),
+                None => l.push(Line::from(Span::styled(hint, t.dim))),
+            }
+            (title, l, t.base)
+        }
         Modal::ExpectedSum { file, value, error } => {
             let mut l = vec![
                 Line::from(format!(
@@ -2921,6 +2979,274 @@ fn draw_chat(
             ),
             Line::from(Span::styled(
                 "NOT VERIFIED: the message could not be checked against this address's key.",
+                t.dim,
+            )),
+        ],
+    );
+}
+
+fn draw_community(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    rows: &[CommunityRow],
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    let now = crate::app::chat_now();
+    let items: Vec<ListItem> = rows
+        .iter()
+        .map(|r| match r {
+            CommunityRow::Sharing(s) => ListItem::new(Span::styled(
+                format!(
+                    "[ON] Sharing {} on {} as \"{}\" - Enter to stop",
+                    s.services.join(", "),
+                    s.interface,
+                    s.name
+                ),
+                t.warn,
+            )),
+            CommunityRow::Share => ListItem::new("Share this computer's resources..."),
+            CommunityRow::Address => ListItem::new("Type the address of a computer..."),
+            CommunityRow::Hotspot { on: Some(what) } => ListItem::new(Span::styled(
+                format!("[ON] Hotspot {what} - Enter to turn off"),
+                t.warn,
+            )),
+            CommunityRow::Hotspot { on: None } => {
+                ListItem::new("Create a network: hotspot (this computer as Wi-Fi)...")
+            }
+            CommunityRow::Mesh { on: true } => ListItem::new(Span::styled(
+                "[ON] Mesh network - Enter to turn off",
+                t.warn,
+            )),
+            CommunityRow::Mesh { on: false } => {
+                ListItem::new("Create a network: mesh (Wi-Fi without a router)...")
+            }
+            CommunityRow::Machine { heard, peer } => {
+                let what: Vec<&str> = heard.services.iter().map(|s| s.id()).collect();
+                let reach = match peer {
+                    Some(p) => p.display(),
+                    None => "not reachable from here".into(),
+                };
+                ListItem::new(format!(
+                    "\"{}\"?  {}  {}  heard {}",
+                    heard.name,
+                    what.join(", "),
+                    reach,
+                    messages::ago(heard.heard, now)
+                ))
+            }
+        })
+        .collect();
+    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(6)]).areas(area);
+    draw_list(f, &t, l, "COMMUNITY NETWORK", items, list, "");
+    let heard = rows
+        .iter()
+        .filter(|r| matches!(r, CommunityRow::Machine { .. }))
+        .count();
+    let mut lines = vec![Line::from(if heard == 0 {
+        "No computer sharing has been heard yet. They appear here a little after \
+         joining the same network (Wi-Fi, cable or mesh), if they have local messaging."
+            .to_string()
+    } else {
+        format!(
+            "{heard} computer(s) sharing heard on the local networks. A name in quotes \
+             with ? is only what that computer says about itself."
+        )
+    })];
+    lines.push(Line::from(Span::styled(
+        "Packs you get are checked against this system's catalog. Pages and files are \
+         not checked: they are as trustworthy as whoever runs that computer.",
+        t.dim,
+    )));
+    details(f, &t, d, lines);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_peer_menu(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    name: &str,
+    peer: &resilience_core::share::Peer,
+    actions: &[PeerAction],
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    let items: Vec<ListItem> = actions.iter().map(|a| ListItem::new(a.name())).collect();
+    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(5)]).areas(area);
+    draw_list(f, &t, l, "NEARBY COMPUTER", items, list, "");
+    details(
+        f,
+        &t,
+        d,
+        vec![
+            Line::from(format!(
+                "{} at {}",
+                resilience_core::printable(name),
+                peer.display()
+            )),
+            Line::from(Span::styled(
+                "Pages open in the text browser; press q there to come back. Anyone on \
+                 this network can read them too.",
+                t.dim,
+            )),
+        ],
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_peer_packs(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    peer: &resilience_core::share::Peer,
+    rows: &[PeerPack],
+    ticked: &[bool],
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    let items: Vec<ListItem> = rows
+        .iter()
+        .zip(ticked)
+        .map(|(r, on)| {
+            let mark = if r.installed {
+                "[*]"
+            } else if *on {
+                "[+]"
+            } else {
+                "[ ]"
+            };
+            ListItem::new(format!(
+                "{mark} {:<50.50} {:>10}",
+                r.title,
+                human_bytes(r.size)
+            ))
+        })
+        .collect();
+    let total: u64 = rows
+        .iter()
+        .zip(ticked)
+        .filter(|(_, on)| **on)
+        .map(|(r, _)| r.size)
+        .sum();
+    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(5)]).areas(area);
+    draw_list(
+        f,
+        &t,
+        l,
+        "PACKS FROM A NEARBY COMPUTER",
+        items,
+        list,
+        "This computer offers no pack that is in this system's catalog.",
+    );
+    details(
+        f,
+        &t,
+        d,
+        vec![
+            Line::from(format!(
+                "From {}. Ticked: {}. [*] already installed.",
+                peer.display(),
+                human_bytes(total)
+            )),
+            Line::from(Span::styled(
+                "Each pack is checked against this system's catalog before it is installed.",
+                t.dim,
+            )),
+        ],
+    );
+}
+
+fn draw_share_setup(f: &mut Frame, app: &App, area: Rect, form: &ShareForm, list: &mut ListState) {
+    let t = app.theme;
+    let iface = form
+        .interfaces
+        .get(form.iface)
+        .map(String::as_str)
+        .unwrap_or("-");
+    let mut items = vec![
+        ListItem::new(format!("Network:  {iface}   (Enter: next network)")),
+        ListItem::new(format!("Name others see:  {}", form.name)),
+    ];
+    for (s, on) in resilience_core::share::Service::ALL
+        .iter()
+        .zip(form.services)
+    {
+        let mark = if on { "[x]" } else { "[ ]" };
+        items.push(ListItem::new(format!(
+            "{mark} {}",
+            crate::app::service_label(*s)
+        )));
+    }
+    items.push(ListItem::new(Span::styled("Share now...", t.accent)));
+    debug_assert_eq!(items.len(), crate::app::SHARE_ROWS);
+    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(7)]).areas(area);
+    draw_list(f, &t, l, "SHARE THIS COMPUTER'S RESOURCES", items, list, "");
+    details(
+        f,
+        &t,
+        d,
+        vec![
+            Line::from(Span::styled(
+                "Everything you share can be read by ANYONE on this network.",
+                t.warn,
+            )),
+            Line::from({
+                let (f_ok, f_no) = app.shared_counts("files");
+                let (p_ok, p_no) = app.shared_counts("pages");
+                format!(
+                    "Shared folder: {f_ok} file(s) served, {f_no} private or not a file \
+                     (not served). Pages: {p_ok} served, {p_no} not served. Only files \
+                     everyone on this computer may read are served."
+                )
+            }),
+            Line::from(Span::styled(
+                "Only one network at a time. Nothing can be sent to this computer.",
+                t.dim,
+            )),
+        ],
+    );
+}
+
+fn draw_peer_files(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    peer: &resilience_core::share::Peer,
+    rows: &[resilience_core::share::SharedFile],
+    list: &mut ListState,
+) {
+    let t = app.theme;
+    let items: Vec<ListItem> = rows
+        .iter()
+        .map(|r| {
+            ListItem::new(format!(
+                "{:<56.56} {:>10}",
+                messages::clean_line(&r.name, 56),
+                human_bytes(r.size)
+            ))
+        })
+        .collect();
+    let [l, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(5)]).areas(area);
+    draw_list(
+        f,
+        &t,
+        l,
+        "SHARED FOLDER OF A NEARBY COMPUTER",
+        items,
+        list,
+        "This computer's shared folder is empty.",
+    );
+    details(
+        f,
+        &t,
+        d,
+        vec![
+            Line::from(format!("From {}.", peer.display())),
+            Line::from(Span::styled(
+                "Files are not checked. A copy goes into your Received folder; read it \
+                 with Find & view files.",
                 t.dim,
             )),
         ],

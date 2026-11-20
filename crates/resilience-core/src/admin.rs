@@ -124,6 +124,12 @@ pub struct AdminConfig {
     /// The mesh unit `set-mesh` starts and stops; absent: no mesh here.
     #[serde(default)]
     pub mesh_unit: Option<String>,
+    /// Community network (ADR 0025): `set-share`; absent: not offered.
+    #[serde(default)]
+    pub share: Option<crate::share::ShareSettings>,
+    /// ADR 0025 §6: `set-hotspot`; absent: not offered.
+    #[serde(default)]
+    pub hotspot: Option<crate::share::HotspotSettings>,
     /// Accounts created on this machine rather than declared in Nix (the
     /// installer's, ADR 0022): root-owned, world-readable, names only.
     #[serde(default)]
@@ -678,6 +684,8 @@ mod tests {
             updates: None,
             licence: None,
             mesh_unit: None,
+            share: None,
+            hotspot: None,
             local_accounts_file: None,
             users: users
                 .iter()

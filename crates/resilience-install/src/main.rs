@@ -401,6 +401,13 @@ impl Installer {
                 arg(&self.cfg.mkfs_ext4),
                 s("-q"),
                 s("-F"),
+                // No TRIM of the whole partition first: some SSDs finish it
+                // in the background and wipe the superblock written just
+                // after (seen on a PNY CS900, 2026-11-19: "bad superblock"
+                // at the first mount; with encryption dm-crypt passes no
+                // discards, so it worked). The system can trim later.
+                s("-E"),
+                s("nodiscard"),
                 s("-L"),
                 s(ROOT_LABEL),
                 root_dev.clone(),
@@ -409,15 +416,34 @@ impl Installer {
         )
         .map_err(fail)?;
 
+        quiet(
+            &[arg(&self.cfg.udevadm), s("settle"), s("--timeout=30")],
+            MINUTE,
+        )
+        .map_err(fail)?;
+
         self.begin("Mounting the new system")?;
         fs::create_dir_all(TARGET).map_err(|e| fail(format!("{TARGET}: {e}")))?;
-        quiet(&[arg(&self.cfg.mount), root_dev, s(TARGET)], MINUTE).map_err(fail)?;
+        // The type is named: nothing is guessed from what is on the disk.
+        quiet(
+            &[
+                arg(&self.cfg.mount),
+                s("-t"),
+                s("ext4"),
+                root_dev,
+                s(TARGET),
+            ],
+            MINUTE,
+        )
+        .map_err(fail)?;
         self.mounted = true;
         let target = PathBuf::from(TARGET);
         fs::create_dir_all(target.join("boot")).map_err(|e| fail(format!("boot: {e}")))?;
         quiet(
             &[
                 arg(&self.cfg.mount),
+                s("-t"),
+                s("vfat"),
                 s("-o"),
                 s("fmask=0077,dmask=0077"),
                 boot,

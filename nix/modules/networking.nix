@@ -29,6 +29,40 @@ in
     enable = lib.mkDefault true;
     # Never contact a connectivity-check server in the background.
     settings.connectivity.enabled = false;
+    # Wired networks with and without a router: NetworkManager's own
+    # automatic profile ("Wired connection 1") gives up when no DHCP server
+    # answers (a cable between two computers, a switch with no router), and
+    # link-local IPv4 alone does not keep it up (vm-cable). Instead, two
+    # profiles for any wired card: "Wired" (DHCP and router advertisements)
+    # first, once; when it fails, "Wired without router" (link-local IPv4
+    # and IPv6 only), which comes up at once, so that local messaging can
+    # use the cable.
+    settings.main.no-auto-default = lib.mkDefault "*";
+    ensureProfiles.profiles = {
+      resilience-wired = {
+        connection = {
+          id = "Wired";
+          uuid = "6d0f4c84-2f6a-4f53-9a0b-7f0b6c9a5e11";
+          type = "ethernet";
+          autoconnect = "true";
+          autoconnect-priority = "10";
+          autoconnect-retries = "1";
+        };
+        ipv4.method = "auto";
+        ipv6.method = "auto";
+      };
+      resilience-wired-local = {
+        connection = {
+          id = "Wired without router";
+          uuid = "0b9f2e61-7c1d-4b8a-a3e2-5d6c8f1e2a47";
+          type = "ethernet";
+          autoconnect = "true";
+          autoconnect-priority = "-10";
+        };
+        ipv4.method = "link-local";
+        ipv6.method = "link-local";
+      };
+    };
   };
   security.polkit.extraConfig = lib.mkIf config.networking.networkmanager.enable ''
     // Resilience (ADR 0010): NetworkManager for accounts without the

@@ -41,6 +41,13 @@ WHEN THE OTHER PERSON IS AWAY
   The details panel says whether a store is in use. A copy in a store is
   encrypted for its recipient: the computers keeping it cannot read it.
 
+WITH A CABLE OR A SWITCH, WITHOUT A ROUTER
+  Two computers joined by a network cable, or several plugged into the
+  same switch, find each other by themselves: about a minute after the
+  cable is plugged in (the computer first waits for a router that is not
+  there), the others appear under p. Nothing needs to be set up and no
+  address needs to be typed.
+
 WITHOUT A WI-FI ROUTER: THE MESH NETWORK
   When there is no router or access point, open COMMUNICATIONS > Mesh
   network and turn it on, on every computer that should take part. The

@@ -192,6 +192,9 @@
         vm-maps = vmTest ./tests/vm/maps.nix;
         vm-comms = vmTest ./tests/vm/comms.nix;
         vm-mesh = vmTest ./tests/vm/mesh.nix;
+        vm-share = vmTest ./tests/vm/share.nix;
+        vm-hotspot = vmTest ./tests/vm/hotspot.nix;
+        vm-cable = vmTest ./tests/vm/cable.nix;
         vm-update = vmTest ./tests/vm/update.nix;
         vm-licence = vmTest ./tests/vm/licence.nix;
         # The messaging program with the real Reticulum and LXMF, no VM.

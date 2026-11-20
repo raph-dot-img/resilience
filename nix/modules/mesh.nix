@@ -47,6 +47,10 @@ let
       echo "no Wi-Fi card: the mesh needs one" >&2
       exit 1
     fi
+    if [ -e /run/resilience-hotspot/device ]; then
+      echo "the hotspot is on: turn it off first (the Wi-Fi card cannot do both)" >&2
+      exit 1
+    fi
     # Written first: a start that fails half way is undone from it.
     echo "$devs" > /run/resilience-mesh/devices
     modprobe batman_adv

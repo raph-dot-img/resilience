@@ -4,7 +4,7 @@ Every result below is **PASS**, **FAIL**, **BLOCKED** or **NOT TESTED**.
 A test is only PASS if it was actually executed. "VM" means QEMU/KVM on the
 development host — physical hardware: one boot of the live ISO on a ThinkPad L15 Gen 1 (see "ISO boot").
 
-Last full run: 2026-11-18 on `develop` for release 0.4.0 (version bump `f1bfa51`): 22 of 23 checks PASS in 44 min, one build at a time; `vm-update` FAILED (the update installed, but the test still expected `from=0.3.0` in the audit line); fixed in `8bfa6bd` (the test reads the running version), then `vm-update` PASS alone; the other 22 derivations are unchanged by that fix, so all 23 checks PASS at `8bfa6bd`. Previous: 2026-11-18 on `develop` at `0217f4d` (offline updates ADR 0023, licence notice ADR 0024, the owner's release key in `nix/release-keys.nix`): all 23 checks incl. 17 VM tests (new: `vm-update`, `vm-licence`) PASS, built as derivations with 2 jobs at a time, 27 min. Previous: 2026-11-18 on `feat/installer` at `84bf3c4` (the installer, ADR 0022): all 21 checks incl. 15 VM tests (new: `vm-install`, `vm-install-uefi`) PASS, built as derivations (see below) with 2 jobs at a time. Previous full run (`nix flake check -L --max-jobs 1 --keep-going`, all 19 checks incl. 13 VM tests): 2026-11-17 on `develop` at `af4b661` (mesh network, ADR 0021), every check PASS in 13 min; `vm-comms`, `vm-mesh` and `comms-messages` were taken from their passing builds of the same derivations in the run just before (at `7039e06`). That run and the one before it each had one failure, both fixed: `vm-crypto` (GnuPG asked a third time for the passphrase while creating a key on the loaded host: `max-cache-ttl 0` expires the creation's cache nonce; the tool now says so and the test answers it) and `vm-modes` (`stty` on tty2 failed with EIO while its getty started; every test's `tty_text` now retries it). Earlier full run: 2026-11-17 on `feat/comms-files` at `73754e8` (multi-line messages, ADR 0020 files), every check PASS in 17 min; `vm-comms` and `comms-messages` were taken from their passing builds of the same derivations earlier that day (vm-comms 318 s), the other 10 VM tests ran. Earlier full run: 2026-11-17 on `feat/comms` at `ba62020` (ADR 0019), every check PASS in 36 min. Previous full run 2026-11-16/17 (slice 3 + messaging on in standard): `vm-crypto` failed on the first pass (it pressed `3` for Security, which slice 9's Maps & navigation had moved to `5`); fixed in `7f1a0ac`, then PASS. ISO last built and boot-tested 2026-11-17 from `develop` at `af4b661` (see "ISO boot"; bit-for-bit reproducibility not verified).
+Last full run: 2026-11-19 on `develop` for release 0.5.0 at `58a0903` (community network ADR 0025, the review's fixes, the installer's nodiscard fix, wired profiles for cables and switches without a router): one evaluation per system and per check (13 systems, 26 checks, no evaluation error), then one build at a time, 60 min, inside a 7 GB memory scope: 25 of 26 checks PASS; `vm-mesh` FAILED on its own assumption that each card returns to the exact NetworkManager state it had (beta's lan2 now moves on from "connecting" to "Wired without router"); the check now asks that the card be managed again, and `vm-mesh` PASS alone (all 7 subtests). So all 26 checks PASS. ISO of 0.5.0 built from `7310f49` (1,652,834,304 bytes, SHA-256 `7a92103830649bb2416f31d2af418f2fa8147184ee8da011a888f613a86f3f18`; not the signed release) and booted in QEMU with `tests/iso/smoke.py`, BIOS and UEFI (OVMF 202602): boot menu, licence notice, main menu STANDARD v0.5.0, system OPERATIONAL, network, status, local messages running, PASS (2026-11-19, screenshots reviewed). Previous: 2026-11-18 on `develop` for release 0.4.0 (version bump `f1bfa51`): 22 of 23 checks PASS in 44 min, one build at a time; `vm-update` FAILED (the update installed, but the test still expected `from=0.3.0` in the audit line); fixed in `8bfa6bd` (the test reads the running version), then `vm-update` PASS alone; the other 22 derivations are unchanged by that fix, so all 23 checks PASS at `8bfa6bd`. Previous: 2026-11-18 on `develop` at `0217f4d` (offline updates ADR 0023, licence notice ADR 0024, the owner's release key in `nix/release-keys.nix`): all 23 checks incl. 17 VM tests (new: `vm-update`, `vm-licence`) PASS, built as derivations with 2 jobs at a time, 27 min. Previous: 2026-11-18 on `feat/installer` at `84bf3c4` (the installer, ADR 0022): all 21 checks incl. 15 VM tests (new: `vm-install`, `vm-install-uefi`) PASS, built as derivations (see below) with 2 jobs at a time. Previous full run (`nix flake check -L --max-jobs 1 --keep-going`, all 19 checks incl. 13 VM tests): 2026-11-17 on `develop` at `af4b661` (mesh network, ADR 0021), every check PASS in 13 min; `vm-comms`, `vm-mesh` and `comms-messages` were taken from their passing builds of the same derivations in the run just before (at `7039e06`). That run and the one before it each had one failure, both fixed: `vm-crypto` (GnuPG asked a third time for the passphrase while creating a key on the loaded host: `max-cache-ttl 0` expires the creation's cache nonce; the tool now says so and the test answers it) and `vm-modes` (`stty` on tty2 failed with EIO while its getty started; every test's `tty_text` now retries it). Earlier full run: 2026-11-17 on `feat/comms-files` at `73754e8` (multi-line messages, ADR 0020 files), every check PASS in 17 min; `vm-comms` and `comms-messages` were taken from their passing builds of the same derivations earlier that day (vm-comms 318 s), the other 10 VM tests ran. Earlier full run: 2026-11-17 on `feat/comms` at `ba62020` (ADR 0019), every check PASS in 36 min. Previous full run 2026-11-16/17 (slice 3 + messaging on in standard): `vm-crypto` failed on the first pass (it pressed `3` for Security, which slice 9's Maps & navigation had moved to `5`); fixed in `7f1a0ac`, then PASS. ISO last built and boot-tested 2026-11-17 from `develop` at `af4b661` (see "ISO boot"; bit-for-bit reproducibility not verified).
 
 ## How to run
 
@@ -13,15 +13,15 @@ Last full run: 2026-11-18 on `develop` for release 0.4.0 (version bump `f1bfa51`
 | Rust unit + TUI tests | `cargo test` | ~5 s |
 | Lints | `cargo clippy --all-targets` (must be clean), `nix fmt` | ~10 s |
 | Screen dump for review | `RESILIENCE_DUMP=1 cargo test dump_screens -- --nocapture` | ~2 s |
-| Evaluate everything | `nix flake check --no-build` | ~30 s |
-| Everything incl. VM tests | `nix flake check --no-build`, then each check's `drvPath` evaluated alone and all built with one `nix build --no-link --keep-going -L DRV^*...` | ~1 h |
+| Evaluate everything | one `nix eval --raw` per system toplevel and per check `drvPath` (not `nix flake check`: 10+ GB in one process on 2026-11-19) | a few min |
+| Everything incl. VM tests | each system's and check's `drvPath` evaluated alone, all built with one `nix build --no-link --keep-going -L --max-jobs 1 DRV^*...`, inside `systemd-run --user --scope -p MemoryMax=7G` | ~1 h |
 | One VM test | `nix build .#checks.x86_64-linux.vm-modes -L` (also `vm-admin`, `vm-backup`, `vm-wifi`, `vm-generations`, `vm-packs`, `vm-documents`, `vm-crypto`, `vm-boot-offline`, `vm-update`) | ~1–2 min |
 | ISO boot smoke test | `nix build .#iso -o result-iso && python3 -I tests/iso/smoke.py result-iso/iso/*.iso /tmp/shots [--uefi OVMF.fd]` | ~2 min |
 
-Do not run a building `nix flake check` on the 12 GB development host:
-its evaluator keeps 8+ GB for the whole run and, with VM tests running,
-the host ran out of memory (2026-11-18). Evaluating one check per
-process frees that memory before the VM tests start.
+Do not run `nix flake check` on the 12 GB development host, not even
+with `--no-build`: its single evaluator reached 10.5 GB and was killed
+by the kernel (2026-11-19; the session itself on 2026-11-18). Evaluating
+one system or check per process frees that memory each time.
 
 VM tests read the console through `/dev/vcsuN` (UTF-32) instead of the test
 driver's `get_tty_text()`: the latter decodes 8-bit glyph indices as UTF-8,
@@ -328,6 +328,28 @@ Note: the status screen's "userland v0.3.0" on 0.3.1 comes from the trial
 (only `resilience.version` was raised, not the package); a real release
 raises both.
 
+### Release 0.5.0 — offline update 0.4.0 → 0.5.0 → back (manual, QEMU, screenshots reviewed)
+
+The signed release folder made by the owner with `make-release.sh` at tag
+`v0.5.0` (2026-11-20): `SHA256SUMS.minisig` verified with
+`keys/resilience-release.minisign.pub` (key 5CC1E51F72AC25E7), all sums
+OK, the ISO byte-identical to the boot-tested one (`7a921038…`), the
+source archive identical to `git archive v0.5.0`. The 0.4.0 release ISO
+(from the mirror) installed with `tests/iso/install.py --uefi` (OVMF
+202602, no encryption); the update bundle extracted onto a FAT32 image
+attached as a USB stick. QEMU note: a `usb-storage` device needs
+`removable=on`, otherwise Linux shows RM=0 HOTPLUG=0 and the TUI rightly
+does not list it as a stick.
+
+| Check | Result |
+|---|---|
+| 0.4.0 installed: STANDARD v0.4.0, OPERATIONAL | PASS (2026-11-20) |
+| Recovery → Update from a USB stick: "UPDATESTICK 2.1 GiB not open" → Enter → "The stick says Resilience standard 0.5.0" | PASS (2026-11-20) |
+| `c` (as `user`): Intact yes, Authentic (signed by a release key) yes, Complete yes | PASS (2026-11-20) |
+| Install (Cancel default, `y`) → polkit `org.resilience.admin.apply-update` as administrator → missing paths copied → "Resilience 0.5.0 is installed. It starts at the next restart" | PASS (2026-11-20) |
+| Restart without the stick: STANDARD v0.5.0, OPERATIONAL, the account and its licence acceptance kept; generations: 2 "started, default", 1 kept | PASS (2026-11-20) |
+| Back: generation 1 → Make default (Cancel default, `y`) → administrator password → "Generation 1 is now started by default (it was 2)" → restart: STANDARD v0.4.0, generation 2 still in the list | PASS (2026-11-20) |
+
 
 ### VM: `vm-licence` — the licence notice (ADR 0024), driven through the TUI
 
@@ -358,6 +380,73 @@ second radio in a network namespace playing the other computer.
 | beta turns it off: unit inactive, `bat0` and the state file gone, each card's NetworkManager state as before; alpha can no longer ping gamma; a new message is not delivered within 40 s | PASS (2026-11-17) |
 | Wi-Fi (delta): `set-mesh on` with no device configured takes the first card (wlan0): type IBSS, joined cell `02:52:45:53:4d:31`; a BATMAN-adv neighbour (the other radio); ping6 to it over `bat0` | PASS (2026-11-17) |
 | Wi-Fi: `set-mesh off` → no `bat0`, the card back to type managed and to its NetworkManager state | PASS (2026-11-17) |
+
+### VM: `vm-cable` — computers on a switch with no router (2026-11-19, after the owner's real-hardware case)
+
+alpha, beta and gamma on one switch (vlan 1), with no address from the
+test framework (NetworkManager alone) and the cables unplugged at start
+(QEMU `set_link vlan1 off`).
+
+| Scenario | Result |
+|---|---|
+| Unplugged: no `fe80::` on eth1, nobody heard, NetworkManager's own "Wired connection 1" not created | PASS (2026-11-19) |
+| Plugged in: "Wired" (DHCP) gives up, "Wired without router" comes up on all three (connected, 169.254.x.y and `fe80::`); the Reticulum instance restarts by itself (new main PID) | PASS (2026-11-19; earlier runs FAILED with `ipv4.link-local=fallback`, then `enabled`: NetworkManager's automatic profile fails without DHCP even with a link-local address; an experiment showed a link-local-only profile comes up at once) |
+| Each hears the other two; alpha→beta, beta→gamma, gamma→alpha all `delivered` and received | PASS (2026-11-19) |
+| alpha unplugged and plugged again: back on "Wired without router", a message to gamma delivered | PASS (2026-11-19) |
+| An ordinary wired network with a DHCP server still uses "Wired" (DHCP) | NOT TESTED in a VM (the other VM tests use addresses set by the test framework) |
+| Two real computers with a cable or a switch | NOT TESTED (the owner's 0.4.0 attempt failed without these fixes) |
+
+### VM: `vm-hotspot` — the hotspot (ADR 0025 slice 6), a "phone" and the outside
+
+hot has two simulated radios (mac80211_hwsim): wlan0 becomes the hotspot,
+wlan1 is moved into a network namespace as a phone (wpa_supplicant, busybox
+udhcpc, dig, curl); `outside` is on hot's cable (vlan 1).
+
+| Scenario | Result |
+|---|---|
+| `set-hotspot`: polkit auth_admin for any, inactive and active; the account itself refused (77); `""`, `maybe`, `on now`, `ON` refused and audited | PASS (2026-11-19) |
+| `set-hotspot on`: audited `ok`, a 19-character password printed once; the NetworkManager profile in /run (root 0600), the password file 0600, the interface's state file without it; the connection activated, wlan0 in AP mode; the password in no journal line, audit line or command line (`grep -F -f`) | PASS (2026-11-19; the first run FAILED: NetworkManager had not made wlan0 usable yet, the unit now waits for it) |
+| The phone joins with that password (WPA2/RSN), gets 10.42.0.x with 10.42.0.1 as router; `resilience.home.arpa`, `library.home.arpa` and `printer.home.arpa` answered as configured; `example.org` and `outside` not answered (nothing forwarded) | PASS (2026-11-19) |
+| Never routed: NetworkManager turns forwarding on for wlan0; with forwarding on everywhere (as on a machine with an Internet connection) the phone cannot ping `outside`; control: without our rule it can; `systemctl reload resilience-hotspot` puts it back; through a firewall reload the DROP rules stay in place (checked 20 times right after) | PASS (2026-11-19; two runs FAILED on the test's setup, and one on a real gap: the firewall's reload ran our stop commands, which emptied the drop chain for a moment; that chain is no longer touched by the firewall's own scripts) |
+| Sharing on the hotspot: pages reachable from the phone at `http://resilience.home.arpa/pages/`; stopped again | PASS (2026-11-19) |
+| `set-mesh on` refused while the hotspot is on, no `bat0`, the hotspot still on | PASS (2026-11-19) |
+| `set-hotspot off`: unit inactive; profile, password and state files gone; NetworkManager no longer knows the connection; both chains empty; the phone loses the network; turning it on again gives a different password | PASS (2026-11-19) |
+| After the independent review: a decoy profile named `resilience-hotspot` (open, as an account could make) is never activated: the unit's own UUID is the connection on wlan0, the decoy untouched; `set-hotspot on` while on is refused ("already on"); an unconditional DROP in the forward chain; the DROP rules present in 20 checks right after a firewall reload (the hotspot's own reload no longer empties the chain first) | PASS (2026-11-19; the first run after the review FAILED on that last point: the reload emptied and refilled the chain) |
+| On real Wi-Fi cards and phones | NOT TESTED |
+
+### Check: `comms-messages`, community network part (ADR 0025 slice 3)
+
+| Scenario | Result |
+|---|---|
+| Parsers: local addresses only (public, loopback, documentation, CGNAT refused), 17 malformed announces refused (bad name, service, duplicate, port 0 or boolean, no or 9 addresses, a public address, other format version, a map, bad msgpack, empty, over 400 bytes), the sharing state file checked, machines older than an hour dropped | PASS (2026-11-19) |
+| Without a sharing state the announcer announces nothing; with one, Bob's program records the machine with its name, services, port, addresses and identity (0600); announces with a public address or markup in the name are not recorded | PASS (2026-11-19) |
+
+### VM: `vm-share` — community network, server side (ADR 0025 slice 2), one server between two networks
+
+near (vlan 1) ── server (vlans 1 and 2, eth1/eth2) ── far (vlan 2). The
+server has a catalog pack (a real ZIM built by the test), a ZIM file not
+in the catalog, and files in the shared folder: public (0644), private
+(0600), a dotfile and a symbolic link to `/etc/os-release`.
+
+| Scenario | Result |
+|---|---|
+| Nothing listens on TCP 80 and no share unit runs until an administrator shares; `near` gets no answer | PASS (2026-11-19) |
+| `set-share`: polkit does not allow the TUI's process without authentication (auth_admin); the account itself is refused (exit 77); 11 malformed requests refused (missing name or service, `lo`, an absent interface, an unknown or repeated service, two interfaces, `-x` as a name, `eth1;id`, `off now`), audited `result=refused` | PASS (2026-11-19) |
+| `set-share on eth1 --name 'Test shelter' packs library files pages`: audited `ok`, the three units start, `state.toml` written; `near` reads the index; `far` (eth2) gets no answer; nginx runs as a dynamic user, not root | PASS (2026-11-19) |
+| Packs: the index lists the catalog pack and not the other file; the download has the server's exact SHA-256; a range request gives 206; the file outside the catalog, `/packs/` and `../` paths are refused | PASS (2026-11-19; the first run FAILED: a regular-expression location served any `.zim` in the folder, replaced by one exact location per catalog file) |
+| Library: kiwix-serve answers behind nginx under `/library/` and listens on 127.0.0.1 only; the test pack's content is reachable | PASS (2026-11-19; the first run FAILED: the unit's sandbox refused netlink, which kiwix-serve needs for getifaddrs) |
+| Files and pages: the public file is listed and served; the 0600 file gives 403, the dotfile 404, the symbolic link 403/404; pages served with `Content-Security-Policy: default-src 'none'` and `nosniff`; no nginx version in the headers | PASS (2026-11-19) |
+| Read-only: POST, PUT, DELETE and OPTIONS refused (405/413), nothing written | PASS (2026-11-19) |
+| `systemctl reload firewall` while sharing: still reachable on eth1, still not on eth2 | PASS (2026-11-19) |
+| `set-share off`: the three units inactive, `state.toml` gone, the `resilience-share` chain empty, no answer on eth1 | PASS (2026-11-19) |
+| Only `packs` shared: `/library/` and `/files/` give 404, no library unit; sharing on eth2 then replaces eth1 (eth1 no longer answers) | PASS (2026-11-19) |
+| `nmcli device disconnect eth2`: the dispatcher stops sharing, state gone, chain empty | PASS (2026-11-19) |
+| Discovery (slice 3; server and near with local messaging): near's account records the server in `shares.json` with its name, the four services, port 80 and only eth1's addresses (IPv4 and link-local), not eth2's; the announcer runs as a dynamic user and stops with sharing | PASS (2026-11-19) |
+| Joining through near's TUI (slice 4; Ultra-Stable alice, Advanced carol's password): Communications > Community network lists "Test shelter"? with eth1's address; its menu; "Get packs from it" lists the catalog packs it offers; both ticked; the store installs the field notes (same SHA-256 as the server's) and refuses the tampered pack ("not the expected file"), nothing left in `.staging` for either | PASS (2026-11-19; the first run FAILED on the test's own check: the store's `lock` file lives in `.staging`) |
+| "Read its library" opens lynx on `http://localhost:PORT/library/nojs` through the relay (lynx's argv has `-localhost` and not the server's address); the test pack is listed; q quits back to the menu, no lynx left | PASS (2026-11-19; the first run FAILED: `/library/` is kiwix's JavaScript page, now `/library/nojs`) |
+| Shared folder (slice 5) through the TUI: `notice.txt` copied into ~/Received (content intact, 0600); `private.txt` (0600 on the server, listed by nginx) refused with "Nothing was kept", no partial file left | PASS (2026-11-19) |
+| After the independent review: nginx kept to eth1 by the kernel (`RestrictNetworkInterfaces` in a drop-in the helper writes for the instance): with TCP 80 opened on eth2 in the firewall by hand, `far` still gets no answer; sharing on a disconnected interface (eth2 after `nmcli device disconnect`) refused | PASS (2026-11-19; the first run FAILED: systemd does not expand `%i` in `RestrictNetworkInterfaces`, which kept nginx to the loopback; now a per-instance drop-in) |
+| The helper reports a failing library unit (kiwix-serve exits after the start job) | NOT TESTED (the helper only sees systemctl's start job; the unit restarts and is visible in the journal) |
 | Real Wi-Fi cards (IBSS on iwlwifi and others), radio range, several hops over the air, battery use | NOT TESTED |
 
 ### VM: `vm-install` — the text installer (ADR 0022), driven through the TUI
