@@ -13,6 +13,13 @@ Git tags: `vX.Y.Z` on the commit of each release.
   keys mixed with its answer. The screen is now cleared without asking
   anything. VM test `vm-maps` types at once after quitting the viewer.
 
+### Changed
+- Map search: a street or a point of interest with exactly the name typed
+  comes first only within 10 km ("pharmacie" no longer lists a
+  "Pharmacie" 60 km away before "Pharmacie du Centre" 2 km away); a town
+  with that name still comes first wherever it is. Each map pack returns
+  its matches nearest first, so the nearest are never left out.
+
 ## [0.5.0] — 2026-11-19 — Community network
 
 Computers nearby can share their library, resource packs and maps, a

@@ -672,7 +672,8 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
   mirror under packs/maps/; others are built with `nix build
   .#mapPacks.ID` and opened from a stick); the world overview draws
   disputed borders like any other; too many point-of-interest names at city scales
-  (style question open); osmium tags-filter needs ~2 GB RAM to build a pack.
+  (style question open); an exact name ranks first only for towns or
+  within 10 km (ADR 0016 §4, 2026-11-20); osmium tags-filter needs ~2 GB RAM to build a pack.
 - Physical hardware: the live ISO has booted once on a ThinkPad L15 Gen 1
   (owner, 2026-11-16); nothing else has been tested outside QEMU.
 

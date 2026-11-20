@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use resilience_core::maps::geo::{TileId, TmsTile};
+use resilience_core::maps::geo::{LatLon, TileId, TmsTile};
 
 use super::*;
 use crate::fixtures::*;
@@ -1013,9 +1013,10 @@ fn search_finds_places_through_the_hardened_connection() {
     let pack = open(&path).expect("open");
     unchanged(dir.path(), || {
         let q = |s: &str| fts_query(&tokens(s)).expect("query");
+        let here = LatLon::new(49.6, 6.13).expect("here");
         let names = |s: &str| -> Vec<String> {
             let mut v: Vec<String> = pack
-                .search(&q(s))
+                .search(&q(s), "", here)
                 .expect("search")
                 .into_iter()
                 .map(|h| h.name)
@@ -1028,20 +1029,24 @@ fn search_finds_places_through_the_hardened_connection() {
         assert_eq!(names("ESSAI"), ["Rue de l'Essai"]);
         assert_eq!(names("pharmacie test"), ["Pharmacie du Test"]);
         assert!(names("nowhere").is_empty());
-        let t = pack.search(&q("testville")).expect("search");
+        let t = pack
+            .search(&q("testville"), "testville", here)
+            .expect("search");
         assert_eq!(t.len(), 1);
         assert_eq!(t[0].kind, Kind::Settlement);
         assert_eq!(t[0].class, "town");
         assert!((t[0].at.lat() - 49.6116).abs() < 1e-6 && (t[0].at.lon() - 6.1319).abs() < 1e-6);
-        let p = pack.search(&q("pharmacie")).expect("search");
+        let p = pack
+            .search(&q("pharmacie"), "pharmacie", here)
+            .expect("search");
         assert_eq!(p[0].near.as_deref(), Some("Testville"));
         // Hostile words are only words: no FTS5 syntax error, no rows.
         for hostile in ["\" OR \"", "NEAR(a b)", "a*:b", "^x -y"] {
             if let Some(f) = fts_query(&tokens(hostile)) {
-                pack.search(&f).expect("only quoted words");
+                pack.search(&f, hostile, here).expect("only quoted words");
             }
         }
-        assert!(pack.search("").expect("empty").is_empty());
+        assert!(pack.search("", "", here).expect("empty").is_empty());
     });
     // A pack without the search tables answers with nothing.
     let (_dir, r) = open_altered("nosearch", |c| {
@@ -1049,7 +1054,61 @@ fn search_finds_places_through_the_hardened_connection() {
             .expect("drop");
     });
     let pack = r.expect("still opens");
-    assert!(pack.search("\"testville\"*").expect("no search").is_empty());
+    let here = LatLon::new(49.6, 6.13).expect("here");
+    assert!(
+        pack.search("\"testville\"*", "testville", here)
+            .expect("no search")
+            .is_empty()
+    );
+}
+
+#[test]
+fn search_returns_the_rows_that_count_from_a_pack_with_many_matches() {
+    use resilience_core::maps::search::{Kind, PER_PACK, fts_query, tokens};
+    // 200 pharmacies named "Pharmacie" 20 to 40 km north, then one named
+    // "Pharmacie" 3 km north, one "Pharmacie du Port" 1 km south and a
+    // village "Pharmacie-sur-Mer" far away: the near exact name first,
+    // then the village (settlements), then the nearest others.
+    let (_dir, r) = open_altered("many", |c| {
+        let mut id = 100;
+        for i in 0..200 {
+            id += 1;
+            c.execute(
+                "INSERT INTO rs_place VALUES (?1, 'poi', 'pharmacy', 'Pharmacie', 'pharmacie', NULL, 6130000, ?2, 0, NULL)",
+                rusqlite::params![id, 49_780_000 + i * 900],
+            )
+            .expect("far");
+        }
+        c.execute_batch(
+            "INSERT INTO rs_place VALUES (90, 'poi', 'pharmacy', 'Pharmacie', 'pharmacie', NULL, 6130000, 49627000, 0, NULL);
+             INSERT INTO rs_place VALUES (91, 'poi', 'pharmacy', 'Pharmacie du Port', 'pharmacie du port', NULL, 6130000, 49591000, 0, NULL);
+             INSERT INTO rs_place VALUES (92, 'settlement', 'village', 'Pharmacie-sur-Mer', 'pharmacie sur mer', NULL, 6590000, 50100000, 9, NULL);
+             INSERT INTO rs_place_fts (rowid, name) SELECT id, name FROM rs_place WHERE id >= 90;",
+        )
+        .expect("near");
+    });
+    let pack = r.expect("opens");
+    let here = LatLon::new(49.6, 6.13).expect("here");
+    let fts = fts_query(&tokens("pharmacie")).expect("query");
+    let got = pack.search(&fts, "pharmacie", here).expect("search");
+    assert_eq!(got.len(), PER_PACK);
+    let first: Vec<(&str, f64)> = got[..3]
+        .iter()
+        .map(|h| (h.name.as_str(), (h.at.lat() * 1000.0).round() / 1000.0))
+        .collect();
+    assert_eq!(
+        first,
+        [
+            ("Pharmacie", 49.627),
+            ("Pharmacie-sur-Mer", 50.1),
+            ("Pharmacie du Port", 49.591),
+        ]
+    );
+    assert_eq!(got[1].kind, Kind::Settlement);
+    // The rest: the nearest of the far ones, in order (the fixture's
+    // "Pharmacie du Test" has a lower category rank: after all of them).
+    assert!((got[3].at.lat() - 49.78).abs() < 1e-6, "{:?}", got[3]);
+    assert!(got[3..].windows(2).all(|w| w[0].at.lat() <= w[1].at.lat()));
 }
 
 #[test]

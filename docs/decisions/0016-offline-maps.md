@@ -319,9 +319,16 @@ background. Text (labels, markers) replaces whole cells.
   most 8 tokens of up to 32 characters are kept. **User text never
   reaches FTS5's query syntax.** Each open pack is queried (`LIMIT 50`)
   and the results are merged and ranked:
-  1. exact match on the folded name;
+  1. exact match on the folded name (for a street, a POI or a natural
+     feature only within 10 km of the view's centre: "pharmacie" must
+     not put a "Pharmacie" 60 km away before "Pharmacie du Centre" 2 km
+     away; amended 2026-11-20);
   2. kind (settlements by rank, then streets, then POIs);
   3. distance from the view's centre.
+
+  Each pack applies the same order in its query (flat distance) before
+  `LIMIT 50`, so a pack with hundreds of matches returns the ones that
+  count.
 
   Measured on the Luxembourg index: 0.1 to 1 ms per query. A result shows
   its name, kind, `near` and distance and direction ("Esch-sur-Alzette,

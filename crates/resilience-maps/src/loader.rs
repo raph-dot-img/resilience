@@ -130,10 +130,13 @@ pub enum Request {
         tiles: Vec<Key>,
     },
     /// Search every open pack that can be searched for `fts`, an FTS5
-    /// expression from `search::fts_query` (never user text).
+    /// expression from `search::fts_query` (never user text); each pack
+    /// orders its rows for the folded query `exact` seen from `centre`.
     Search {
         generation: u64,
         fts: String,
+        exact: String,
+        centre: LatLon,
     },
     /// Points of interest and peaks around `at`, in every open pack with
     /// the R*Tree.
@@ -235,7 +238,12 @@ impl Worker {
                     send(self.tile(generation, key));
                 }
             }
-            Request::Search { generation, fts } => send(self.search(generation, &fts)),
+            Request::Search {
+                generation,
+                fts,
+                exact,
+                centre,
+            } => send(self.search(generation, &fts, &exact, centre)),
             Request::Nearby { generation, at } => send(self.nearby(generation, at)),
         }
     }
@@ -321,14 +329,14 @@ impl Worker {
     }
 
     /// Search every open pack that has the search tables.
-    pub fn search(&mut self, generation: u64, fts: &str) -> Response {
+    pub fn search(&mut self, generation: u64, fts: &str, exact: &str, centre: LatLon) -> Response {
         let (mut hits, mut searched, mut failed) = (Vec::new(), Vec::new(), Vec::new());
         for (index, pack) in self.packs.iter().enumerate() {
             let Some(pack) = pack else { continue };
             if pack.capabilities().search.is_err() {
                 continue;
             }
-            match pack.search(fts) {
+            match pack.search(fts, exact, centre) {
                 Ok(found) => {
                     searched.push(index);
                     hits.extend(found.into_iter().map(|mut h| {

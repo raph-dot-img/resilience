@@ -980,20 +980,41 @@ impl Pack {
 
     /// Places matching `fts` (an FTS5 expression built by
     /// [`resilience_core::maps::search::fts_query`], never user text), at
-    /// most [`search::PER_PACK`], within [`QUERY_BUDGET`]. Empty when the
-    /// file has no verified search tables. Rows with an unknown kind, a
-    /// position outside the world or oversized text are left out.
-    pub fn search(&self, fts: &str) -> Result<Vec<search::Hit>, PackError> {
+    /// most [`search::PER_PACK`], within [`QUERY_BUDGET`], in the order of
+    /// [`search::rank`] for the folded query `exact` seen from `centre`:
+    /// a pack with hundreds of matches returns the ones that count, not
+    /// any 50. Distances here are flat (longitude scaled by the cosine of
+    /// the centre's latitude), which is close enough for an order. Empty
+    /// when the file has no verified search tables. Rows with an unknown
+    /// kind, a position outside the world or oversized text are left out.
+    pub fn search(
+        &self,
+        fts: &str,
+        exact: &str,
+        centre: LatLon,
+    ) -> Result<Vec<search::Hit>, PackError> {
         if self.capabilities.search.is_err() || fts.is_empty() {
             return Ok(Vec::new());
         }
         self.budget.arm(QUERY_BUDGET);
         let limit = i64::try_from(search::PER_PACK).unwrap_or(50);
+        // Microdegrees, as stored.
+        let (lon, lat) = (centre.lon() * 1e6, centre.lat() * 1e6);
+        let cos = centre.lat().to_radians().cos();
+        let reach = search::EXACT_REACH_M / 111_195.0 * 1e6;
         self.places(
             "SELECT p.kind, p.class, p.name, p.fold, p.near, p.lon, p.lat, p.rank \
              FROM rs_place_fts JOIN rs_place AS p ON p.id = rs_place_fts.rowid \
-             WHERE rs_place_fts MATCH ?1 LIMIT ?2",
-            rusqlite::params![fts, limit],
+             WHERE rs_place_fts MATCH ?1 \
+             ORDER BY NOT (p.fold = ?3 AND (p.kind = 'settlement' OR \
+                 ((p.lon - ?4) * ?6) * ((p.lon - ?4) * ?6) + (p.lat - ?5) * (p.lat - ?5) \
+                 <= ?7 * ?7)), \
+               CASE p.kind WHEN 'settlement' THEN 0 WHEN 'street' THEN 1 \
+                 WHEN 'poi' THEN 2 ELSE 3 END, \
+               p.rank, \
+               ((p.lon - ?4) * ?6) * ((p.lon - ?4) * ?6) + (p.lat - ?5) * (p.lat - ?5) \
+             LIMIT ?2",
+            rusqlite::params![fts, limit, exact, lon, lat, cos, reach],
         )
     }
 

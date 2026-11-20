@@ -627,6 +627,8 @@ impl MapApp {
         self.outbox.push(Request::Search {
             generation: self.search_generation,
             fts,
+            exact: search::search_fold(&self.find.input),
+            centre: self.view.center(),
         });
     }
 

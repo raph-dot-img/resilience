@@ -165,16 +165,30 @@ pub struct Hit {
     pub rank: i64,
 }
 
+/// An exact name puts a street, a point of interest or a natural feature
+/// first only this close to the view's centre. A town is found by its
+/// name anywhere, but "Pharmacie" 60 km away is not what someone typing
+/// "pharmacie" wants before "Pharmacie du Centre" 2 km away.
+pub const EXACT_REACH_M: f64 = 10_000.0;
+
+/// Ranking rule 1: `hit` is named exactly `fold` (a [`search_fold`]ed
+/// query) and is a settlement or within [`EXACT_REACH_M`] of `centre`.
+pub fn exact(hit: &Hit, fold: &str, centre: LatLon) -> bool {
+    hit.fold == fold
+        && (hit.kind == Kind::Settlement || distance_m(centre, hit.at) <= EXACT_REACH_M)
+}
+
 /// Merge the rows of every pack and order them (ADR 0016 §4): an exact
-/// match on the folded name first, then by kind, rank and distance from
-/// `centre`; the same place found in two packs once; at most
-/// [`MAX_RESULTS`].
+/// match on the folded name first ([`exact`]), then by kind, rank and
+/// distance from `centre`; the same place found in two packs once; at
+/// most [`MAX_RESULTS`]. Each pack returns its rows in this order
+/// already, so its first [`PER_PACK`] are the ones that count.
 pub fn rank(mut hits: Vec<Hit>, query: &str, centre: LatLon) -> Vec<Hit> {
     let q = search_fold(query);
     hits.sort_by(|a, b| {
-        let exact = |h: &Hit| h.fold != q;
-        exact(a)
-            .cmp(&exact(b))
+        let other = |h: &Hit| !exact(h, &q, centre);
+        other(a)
+            .cmp(&other(b))
             .then(a.kind.cmp(&b.kind))
             .then(a.rank.cmp(&b.rank))
             .then(
@@ -363,7 +377,7 @@ mod tests {
                 hit(Kind::Street, "Rue d'Esch", 1, 49.61, 6.1),
                 hit(Kind::Settlement, "Esch-sur-Sûre", 3, 49.9, 5.9),
                 hit(Kind::Settlement, "Esch-sur-Alzette", 2, 49.5, 5.98),
-                hit(Kind::Poi, "Esch", 5, 50.5, 7.0),
+                hit(Kind::Poi, "Esch", 5, 49.62, 6.12),
             ],
             "esch",
             centre,
@@ -386,6 +400,36 @@ mod tests {
         b.at = LatLon::new(49.6005, 6.1).expect("b");
         a.pack = 0;
         assert_eq!(rank(vec![a, b], "test", centre).len(), 1);
+    }
+
+    #[test]
+    fn an_exact_name_far_away_counts_only_for_a_town() {
+        // At Quimper: "Pharmacie" 60 km away, "Pharmacie du Centre" 2 km
+        // away, a town named "Pharmacie" 100 km away, a "Pharmacie" 5 km
+        // away.
+        let c = LatLon::new(48.0, -4.1).expect("c");
+        let mut far = hit(Kind::Poi, "Pharmacie", 0, 48.54, -4.1);
+        far.class = "pharmacy".into();
+        let got = rank(
+            vec![
+                far,
+                hit(Kind::Poi, "Pharmacie du Centre", 0, 48.018, -4.1),
+                hit(Kind::Settlement, "Pharmacie", 9, 48.9, -4.1),
+                hit(Kind::Poi, "Pharmacie", 0, 48.045, -4.1),
+            ],
+            "pharmacie",
+            c,
+        );
+        let at: Vec<(&str, f64)> = got.iter().map(|h| (h.name.as_str(), h.at.lat())).collect();
+        assert_eq!(
+            at,
+            [
+                ("Pharmacie", 48.9),
+                ("Pharmacie", 48.045),
+                ("Pharmacie du Centre", 48.018),
+                ("Pharmacie", 48.54)
+            ]
+        );
     }
 
     #[test]
