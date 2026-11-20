@@ -237,12 +237,12 @@ on Phase 6 (mesh, ADR 0021; Reticulum announces, ADR 0018), resource packs
 Independent architecture and security reviews, `cargo deny`, license audit,
 SBOM, physical hardware tests, release notes.
 
-## Phase 11 — Offline assistant (local AI) ⬜ (requested 2026-11-19)
+## Phase 11 — Offline assistant (local AI) ⬜ (requested 2026-11-19; release 0.7.0, owner 2026-11-20)
 A local language model that answers questions from the offline content
 already on the computer: the Resilience handbook, the system
 documentation and the installed resource packs (Wikipedia, WikiMed,
 Wikivoyage, iFixit...), without any network. Order with the other phases
-to be decided by the owner; maps (0.6.0) come first.
+decided by the owner on 2026-11-20: release 0.7.0, after maps (0.6.0).
 
 - **An ADR comes first.** It settles the points below; THREAT_MODEL.md
   gets a section on a model running on the machine.
