@@ -657,14 +657,16 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
   OpenPGP key may ask the passphrase a third time on a slow machine
   (gpg-agent max-cache-ttl 0 expires the creation's cache nonce before
   the self-signature; the tool says so, vm-crypto answers it).
-- Mesh network (ADR 0021): IBSS + BATMAN-adv tested in VMs only (wired
-  vlans and mac80211_hwsim), never on real Wi-Fi cards; open by design;
+- Mesh network (ADR 0021): IBSS + BATMAN-adv tested in VMs (wired
+  vlans and mac80211_hwsim) and once over the air between two laptops
+  (owner, 2026-11-20; cards not recorded, one hop only); open by design;
   the card cannot join ordinary Wi-Fi while it is on; not remembered across
   reboots (unless `autoStart`); the TUI blocks while `set-mesh` runs (a few
   seconds).
-- Local messaging: on in standard, off in minimal; two machines tested, in
-  VMs only (with the minimal profile plus the option; the standard live
-  ISO boots with it running, ~+45 MiB RAM, but has not exchanged messages);
+- Local messaging: on in standard, off in minimal; two machines tested in
+  VMs (minimal profile plus the option) and two real laptops on 0.5.0
+  (owner, 2026-11-20: cable, hotspot, mesh; files and store-and-forward
+  not tried on hardware);
   store-and-forward needs a third computer that is on (or the
   recipient's machine on while its account is logged out); stored
   messages never become "delivered" unless a direct attempt also
@@ -679,13 +681,16 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
   stick); the world overview has no elevation points and draws disputed
   borders like any other; too many point-of-interest names at city scales
   (style question open); osmium tags-filter needs ~2 GB RAM to build a pack.
-- Physical hardware: the live ISO has booted once on a ThinkPad L15 Gen 1
-  (owner, 2026-11-16); nothing else has been tested outside QEMU.
+- Physical hardware: the live ISO booted on a ThinkPad L15 Gen 1 (owner,
+  2026-11-16); release 0.5.0 on a ThinkPad L15 + ThinkPad Yoga 11e (owner,
+  2026-11-20: cable, sharing + a pack, hotspot, mesh, messages, no errors;
+  docs/TESTING.md "Physical hardware: two laptops"). Nothing else outside QEMU.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Current: release 0.5.0 (Phase 9 done), then maps
-(Phase 5, slices 10-13) for 0.6.0 (owner, 2026-11-19). Requested
+See ROADMAP.md. Current: maps (Phase 5, slices 10-13) for 0.6.0
+(owner, 2026-11-19); 0.5.0 is released and validated on two laptops
+(2026-11-20). Requested
 2026-11-19: Phase 11, offline assistant (local model via Ollama or
 llama.cpp, models as hash-pinned packs, answers grounded in the
 libraries and handbook with sources); ADR first; not started.
