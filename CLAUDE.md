@@ -666,8 +666,9 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
   on any console resets it to the system layout, and the TUI reloads its
   user's layout only at session start (ADR 0017).
 - Maps: search, nearby and go-to exist on `feat/maps-search` (0.6.0);
-  search does not fold letters SQLite's unicode61 keeps (Ł, Ø, Đ: "lodz"
-  does not find "Łódź"; ADR 0016 open point); two regional packs in the
+  the search index is over the folded name since 2026-11-20 ("lodz" finds
+  "Łódź"): packs built before have no search until rebuilt, which
+  includes the two catalog packs on the mirror (rebuild them before 0.6.0); two regional packs in the
   catalog (Luxembourg, Bretagne: nix/packs/maps.nix, hosted on the owner's
   mirror under packs/maps/; others are built with `nix build
   .#mapPacks.ID` and opened from a stick); the world overview draws

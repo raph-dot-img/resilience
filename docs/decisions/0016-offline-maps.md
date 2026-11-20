@@ -61,7 +61,7 @@ rs_coverage         rings of the region covered, i32 microdegrees, little-endian
 rs_place            id, kind (settlement|street|poi|natural), class, name, fold
                     (name folded for comparison), near (nearest settlement), lon, lat,
                     rank, bbox
-rs_place_fts        FTS5 over rs_place.name (external content, unicode61
+rs_place_fts        FTS5 over rs_place.fold (external content, unicode61
                     remove_diacritics 2, prefix 2 3)
 rs_poi_rtree        rtree_i32 (microdegrees) over POIs and peaks
 ```
@@ -837,16 +837,15 @@ Decided while adding spot heights (slice 12, 2026-11-19):
 
 Open (found 2026-11-19, to settle before the maps review):
 
-- **Letters `unicode61` does not fold**: the FTS index of `rs_place_fts`
-  is built on the raw name with `remove_diacritics 2`, which removes
-  combining accents but does not turn `Ł` into `l`, `Ø` into `o` or `Đ`
-  into `d`. Typing "lodz" therefore does not find "Łódź" (the query side
-  folds it to `lodz`, the index has `łódź`). A fix changes the profile:
-  index `rs_place.fold` (which the builder already writes with the
-  display table) instead of `name`; that is a new FTS definition, so
-  packs built before it would lose search until rebuilt, unless the
-  reader accepts both definitions. To decide with slice 13, when the
-  first catalog packs are built.
+- **Letters `unicode61` does not fold** (settled 2026-11-20): the FTS
+  index was built on the raw name with `remove_diacritics 2`, which
+  removes combining accents but does not turn `Ł` into `l`, `Ø` into `o`
+  or `Đ` into `d`, so "lodz" did not find "Łódź". `rs_place_fts` now
+  indexes `rs_place.fold` (folded by the builder with the same function
+  as the query). Search was never released before this change, so the
+  reader accepts only the new definition: packs built before it open
+  with their maps but without search until rebuilt (the two catalog
+  packs are rebuilt for 0.6.0).
 
 Decided by the project owner on 2026-11-19 (maps resumed for 0.6.0):
 

@@ -1063,6 +1063,45 @@ fn search_finds_places_through_the_hardened_connection() {
 }
 
 #[test]
+fn search_finds_letters_that_unicode61_keeps_from_plain_letters() {
+    use resilience_core::maps::search::{fts_query, search_fold, tokens};
+    let (_dir, r) = open_altered("lodz", |c| {
+        for (id, name) in [
+            (80, "Łódź"),
+            (81, "Øresund"),
+            (82, "Đakovo"),
+            (83, "Ærøskøbing"),
+        ] {
+            c.execute(
+                "INSERT INTO rs_place VALUES (?1, 'settlement', 'town', ?2, ?3, NULL, 6130000, 49600000, 1, NULL)",
+                rusqlite::params![id, name, search_fold(name)],
+            )
+            .expect("place");
+        }
+        c.execute_batch(
+            "INSERT INTO rs_place_fts (rowid, fold) SELECT id, fold FROM rs_place WHERE id >= 80;",
+        )
+        .expect("index");
+    });
+    let pack = r.expect("opens");
+    let here = LatLon::new(49.6, 6.13).expect("here");
+    for (typed, want) in [
+        ("lodz", "Łódź"),
+        ("ŁÓDŹ", "Łódź"),
+        ("oresund", "Øresund"),
+        ("dakov", "Đakovo"),
+        ("aeroskobing", "Ærøskøbing"),
+    ] {
+        let fts = fts_query(&tokens(typed)).expect("query");
+        let got = pack
+            .search(&fts, &search_fold(typed), here)
+            .expect("search");
+        let names: Vec<&str> = got.iter().map(|h| h.name.as_str()).collect();
+        assert_eq!(names, [want], "{typed}");
+    }
+}
+
+#[test]
 fn search_returns_the_rows_that_count_from_a_pack_with_many_matches() {
     use resilience_core::maps::search::{Kind, PER_PACK, fts_query, tokens};
     // 200 pharmacies named "Pharmacie" 20 to 40 km north, then one named
@@ -1083,7 +1122,7 @@ fn search_returns_the_rows_that_count_from_a_pack_with_many_matches() {
             "INSERT INTO rs_place VALUES (90, 'poi', 'pharmacy', 'Pharmacie', 'pharmacie', NULL, 6130000, 49627000, 0, NULL);
              INSERT INTO rs_place VALUES (91, 'poi', 'pharmacy', 'Pharmacie du Port', 'pharmacie du port', NULL, 6130000, 49591000, 0, NULL);
              INSERT INTO rs_place VALUES (92, 'settlement', 'village', 'Pharmacie-sur-Mer', 'pharmacie sur mer', NULL, 6590000, 50100000, 9, NULL);
-             INSERT INTO rs_place_fts (rowid, name) SELECT id, name FROM rs_place WHERE id >= 90;",
+             INSERT INTO rs_place_fts (rowid, fold) SELECT id, fold FROM rs_place WHERE id >= 90;",
         )
         .expect("near");
     });

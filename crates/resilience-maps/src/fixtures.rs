@@ -174,7 +174,7 @@ pub fn write_rs_tables(c: &Connection, statements: &[&str]) {
         "INSERT INTO rs_place VALUES (1, 'settlement', 'town', 'Testville', 'testville', NULL, 6131900, 49611600, 1, NULL);
          INSERT INTO rs_place VALUES (2, 'poi', 'pharmacy', 'Pharmacie du Test', 'pharmacie du test', 'Testville', 6132000, 49611000, 1, NULL);
          INSERT INTO rs_place VALUES (3, 'street', 'residential', 'Rue de l''Essai', 'rue de l''essai', 'Testville', 6131000, 49612000, 1, NULL);
-         INSERT INTO rs_place_fts (rowid, name) SELECT id, name FROM rs_place;
+         INSERT INTO rs_place_fts (rowid, fold) SELECT id, fold FROM rs_place;
          INSERT INTO rs_poi_rtree VALUES (2, 6132000, 6132000, 49611000, 49611000);",
     )
     .expect("places");
@@ -555,7 +555,7 @@ impl PackSpec {
                 .expect("rs_place row");
             }
             c.execute_batch(
-                "INSERT INTO rs_place_fts (rowid, name) SELECT id, name FROM rs_place;
+                "INSERT INTO rs_place_fts (rowid, fold) SELECT id, fold FROM rs_place;
                  INSERT INTO rs_poi_rtree (id, min_lon, max_lon, min_lat, max_lat)
                    SELECT id, lon, lon, lat, lat FROM rs_place WHERE kind IN ('poi', 'natural');",
             )

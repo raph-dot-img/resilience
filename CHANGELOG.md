@@ -19,6 +19,9 @@ Git tags: `vX.Y.Z` on the commit of each release.
   "Pharmacie" 60 km away before "Pharmacie du Centre" 2 km away); a town
   with that name still comes first wherever it is. Each map pack returns
   its matches nearest first, so the nearest are never left out.
+- Map search finds names with letters such as Ł, Ø, Đ or Æ from plain
+  letters ("lodz" finds "Łódź"): map packs index the folded name. Packs
+  built before this change open without search until rebuilt.
 
 ## [0.5.0] — 2026-11-19 — Community network
 
