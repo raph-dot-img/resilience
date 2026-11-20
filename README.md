@@ -16,28 +16,31 @@ communication, security tools — during a long or complete loss of Internet
 connectivity. It boots straight into a keyboard-driven text interface that
 works at 80×24, without colour, and on modest hardware.
 
-```
-╔══════════════════════════════════════════════════════════════════════════════╗
-║█▀█ █▀▀ █▀ █ █   █ █▀▀ █▄ █ █▀▀ █▀▀                                   12:49:23║
-║█▀▄ ██▄ ▄█ █ █▄▄ █ ██▄ █ ▀█ █▄▄ ██▄                            STANDARD v0.4.0║
-║OS :: AUTONOMOUS INFORMATION SYSTEM                         MODE: ULTRA-STABLE║
-╚══════════════════════════════════════════════════════════════════════════════╝
-┌ STATUS ────────────────────────────┐┌ MAIN MENU ─────────────────────────────┐
-│SYSTEM  [OK] OPERATIONAL            ││> [1] KNOWLEDGE & DOCUMENTATION         │
-│MODE    [--] ULTRA-STABLE           ││  [2] NETWORKING & MESH                 │
-│NETWORK [--] OFFLINE                ││  [3] PRODUCTIVITY                      │
-│POWER   [OK] BAT 71% DISCHARGING    ││  [4] ENTERTAINMENT                     │
-│STORAGE [OK] 7.5 GiB FREE           ││  [5] SYSTEM MANAGEMENT                 │
-```
+![The main menu on the Linux console: a status panel on the left (system, mode, network, power, storage, memory) and eight menu entries on the right](docs/images/01-main-menu.png)
 
-> **Status: early prototype (v0.4.0).** It boots and is usable in a
+<table>
+<tr>
+<td><img src="docs/images/04-map-luxembourg-wider.png" alt="The map viewer drawing Luxembourg in coloured block characters: roads, forests, rivers and town names"></td>
+<td><img src="docs/images/03-map-luxembourg.png" alt="The map viewer zoomed in on Luxembourg City at a 2 km scale, with the coordinates of the crosshair at the bottom"></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/images/05-map-search.png" alt="Map search for 'pharmacie': fifty pharmacies listed nearest first with their distance and direction"></td>
+</tr>
+</table>
+
+<sub>Real screens of the standard edition in QEMU (1024×768, the system's
+console font and its 8 colours), taken with `scripts/update-screenshots.sh`
+on 2026-11-20 from the development branch: map search and the Luxembourg
+pack come with 0.6.0, not yet released.</sub>
+
+> **Status: early prototype (v0.5.0).** It boots and is usable in a
 > virtual machine (x86_64). It has booted once on physical hardware (a ThinkPad
 > L15 Gen 1) and has otherwise run only in virtual machines. It runs as a live
 > system and has a text installer (whole disk, optional encryption) and
 > signed offline updates from a USB stick, both tested in virtual machines
 > only. Maps cover the world overview and
-> packs you build; local messaging and the mesh have been tested between
-> virtual machines only; radio tools do not exist yet.
+> packs you build; local messaging, the mesh and the community network
+> have been tested between virtual machines only; radio tools do not exist yet.
 > See [ROADMAP.md](ROADMAP.md) and [docs/TESTING.md](docs/TESTING.md) for
 > exactly what works.
 

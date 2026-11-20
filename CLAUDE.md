@@ -392,6 +392,10 @@ it concurrently with VM tests.
   with `boot.kernelParams = [ "video=1366x768" ]` and `-vga std` gives a
   170x48 console. QEMU's screendump of a 1366-wide framebuffer is skewed
   (1360-pixel PNG): re-stride the pixels to 1366 to look at it.
+- README screenshots: `scripts/update-screenshots.sh` (VM
+  `tests/screenshots.nix`, exposed as `legacyPackages.screenshots`, not a
+  check; one VM) writes `docs/images/*.png`. Look at them before committing;
+  retake them at each release.
 - World overview: `nix build .#resilience-world-map`, then
   `RESILIENCE_WORLD_PACK=$(echo result/share/resilience/packs/*.mbtiles) cargo test -p
   resilience-maps --test world -- --ignored --nocapture` prints real screens (text only:
