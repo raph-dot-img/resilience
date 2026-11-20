@@ -6,6 +6,13 @@ Git tags: `vX.Y.Z` on the commit of each release.
 
 ## [Unreleased]
 
+### Fixed
+- The interface could stop (and restart, "exit code 1") when keys were
+  typed at the very moment a program such as the map viewer ended: taking
+  the screen back asked the terminal for the cursor position, and the
+  keys mixed with its answer. The screen is now cleared without asking
+  anything. VM test `vm-maps` types at once after quitting the viewer.
+
 ## [0.5.0] — 2026-11-19 — Community network
 
 Computers nearby can share their library, resource packs and maps, a

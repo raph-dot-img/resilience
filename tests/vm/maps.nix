@@ -166,13 +166,24 @@
         machine.send_chars("zurich\n")
         wait_tty("1", r"Zürich \(city\)", timeout=30)
         machine.send_key("esc")
-        wait_tty("1", "The crosshair is on")
         machine.send_chars("q")
-        # Back in the interface before the next keys: keys typed within
-        # milliseconds of quitting the viewer can stop the interface (known
-        # bug, CLAUDE.md §15; found here on 2026-11-20).
-        wait_tty("1", "Type to search")
         home()
+
+    with subtest("keys typed at once after quitting the viewer keep the interface"):
+        # Regression (2026-11-20): taking the screen back asked the terminal
+        # for the cursor position; Esc typed at that moment mixed with the
+        # answer and the interface stopped (exit code 1).
+        for _ in range(5):
+            machine.send_chars("/atlas")
+            wait_tty("1", "Map")
+            machine.send_key("ret")
+            wait_tty("1", "Natural Earth")
+            machine.send_key("esc")
+            machine.send_chars("q")
+            for _ in range(4):
+                machine.send_key("esc")
+            wait_tty("1", "MAIN MENU", timeout=15)
+        machine.fail("grep -F 'interface failed' /home/alice/.local/state/resilience/tui.log")
 
     with subtest("found by searching, and the system is healthy"):
         machine.send_chars("/atlas")
