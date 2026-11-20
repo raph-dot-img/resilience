@@ -48,6 +48,7 @@
             if _time.monotonic() > deadline:
                 print(f"--- tty{tty} contents ---")
                 print(text)
+                print(machine.execute("cat /home/alice/.local/state/resilience/tui.log")[1][-3000:])
                 raise Exception(f"timed out waiting for {regexp!r} on tty{tty}")
             _time.sleep(0.5)
 
@@ -165,7 +166,12 @@
         machine.send_chars("zurich\n")
         wait_tty("1", r"Zürich \(city\)", timeout=30)
         machine.send_key("esc")
+        wait_tty("1", "The crosshair is on")
         machine.send_chars("q")
+        # Back in the interface before the next keys: keys typed within
+        # milliseconds of quitting the viewer can stop the interface (known
+        # bug, CLAUDE.md §15; found here on 2026-11-20).
+        wait_tty("1", "Type to search")
         home()
 
     with subtest("found by searching, and the system is healthy"):
