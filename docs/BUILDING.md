@@ -102,17 +102,16 @@ filled by hand (older releases), `--resign DIR` rewrites and signs the sums.
 `--index VERSION OUTDIR` writes only `README.txt`, `LATEST` and the public
 key, for a tree rebuilt from existing releases.
 
-Uploading (the owner's server, through Tor): a key restricted with
-`rrsync` to the mirror folder (`ssh yoga-mirror-claude`), then
-`rsync -rt --partial --ignore-existing --delay-updates --chmod=D755,F644
-OUTDIR/releases/ yoga-mirror-claude:releases/`, and the top files last.
-Published files are never changed: `--ignore-existing` keeps it so.
+Publishing (since 2026-11-20): the mirror is served from the development
+machine itself (`~/Mirror`, nginx in Docker behind an FRP tunnel; files in
+`~/Mirror/files/resilience/`). Copy the release into the hidden
+`.staging/VERSION/` (nginx does not serve dotfiles), run `sha256sum -c
+SHA256SUMS` and `minisign -Vm SHA256SUMS -p resilience-release.minisign.pub`
+there, `chmod 644` every file and `755` the folder, then one `mv -n` into
+`releases/`; the top files (`LATEST` last) afterwards. Published files are
+never changed. Check from outside that **every file answers HTTP 200**
+(a file left 0600 gets 403 from nginx).
 
-On a connection that drops (as for 0.2.0 and 0.4.0, 2026-11-18), the
-release went first into a hidden `.staging/VERSION/` (nginx does not serve
-dotfiles) with `rsync -rt --append-verify --chmod=D700,F644`, retried until
-complete, then on the server `sha256sum -c SHA256SUMS`, `chmod 644` on every
-file, `chmod 755` on the folder and one `mv -n` into `releases/`. Check
-from outside that **every file answers HTTP 200**: a file whose transfer
-was resumed can keep rsync's temporary mode 0600 despite `--chmod`, and
-nginx then answers 403 (it happened to both ISOs; fixed with `chmod 644`).
+Until 0.4.0 the upload went to the owner's server through Tor (rsync over
+SSH with an `rrsync`-restricted key, resumed transfers into `.staging/`);
+that path is retired.

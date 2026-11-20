@@ -307,7 +307,7 @@ new profile. Never `nmcli --ask` (wrong password = inescapable prompt loop).
 ## 4. Technology choices
 
 - NixOS 26.05 stable, flakes, single input (nixpkgs). No flake-utils/crane: fewer inputs.
-- Rust stable (host: 1.98 via rustup; Nix build: nixpkgs rustc). ratatui 0.30 (crossterm
+- Rust stable (host: 1.100 via rustup; Nix build: nixpkgs rustc). ratatui 0.30 (crossterm
   backend, re-exported as `ratatui::crossterm` — do not add a separate crossterm dep),
   serde + toml, tracing, thiserror, libc. **No tokio**: threads + timeouts suffice.
 - Only the 8 basic ANSI colours (Linux console has no 256/RGB). Non-ASCII
@@ -411,9 +411,18 @@ it concurrently with VM tests.
 
 ## 7. Development environment constraints (HARD RULES)
 
-Host: Fedora, Ryzen 5 PRO 4650U (6c/12t), 12 GB RAM, ordinary user.
-Nix 2.35 multi-user daemon (user is NOT trusted; cache.nixos.org works;
-`kvm` and `nixos-test` system features available; max-jobs 2, cores 2).
+Host (since 2026-11-20, a machine dedicated to development): Debian 13,
+Intel i3-6100 (2c/4t), 11 GiB RAM, user `claude` (groups kvm, docker),
+lingering on. Nix 2.36 multi-user daemon (user IS trusted; cache.nixos.org
+works; `kvm` and `nixos-test` system features; max-jobs 2, cores 2). Rust
+via rustup in ~/.cargo; age and gnupg in the user's nix profile; qemu,
+minisign and jq from Debian. `/bin/sh` is dash (tests must not rely on
+bash behaviour). The launcher may pass another user's
+`XDG_RUNTIME_DIR`/`DBUS_SESSION_BUS_ADDRESS`: ~/.bashrc resets them to
+/run/user/1000; check before `systemd-run --user` or a VM test. The
+previous host (Fedora, Ryzen 5 PRO 4650U, 12 GB) is no longer used.
+`~/Mirror` is the public mirror itself (nginx in Docker + FRP tunnel,
+see its README): publishing = copying into `~/Mirror/files/resilience/`.
 
 - Never use sudo/su/doas/pkexec, never modify the host system, its bootloader,
   firewall, networking, disks or anything outside this repo (and user-local
@@ -521,8 +530,9 @@ tag `vV` (the owner signs in their own terminal; secret keys under
 `~/.resilience-keys`, later a VeraCrypt container), merge into `main`, tag
 and push only when the owner says so; upload `releases/V/` to the mirror
 first, `LATEST` last (docs/BUILDING.md). Mirrors: GitHub and
-https://mirror.canevet.eu/files/resilience/ (rsync over SSH through Tor,
-restricted key `yoga-mirror-claude`, hidden `.staging/` then one rename).
+https://mirror.canevet.eu/files/resilience/ = local `~/Mirror/files/resilience/`
+on the development machine (hidden `.staging/` then one rename; the
+former rsync over Tor is retired, 2026-11-20).
 Systems installed from 0.3.0 have no release key: reinstall once.
 Offline updates were tested end to end with the real key in QEMU
 (install 0.3.0-with-key, update to 0.3.1, roll back; TESTING.md).
