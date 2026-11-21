@@ -117,6 +117,19 @@ pub fn status_bar(p: &Palette) -> container::Style {
     }
 }
 
+pub fn card(p: &Palette) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(p.surface)),
+        text_color: Some(p.text),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 16.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
 pub fn dim_text(t: &Theme) -> text::Style {
     text::Style {
         color: Some(pal(t).dim),

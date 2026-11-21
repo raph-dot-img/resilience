@@ -96,13 +96,21 @@ flake.nix ── nixosModules.default = nix/modules ── imported by every sys
    │                            on the card) and resilience-hotspot-fwd in FORWARD (DROP in and out,
    │                            never flushed by the firewall's own scripts)); dnsmasq-shared.d:
    │                            no-resolv, home.arpa only; mesh and hotspot exclude each other
+   │            gui.nix         GUI edition (ADR 0026): resilience.gui.{enable,package} (profile
+   │                            standard-gui = standard + gui.enable, edition "standard-gui") ->
+   │                            /etc/resilience/gui-session: cage (no Xwayland, pixman, -d -s)
+   │                            + resilience-gui; fonts dir (InterVariable + 3 DejaVu), foot via
+   │                            a wrapper with its own ini (RESILIENCE_TERMINAL); XKB layout from
+   │                            `resilience-gui xkb`; resilience-session runs it on tty1 only,
+   │                            back to the TUI after 3 quick failures
    │            boot.nix power.nix applications/{productivity,system-tools,networking,entertainment}.nix
-   ├─ nixosConfigurations: live-standard, live-minimal (ISO), dev-vm (9p VM)
-   ├─ packages: resilience, resilience-session, resilience-handbook, resilience-world-map, iso, iso-minimal, vm
+   ├─ nixosConfigurations: live-standard, live-standard-gui, live-minimal (ISO), dev-vm (9p VM)
+   ├─ packages: resilience (workspace minus the GUI), resilience-gui, iso-gui, resilience-session, resilience-handbook, resilience-world-map, iso, iso-minimal, vm
    ├─ legacyPackages.mapPacks.{luxembourg,testland}: map packs (nix/maps, build machines only)
    └─ checks: resilience (cargo test), vm-boot-offline, vm-modes, vm-admin,
               vm-backup, vm-wifi, vm-generations, vm-packs, vm-documents, vm-crypto, vm-install,
               vm-install-uefi, vm-maps, vm-comms, vm-mesh, vm-share, vm-hotspot, vm-cable, vm-update, vm-licence,
+              vm-gui (OCR on the GUI, foot round trip, Ctrl+Alt+F2, fallback to the TUI, idle RSS),
               security-invariants, eval-live-iso, map-pack-testland, map-pack-reproducible, map-world,
               comms-messages (the messaging program with real Reticulum + LXMF, no VM)
 
@@ -155,8 +163,16 @@ crates/resilience-shell library (ADR 0026): the front-end independent interface 
                         (*_ui.rs, library.rs), help.rs, input.rs (KeyEvent, crossterm
                         names), list.rs (ListState: selection + offset), fmt.rs (local time).
                         No ratatui/crossterm here: shared by the TUI and the GUI
-crates/resilience-tui   binary `resilience`: main.rs (re-exports shell's app/help as
-                        crate::app/help), keys.rs (crossterm -> shell keys), ui.rs
+crates/resilience-gui   binary `resilience-gui` (ADR 0026, iced 0.14, tiny-skia + wayland +
+                        smol only): main.rs (Gui: native Home/Category/Search/Settings,
+                        grid arrows, click = App::choose_row), textpanel.rs (other screens:
+                        TUI ui::draw_panel into a TestBackend buffer -> styled mono text),
+                        run.rs (Effect::Run -> 0600 JSON in $XDG_RUNTIME_DIR -> foot ->
+                        `resilience-gui run FILE` -> resilience_tui::run_foreground), style.rs
+                        (palette, iced key -> shell key). `resilience-gui xkb` for the session.
+                        Preview without a display: scripts/gui-preview.sh OUT.png [WxH] [KEYS]
+crates/resilience-tui   library + binary `resilience`: lib.rs (re-exports shell's app/help as
+                        crate::app/help; run_foreground), keys.rs (crossterm -> shell keys), ui.rs
                         (rendering; theme from app.theme: ThemeName), theme.rs, tests.rs
                         (flow + screen tests; flow tests move to the shell later)
 nix/packages/resilience-session  login shell: runs TUI, restarts after crash, refuses -c

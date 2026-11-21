@@ -35,7 +35,7 @@ sleep 6
 shift; [ $# -gt 0 ] && shift
 for k in "$@"; do
   # shellcheck disable=SC2086
-  WAYLAND_DISPLAY=$sock "$wtype/bin/wtype" $k
+  WAYLAND_DISPLAY=$sock "$wtype/bin/wtype" -d 60 $k
   sleep 1
 done
 WAYLAND_DISPLAY=$sock "$grim/bin/grim" "$out" || { cat "$run/cage.log"; }

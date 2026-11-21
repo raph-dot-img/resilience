@@ -4,6 +4,8 @@
 //! resilience-gui              the interface (inside cage, full screen)
 //! resilience-gui run FILE     run one program request in this terminal
 //!                             (started by the interface inside foot)
+//! resilience-gui xkb         print "LAYOUT [VARIANT]" (XKB) for this
+//!                             account's keyboard layout (session script)
 //! resilience-gui --version
 //! ```
 //!
@@ -22,6 +24,7 @@ use std::time::Duration;
 use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Fill, Length, Subscription, Task, keyboard, window};
 use resilience_core::catalog::Category;
+use resilience_core::config::ThemeName;
 use resilience_shell::app::{App, Effect, Entry, SearchHit, Startup, View, category_description};
 use resilience_shell::input::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -38,6 +41,10 @@ fn main() -> ExitCode {
             }
         },
         Some("run") if args.len() == 2 => run::run_file(&args[1]),
+        Some("xkb") => {
+            println!("{}", xkb_layout());
+            ExitCode::SUCCESS
+        }
         Some("-V" | "--version") => {
             println!("resilience-gui {}", resilience_core::VERSION);
             ExitCode::SUCCESS
@@ -46,6 +53,18 @@ fn main() -> ExitCode {
             eprintln!("Usage: resilience-gui [--version | run FILE]");
             ExitCode::from(2)
         }
+    }
+}
+
+/// The account's layout (Settings, else the system's) as XKB names; US
+/// when it has no XKB equivalent we know.
+fn xkb_layout() -> String {
+    let s = Startup::load();
+    let id = s.sys.keyboard.effective(s.settings.keyboard.as_deref());
+    match resilience_core::keyboard::xkb_for(id) {
+        Some((l, "")) => l.to_string(),
+        Some((l, v)) => format!("{l} {v}"),
+        None => "us".into(),
     }
 }
 
@@ -156,7 +175,10 @@ impl Gui {
             && (self.app.modal.is_some()
                 || !matches!(
                     self.app.view(),
-                    View::Home { .. } | View::Category { .. } | View::Search { .. }
+                    View::Home { .. }
+                        | View::Category { .. }
+                        | View::Search { .. }
+                        | View::Settings { .. }
                 ))
     }
 
@@ -232,6 +254,7 @@ impl Gui {
                 View::Home { .. } => self.home_view(&p),
                 View::Category { cat, .. } => self.category_view(*cat, &p),
                 View::Search { query, hits, .. } => self.search_view(query, hits, &p),
+                View::Settings { .. } => self.settings_view(&p),
                 _ => self.text_view(&p),
             }
         };
@@ -283,6 +306,7 @@ impl Gui {
             View::Home { .. } => format!("Hello, {}", self.app.who.user),
             View::Category { cat, .. } => section_name(*cat),
             View::Search { .. } => "Search".into(),
+            View::Settings { .. } => "Settings".into(),
             _ => String::new(),
         }
     }
@@ -350,6 +374,92 @@ impl Gui {
             .collect();
         let _ = p;
         scrollable(column(rows).spacing(6).padding([8, 28]))
+            .height(Fill)
+            .into()
+    }
+
+    /// Rows as in the shell: the themes, then the keyboard layouts.
+    fn settings_view(&self, p: &Palette) -> Element<'_, Message> {
+        let p = *p;
+        let sel = self.app.selected_row();
+        let themes = ThemeName::ALL;
+        let swatches: Vec<Element<'_, Message>> = themes
+            .iter()
+            .enumerate()
+            .map(|(i, th)| {
+                let current = *th == self.app.settings.theme;
+                let dot = Palette::of(*th).accent;
+                let name = match th {
+                    ThemeName::Green => "Green",
+                    ThemeName::Amber => "Amber",
+                    ThemeName::Cyan => "Blue",
+                    ThemeName::Mono => "Grey",
+                };
+                let label = if current {
+                    format!("{name}  \u{2713}")
+                } else {
+                    name.to_string()
+                };
+                button(
+                    row![text("\u{25cf}").size(22).color(dot), text(label).size(16)]
+                        .spacing(12)
+                        .align_y(iced::Center),
+                )
+                .on_press(Message::Choose(i))
+                .width(Fill)
+                .padding([14, 18])
+                .style(move |t, st| style::row_button(t, st, sel == Some(i)))
+                .into()
+            })
+            .collect();
+        let kb = &self.app.sys.keyboard;
+        let now = kb.effective(self.app.settings.keyboard.as_deref());
+        let layouts: Vec<Element<'_, Message>> = kb
+            .layouts
+            .iter()
+            .enumerate()
+            .map(|(j, l)| {
+                let i = themes.len() + j;
+                let label = if l.id == now {
+                    format!("{}  \u{2713}", l.label)
+                } else {
+                    l.label.clone()
+                };
+                button(text(label).size(16))
+                    .on_press(Message::Choose(i))
+                    .width(Fill)
+                    .padding([14, 18])
+                    .style(move |t, st| style::row_button(t, st, sel == Some(i)))
+                    .into()
+            })
+            .collect();
+        let mode = self.app.mode();
+        let account = column![
+            text("Your account").size(18).font(style::UI_FONT_BOLD),
+            text(format!("Security mode: {}", mode_name(mode)))
+                .size(15)
+                .color(p.accent),
+            text(mode.description().to_string()).size(14),
+            text(
+                "The security mode comes from your account, not from a setting. \
+                 An administrator can change it (handbook: \u{201c}Security modes\u{201d})."
+            )
+            .size(13)
+            .style(style::dim_text),
+        ]
+        .spacing(8);
+        let heading = |s: &'static str| text(s).size(13).style(style::dim_text);
+        let left = column![heading("COLOUR"), row(swatches).spacing(10)]
+            .push(Space::new().height(12))
+            .push(heading("KEYBOARD LAYOUT"))
+            .push(column(layouts).spacing(6))
+            .spacing(10)
+            .width(Length::FillPortion(3));
+        let right = container(account)
+            .padding(22)
+            .width(Length::FillPortion(2))
+            .style(move |_| style::card(&p));
+        scrollable(row![left, right].spacing(24).padding([8, 28]))
             .height(Fill)
             .into()
     }
@@ -447,6 +557,15 @@ fn centered_note<'a>(s: &str) -> Element<'a, Message> {
     container(text(s.to_string()).size(18).style(style::dim_text))
         .center(Fill)
         .into()
+}
+
+fn mode_name(m: resilience_core::mode::Mode) -> &'static str {
+    use resilience_core::mode::Mode;
+    match m {
+        Mode::UltraStable => "Ultra-Stable",
+        Mode::Stable => "Stable",
+        Mode::Advanced => "Advanced",
+    }
 }
 
 /// "KNOWLEDGE & DOCUMENTATION" -> "Knowledge & documentation".

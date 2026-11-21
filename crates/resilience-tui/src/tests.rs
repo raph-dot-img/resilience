@@ -5003,3 +5003,59 @@ fn community_network_finds_reads_and_shares() {
             })
     );
 }
+
+// Pointer entry points used by the GUI (ADR 0026).
+
+#[test]
+fn choose_row_opens_like_enter() {
+    let mut a = app(Mode::UltraStable, "choose");
+    let cats = a.home_categories();
+    assert!(cats.len() >= 2);
+    assert_eq!(a.choose_row(1), Effect::None);
+    match a.view() {
+        View::Category { cat, .. } => assert_eq!(*cat, cats[1]),
+        _ => panic!("category view"),
+    }
+    assert_eq!(a.selected_row(), Some(0));
+    // A modal blocks pointer choices underneath it.
+    a.go_home();
+    press(&mut a, KeyCode::Char('q'));
+    assert!(a.modal.is_some());
+    assert_eq!(a.choose_row(0), Effect::None);
+    assert!(matches!(a.view(), View::Home { .. }));
+}
+
+#[test]
+fn go_home_and_set_search() {
+    let mut a = app(Mode::UltraStable, "gohome");
+    a.choose_row(0);
+    a.set_search("edit");
+    let View::Search { query, hits, .. } = a.view() else {
+        panic!("search view")
+    };
+    assert_eq!(query, "edit");
+    assert!(!hits.is_empty());
+    let depth = a.stack.len();
+    // Typing more replaces the search, it does not stack another one.
+    a.set_search("editor");
+    assert_eq!(a.stack.len(), depth);
+    a.set_search(&"x".repeat(100));
+    let View::Search { query, .. } = a.view() else {
+        panic!("search view")
+    };
+    assert_eq!(query.chars().count(), 64);
+    a.go_home();
+    assert_eq!(a.stack.len(), 1);
+    assert!(matches!(a.view(), View::Home { .. }));
+}
+
+#[test]
+fn go_home_never_skips_the_licence_notice() {
+    let mut a = licence_app("gohome-licence");
+    assert!(matches!(a.view(), View::Licence { .. }));
+    a.go_home();
+    a.set_search("x");
+    assert!(matches!(a.view(), View::Licence { .. }));
+    assert_eq!(a.choose_row(0), Effect::None);
+    assert!(matches!(a.view(), View::Licence { .. }));
+}
