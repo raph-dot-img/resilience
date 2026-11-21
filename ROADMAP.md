@@ -240,7 +240,12 @@ on Phase 6 (mesh, ADR 0021; Reticulum announces, ADR 0018), resource packs
 Independent architecture and security reviews, `cargo deny`, license audit,
 SBOM, physical hardware tests, release notes.
 
-## Phase 11 — Offline assistant (local AI) ⬜ (requested 2026-11-19; release 0.7.0, owner 2026-11-20)
+## Phase 12 — Graphical edition (GUI) ⬜ (requested 2026-11-21; release 0.7.0, owner 2026-11-21)
+A second edition with a very light, minimalist, intuitive graphical interface:
+cage (Wayland kiosk) + `resilience-gui` (Rust, iced), sharing one state machine
+(`resilience-shell`) with the TUI. The TUI edition stays. See ADR 0026 (slices listed there).
+
+## Phase 11 — Offline assistant (local AI) ⬜ (requested 2026-11-19; release 0.8.0, owner 2026-11-21: after the GUI)
 A local language model that answers questions from the offline content
 already on the computer: the Resilience handbook, the system
 documentation and the installed resource packs (Wikipedia, WikiMed,

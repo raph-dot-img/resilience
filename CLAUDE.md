@@ -9,10 +9,12 @@ are numbered the same.
 
 ## 1. Identity and purpose
 
-**Resilience OS** is an offline-first, low-resource, terminal-only Linux
+**Resilience OS** is an offline-first, low-resource, terminal-first Linux
 distribution for **x86_64 PCs**, built on **NixOS**. It must stay useful — information,
 productivity, local communication, security tools — with no Internet at all.
-Primary interface: a Rust TUI (`resilience`). No X11, Wayland, desktop or WM.
+Primary interface: a Rust TUI (`resilience`). No X11, desktop or WM. From 0.7.0 a
+**GUI edition** is planned (ADR 0026: cage Wayland kiosk + `resilience-gui` in iced, one
+full-screen app, state machine shared with the TUI in `resilience-shell`).
 Editions: **standard** is the main one (the live ISO we build and test);
 **minimal** is kept as a secondary edition.
 
@@ -742,7 +744,8 @@ See ROADMAP.md. Current: 0.6.0 (maps) is published (2026-11-21). Before: 0.5.0 i
 (2026-11-20); maps (Phase 5, slices 10-13; the TUI stop after quitting a
 program, found 2026-11-20, is fixed on `feat/maps-search`) for 0.6.0
 (owner, 2026-11-19). Release
-0.7.0 (owner, 2026-11-20): Phase 11, offline assistant (local model via Ollama or
+0.7.0 (owner, 2026-11-21): GUI edition (ADR 0026 proposed, branch `feat/gui`). Release
+0.8.0: Phase 11, offline assistant (local model via Ollama or
 llama.cpp, models as hash-pinned packs, answers grounded in the
 libraries and handbook with sources); ADR first; not started.
 
@@ -772,6 +775,7 @@ libraries and handbook with sources); ADR first; not started.
 - 0022 Installer: prebuilt generic installed systems (per edition, UEFI/BIOS, plain/LUKS), accounts as local accounts in modes.toml, keyboard in /var/lib/resilience/keyboard (+ initrd secret), `resilience-install` via polkit allow_active on the live ISO only
 - 0023 Offline updates: signed Nix binary cache on a USB stick (release key in nix/release-keys.nix, passed per import, never in nix.conf), helper `apply-update` (auth_admin, newer version of this edition and variant only, switch-to-configuration boot), `check-update` as the user, TUI Recovery → Update from a USB stick
 - 0024 Licence notice: before an account's first use of the TUI, Hippocratic License 2.1 summary + original text, "I certify that I have read" → helper `record-licence SHA256` (allow_active=yes) appends to /var/lib/resilience/licence-acceptances.log (root 0644); `resilience.licence.prompt` off only in VM tests (flake wrapper, mkDefault); live ISO asks at every start
+- 0026 GUI edition (proposed 2026-11-21, 0.7.0): cage kiosk + iced app, shared `resilience-shell`, own polkit agent, `resilience.interface`
 - 0025 Community network (accepted 2026-11-19, implemented, reviewed; 0.5.0): sharing packs/library/folder/pages over HTTP (one read-only nginx, TCP 80, one interface) only via helper `set-share` (auth_admin, not kept across reboots), discovery by Reticulum announces, joining as the user (peer packs hash-checked by the store, pages via a loopback relay + restricted lynx), hotspot via `set-hotspot` (auth_admin, WPA2, no forwarding), expert DNS in the hotspot's dnsmasq (`home.arpa`)
 
 ## 18. How to continue safely
