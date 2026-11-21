@@ -34,9 +34,9 @@ see docs/TESTING.md for what ran on real hardware.
 
 ### Known issues
 - On a ThinkPad Yoga 11e, the installed system does not start (the
-  firmware goes back to its boot menu; Secure Boot suspected, not
-  confirmed). The live system works there, and the installed system
-  starts on an MSI GL73 8SE. Turn Secure Boot off before installing.
+  firmware goes back to its boot menu; Secure Boot is off, the firmware
+  in "Legacy and UEFI" mode; cause not found). The live system works
+  there, and the installed system starts on an MSI GL73 8SE.
 - Started through a Ventoy stick on that Yoga, the ISO's boot menu is
   unreadable; it still starts the live system after 10 s or with Enter.
 
