@@ -16,28 +16,31 @@ communication, security tools — during a long or complete loss of Internet
 connectivity. It boots straight into a keyboard-driven text interface that
 works at 80×24, without colour, and on modest hardware.
 
-```
-╔══════════════════════════════════════════════════════════════════════════════╗
-║█▀█ █▀▀ █▀ █ █   █ █▀▀ █▄ █ █▀▀ █▀▀                                   12:49:23║
-║█▀▄ ██▄ ▄█ █ █▄▄ █ ██▄ █ ▀█ █▄▄ ██▄                            STANDARD v0.4.0║
-║OS :: AUTONOMOUS INFORMATION SYSTEM                         MODE: ULTRA-STABLE║
-╚══════════════════════════════════════════════════════════════════════════════╝
-┌ STATUS ────────────────────────────┐┌ MAIN MENU ─────────────────────────────┐
-│SYSTEM  [OK] OPERATIONAL            ││> [1] KNOWLEDGE & DOCUMENTATION         │
-│MODE    [--] ULTRA-STABLE           ││  [2] NETWORKING & MESH                 │
-│NETWORK [--] OFFLINE                ││  [3] PRODUCTIVITY                      │
-│POWER   [OK] BAT 71% DISCHARGING    ││  [4] ENTERTAINMENT                     │
-│STORAGE [OK] 7.5 GiB FREE           ││  [5] SYSTEM MANAGEMENT                 │
-```
+![The main menu on the Linux console: a status panel on the left (system, mode, network, power, storage, memory) and eight menu entries on the right](docs/images/01-main-menu.png)
 
-> **Status: early prototype (v0.4.0).** It boots and is usable in a
-> virtual machine (x86_64). It has booted once on physical hardware (a ThinkPad
-> L15 Gen 1) and has otherwise run only in virtual machines. It runs as a live
-> system and has a text installer (whole disk, optional encryption) and
-> signed offline updates from a USB stick, both tested in virtual machines
-> only. Maps cover the world overview and
-> packs you build; local messaging and the mesh have been tested between
-> virtual machines only; radio tools do not exist yet.
+<table>
+<tr>
+<td><img src="docs/images/04-map-luxembourg-wider.png" alt="The map viewer drawing Luxembourg in coloured block characters: roads, forests, rivers and town names"></td>
+<td><img src="docs/images/03-map-luxembourg.png" alt="The map viewer zoomed in on Luxembourg City at a 2 km scale, with the coordinates of the crosshair at the bottom"></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/images/05-map-search.png" alt="Map search for 'pharmacie': fifty pharmacies listed nearest first with their distance and direction"></td>
+</tr>
+</table>
+
+<sub>Real screens of the standard edition in QEMU (1024×768, the system's
+console font and its 8 colours), taken with `scripts/update-screenshots.sh`
+on 2026-11-21 for release 0.6.0; the map is the Luxembourg pack of the
+catalog.</sub>
+
+> **Status: early prototype (v0.6.0).** It boots and is usable in a
+> virtual machine (x86_64). On physical hardware, the live ISO booted on a
+> ThinkPad L15 Gen 1, and release 0.5.0 ran on two laptops (a ThinkPad L15
+> and a ThinkPad Yoga 11e: cable, sharing, hotspot, mesh, messages). The
+> text installer (whole disk, optional encryption) and signed offline
+> updates from a USB stick are tested in virtual machines only. Maps:
+> the world overview, two regional packs in the catalog and packs you
+> build, with search; radio tools do not exist yet.
 > See [ROADMAP.md](ROADMAP.md) and [docs/TESTING.md](docs/TESTING.md) for
 > exactly what works.
 
@@ -74,6 +77,9 @@ works at 80×24, without colour, and on modest hardware.
   folder and pages; packs from them are checked against the catalog. An
   administrator can share, or turn the computer into a Wi-Fi hotspot.
   Nothing is shared until an administrator turns it on.
+- Offline maps: a built-in world overview, regional map packs down to the
+  street (Luxembourg and Bretagne in the catalog, others built from
+  OpenStreetMap), search by name, places nearby, go to coordinates.
 
 ## Downloads
 

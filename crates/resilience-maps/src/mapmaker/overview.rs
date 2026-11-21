@@ -10,6 +10,7 @@
 //! | `lakes`                             | `water`, `lake`          | named lakes |
 //! | `rivers_lake_centerlines`           | `water`, `river`         | named rivers|
 //! | `populated_places_simple`           | `places`, `city`/`town`  | all         |
+//! | `geography_regions_elevation_points`| `peaks`, `summit`/`depression`/`saddle` | named |
 //!
 //! Every boundary line of the first file is drawn alike, disputed or not:
 //! the map takes no position.
@@ -19,7 +20,9 @@
 //! zoom from which the style draws the class ([`tags::min_zoom`] for the
 //! whole world). A line or an area that would only appear after
 //! [`MAX_ZOOM`] is left out; a place is kept at [`MAX_ZOOM`] (and is
-//! always in the search rows).
+//! always in the search rows). Elevation points are kept like places: the
+//! 711 of Natural Earth, with their height (`ele`), searchable and listed
+//! as nearby.
 //!
 //! The files are pinned by hash in Nix, so they are not hostile, but they
 //! are parsed with the same care: sizes are bounded, what does not parse
@@ -33,7 +36,9 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::{Map, Value};
 
-use resilience_core::maps::style::{AdminLevel, Class, LandClass, PlaceClass, WaterClass};
+use resilience_core::maps::style::{
+    AdminLevel, Class, LandClass, PeakClass, PlaceClass, WaterClass,
+};
 
 use super::classify::{OutFeature, Tippecanoe, bbox_array};
 use super::geom::Geometry;
@@ -59,17 +64,19 @@ pub enum Kind {
     Lakes,
     Rivers,
     Places,
+    Elevations,
 }
 
 impl Kind {
     /// In output order.
-    pub const ALL: [Kind; 6] = [
+    pub const ALL: [Kind; 7] = [
         Kind::Land,
         Kind::Countries,
         Kind::Regions,
         Kind::Lakes,
         Kind::Rivers,
         Kind::Places,
+        Kind::Elevations,
     ];
 
     /// The command-line option naming the file.
@@ -81,6 +88,7 @@ impl Kind {
             Kind::Lakes => "lakes",
             Kind::Rivers => "rivers",
             Kind::Places => "places",
+            Kind::Elevations => "elevations",
         }
     }
 
@@ -92,9 +100,9 @@ impl Kind {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Stats {
     /// Features read, per kind.
-    pub read: [u64; 6],
+    pub read: [u64; 7],
     /// Features written, per kind.
-    pub written: [u64; 6],
+    pub written: [u64; 7],
     /// No geometry, a geometry of the wrong type, or bad coordinates.
     pub bad_geometry: u64,
     /// Would only appear after [`MAX_ZOOM`].
@@ -174,7 +182,14 @@ fn is_capital(p: &Map<String, Value>) -> bool {
         .is_some_and(|v| v == 1.0)
 }
 
-/// The class of a file's features (places: by population and capital).
+/// An elevation point's height in whole metres, within the accepted range.
+fn elevation(p: &Map<String, Value>) -> Option<i64> {
+    let e = prop(p, "elevation")?.as_f64()?;
+    (e.is_finite() && e >= tags::ELE_RANGE.0 && e <= tags::ELE_RANGE.1).then(|| e.round() as i64)
+}
+
+/// The class of a file's features (places: by population and capital;
+/// elevation points: by Natural Earth's `featurecla`).
 fn class_of(kind: Kind, p: &Map<String, Value>) -> Class {
     match kind {
         Kind::Land => Class::Land(LandClass::Landmass),
@@ -189,6 +204,11 @@ fn class_of(kind: Kind, p: &Map<String, Value>) -> Class {
                 Class::Place(PlaceClass::Town)
             }
         }
+        Kind::Elevations => match prop(p, "featurecla").and_then(Value::as_str) {
+            Some("depression") => Class::Peak(PeakClass::Depression),
+            Some("pass") => Class::Peak(PeakClass::Saddle),
+            _ => Class::Peak(PeakClass::Summit),
+        },
     }
 }
 
@@ -201,7 +221,7 @@ fn shape_fits(kind: Kind, g: &Geometry) -> bool {
         ) | (
             Kind::Countries | Kind::Regions | Kind::Rivers,
             Geometry::LineString(_) | Geometry::MultiLineString(_)
-        ) | (Kind::Places, Geometry::Point(_))
+        ) | (Kind::Places | Kind::Elevations, Geometry::Point(_))
     )
 }
 
@@ -236,8 +256,11 @@ pub fn convert(
         };
         let mut minzoom = style_zoom.max(ne_zoom(&props));
         let name = name_of(&props);
-        if kind == Kind::Places {
-            if name.is_none() {
+        if matches!(kind, Kind::Places | Kind::Elevations) {
+            // An unnamed spot height is still drawn with its height (the
+            // Dead Sea shore is unnamed in Natural Earth), but not searched.
+            let unnamed_height = kind == Kind::Elevations && elevation(&props).is_some();
+            if name.is_none() && !unnamed_height {
                 stats.unnamed_places += 1;
                 continue;
             }
@@ -270,6 +293,29 @@ pub fn convert(
                         lon: at.lon,
                         lat: at.lat,
                         rank,
+                        bbox: None,
+                    });
+                }
+            }
+            (Class::Peak(_), None) => {
+                if let Some(e) = elevation(&props) {
+                    out.insert("ele".into(), Value::from(e));
+                }
+            }
+            (Class::Peak(pc), Some(n)) => {
+                out.insert("name".into(), Value::from(n.as_str()));
+                if let Some(e) = elevation(&props) {
+                    out.insert("ele".into(), Value::from(e));
+                }
+                if let Some(at) = geom.area_point() {
+                    row = Some(Row {
+                        kind: rows::Kind::Natural,
+                        merge: false,
+                        class: pc.as_str().to_string(),
+                        name: n.clone(),
+                        lon: at.lon,
+                        lat: at.lat,
+                        rank: tags::natural_rank(pc.as_str()),
                         bbox: None,
                     });
                 }
@@ -427,6 +473,66 @@ mod tests {
         assert!(r[0].merge);
         assert_eq!((r[0].lon, r[0].lat), (1_000_000, 0));
         r[0].check().expect("valid row");
+    }
+
+    #[test]
+    fn elevation_points_are_summits_with_heights_kept_and_searchable() {
+        let at = "{\"type\":\"Point\",\"coordinates\":[86.925,27.988]}";
+        let (f, r, s) = run(
+            Kind::Elevations,
+            &[
+                (
+                    at,
+                    "{\"name\":\"Mount Everest\",\"elevation\":8848,\"featurecla\":\"mountain\",\"min_zoom\":4.0}",
+                ),
+                (
+                    at,
+                    "{\"name\":\"Dead Sea\",\"elevation\":-416,\"featurecla\":\"depression\",\"min_zoom\":7.2}",
+                ),
+                (
+                    at,
+                    "{\"name\":\"A pass\",\"elevation\":2000,\"featurecla\":\"pass\",\"min_zoom\":8}",
+                ),
+                (
+                    at,
+                    "{\"name\":\"Too high\",\"elevation\":99999,\"featurecla\":\"mountain\",\"min_zoom\":6}",
+                ),
+                (
+                    at,
+                    "{\"name\":null,\"elevation\":-416,\"featurecla\":\"depression\"}",
+                ),
+                (at, "{\"name\":null,\"featurecla\":\"mountain\"}"),
+                (
+                    "{\"type\":\"LineString\",\"coordinates\":[[0,0],[1,1]]}",
+                    "{\"name\":\"Line\",\"elevation\":1}",
+                ),
+            ],
+        );
+        assert_eq!(f.len(), 5, "{f:?}");
+        assert_eq!(f[0]["tippecanoe"]["layer"], "peaks");
+        assert_eq!(f[0]["properties"]["class"], "summit");
+        assert_eq!(f[0]["properties"]["ele"], 8848);
+        assert_eq!(f[0]["tippecanoe"]["minzoom"], 4);
+        assert_eq!(f[1]["properties"]["class"], "depression");
+        assert_eq!(f[1]["properties"]["ele"], -416);
+        assert_eq!(f[1]["tippecanoe"]["minzoom"], 7);
+        assert_eq!(f[2]["properties"]["class"], "saddle");
+        // Beyond the overview's zooms: kept at the last one, like places.
+        assert_eq!(f[2]["tippecanoe"]["minzoom"], MAX_ZOOM);
+        // An impossible height is left out, the point kept.
+        assert!(f[3]["properties"].get("ele").is_none());
+        // Unnamed with a height: drawn with the height only, not searched;
+        // unnamed without a height: left out.
+        assert!(f[4]["properties"].get("name").is_none());
+        assert_eq!(f[4]["properties"]["ele"], -416);
+        assert_eq!(s.unnamed_places, 1);
+        assert_eq!(s.bad_geometry, 1);
+        assert_eq!(r.len(), 4);
+        assert_eq!(r[0].kind, rows::Kind::Natural);
+        assert_eq!(r[0].class, "summit");
+        for row in &r {
+            row.check().expect("valid row");
+        }
     }
 
     #[test]

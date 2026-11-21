@@ -6,6 +6,62 @@ Git tags: `vX.Y.Z` on the commit of each release.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-11-21 — Offline maps
+
+Maps become useful on their own: find a place by name, see what is
+near you, jump to coordinates, and read regional maps down to the
+street with their sea drawn. Maps are tested in virtual machines;
+see docs/TESTING.md for what ran on real hardware.
+
+### Added
+- Map search (`/`): towns, streets and points of interest of every open
+  map by name, nearest first, with distance and direction; Enter jumps
+  there. Works without the Internet, inside the map packs.
+- Nearby (`n`): what is around the crosshair (pharmacies, shelters,
+  water, fuel, health care...), by kind, nearest first.
+- Go to (`g`): type coordinates (decimal or degrees-minutes-seconds).
+- Spot heights (summits) on the world overview.
+- Place names keep their accents where the console font has the
+  letter (é, ü, ñ, ç...); other letters are shown plainly.
+- The sea inside regional map packs, from OpenStreetMap's water
+  polygons: coasts no longer look like land at street scale.
+- Map pack catalog: Luxembourg and Bretagne, downloadable from the
+  mirror like the other resource packs, their inputs published beside
+  them so anyone can rebuild them byte for byte.
+- Torrents: each release folder can be downloaded by BitTorrent
+  (`releases/torrents/resilience_EDITION_VERSION.torrent`, the mirror as
+  web seed); the signed `SHA256SUMS` checks it as before.
+
+### Known issues
+- On a ThinkPad Yoga 11e, the installed system does not start (the
+  firmware goes back to its boot menu; Secure Boot is off, the firmware
+  in "Legacy and UEFI" mode; cause not found). The live system works
+  there, and the installed system starts on an MSI GL73 8SE.
+- Started through a Ventoy stick on that Yoga, the ISO's boot menu is
+  unreadable; it still starts the live system after 10 s or with Enter.
+
+### Fixed
+- The interface could stop (and restart, "exit code 1") when keys were
+  typed at the very moment a program such as the map viewer ended: taking
+  the screen back asked the terminal for the cursor position, and the
+  keys mixed with its answer. The screen is now cleared without asking
+  anything. VM test `vm-maps` types at once after quitting the viewer.
+
+### Changed
+- Map search: a street or a point of interest with exactly the name typed
+  comes first only within 10 km ("pharmacie" no longer lists a
+  "Pharmacie" 60 km away before "Pharmacie du Centre" 2 km away); a town
+  with that name still comes first wherever it is. Each map pack returns
+  its matches nearest first, so the nearest are never left out.
+- Map search finds names with letters such as Ł, Ø, Đ or Æ from plain
+  letters ("lodz" finds "Łódź"): map packs index the folded name. Packs
+  built before this change open without search until rebuilt.
+- An independent review of the maps code: damaged packs, or packs still
+  being checked, are no longer searched; nearby keeps the nearest places
+  in crowded areas; distances are right across the 180° meridian; long
+  names are kept; a lost map reader ends a search instead of leaving it
+  waiting.
+
 ## [0.5.0] — 2026-11-19 — Community network
 
 Computers nearby can share their library, resource packs and maps, a

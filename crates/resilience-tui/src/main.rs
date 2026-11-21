@@ -21,9 +21,10 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use ratatui::DefaultTerminal;
+use ratatui::crossterm::cursor::MoveTo;
 use ratatui::crossterm::event::{self, Event};
 use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::{EnterAlternateScreen, enable_raw_mode};
+use ratatui::crossterm::terminal::{Clear, ClearType, EnterAlternateScreen, enable_raw_mode};
 use resilience_core::catalog::{Availability, Catalog};
 use resilience_core::config::{self, SystemConfig, UserSettings};
 use resilience_core::{launch, mode, network, status};
@@ -286,8 +287,19 @@ fn run_program(terminal: &mut DefaultTerminal, app: &mut App, req: &RunRequest) 
     }
     app.after_run(&req.label, &result);
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
-    terminal.clear()?;
+    // Clear without `Terminal::clear`: it asks the terminal for the cursor
+    // position, and keys typed at that moment (Esc right after quitting a
+    // program) mix with the answer, so crossterm gave up after 2 s and the
+    // interface stopped. Resetting both buffers makes the next frame draw
+    // every cell, as `clear` would.
+    execute!(
+        io::stdout(),
+        EnterAlternateScreen,
+        Clear(ClearType::All),
+        MoveTo(0, 0)
+    )?;
+    terminal.swap_buffers();
+    terminal.swap_buffers();
     Ok(())
 }
 

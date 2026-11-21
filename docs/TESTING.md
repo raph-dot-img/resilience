@@ -2,7 +2,11 @@
 
 Every result below is **PASS**, **FAIL**, **BLOCKED** or **NOT TESTED**.
 A test is only PASS if it was actually executed. "VM" means QEMU/KVM on the
-development host — physical hardware: one boot of the live ISO on a ThinkPad L15 Gen 1 (see "ISO boot").
+development host — physical hardware: one boot of the live ISO on a ThinkPad L15 Gen 1 (see "ISO boot"), and release 0.5.0 on two laptops (see "Physical hardware: two laptops").
+
+First full run on the Debian host, 2026-11-21, `feat/maps-search` at `71a01f5`: 11 systems and 26 checks evaluated (no error), built with `--max-jobs 2` in 241 min: every check without a VM PASS; 10 of 19 VM tests FAILED on timeouts (vm-admin, vm-cable, vm-comms, vm-hotspot, vm-install, vm-install-uefi, vm-maps, vm-mesh, vm-packs, vm-share) and every VM test log has `qemu-system-x86_64: failed to initialize kvm: Permission denied`: the Nix build users cannot open `/dev/kvm` (Debian: root:kvm 0660), so QEMU emulated the CPU. **BLOCKED** until the host gives the build users KVM (docs/BUILDING.md, "Debian host: KVM for the Nix build users"); not a result about the code. The owner set `/dev/kvm` to 0666 the same day; the 10 failed VM tests were run again with `--max-jobs 2` and KVM (no "failed to initialize kvm" line): all PASS in 23 min (vm-admin 117 s, vm-cable 191 s, vm-hotspot 85 s, vm-comms 366 s, vm-install-uefi 590 s, vm-install 871 s, vm-share 153 s, vm-mesh 248 s, vm-maps 39 s, vm-packs 104 s). The other 9 VM tests had passed under emulation, which is slower, not weaker. So **all 26 checks and 11 systems PASS** at `71a01f5`; the docs-only commit after it leaves every derivation unchanged (drvPath compared).
+
+Full run on `feat/maps-sea` at `e310de7` (the sea in regional packs, the rebuilt catalog packs, the maps review's fixes), 2026-11-21: 11 systems and 26 checks evaluated, one evaluation each, built with `--max-jobs 2` and KVM in 65 min inside a 7 GB scope: 25 of 26 checks PASS; `vm-cable` FAILED on a race in the test, not in the system: it read `GENERAL.STATE` once, right after the profile was named, while the device was still "connecting" (addresses not yet configured). The test now waits up to 60 s for "100 (connected)" (`tests/vm/cable.nix`); `vm-cable` run again: PASS (203 s). So **all 26 checks and 11 systems PASS** for `feat/maps-sea`.
 
 Last full run: 2026-11-19 on `develop` for release 0.5.0 at `58a0903` (community network ADR 0025, the review's fixes, the installer's nodiscard fix, wired profiles for cables and switches without a router): one evaluation per system and per check (13 systems, 26 checks, no evaluation error), then one build at a time, 60 min, inside a 7 GB memory scope: 25 of 26 checks PASS; `vm-mesh` FAILED on its own assumption that each card returns to the exact NetworkManager state it had (beta's lan2 now moves on from "connecting" to "Wired without router"); the check now asks that the card be managed again, and `vm-mesh` PASS alone (all 7 subtests). So all 26 checks PASS. ISO of 0.5.0 built from `7310f49` (1,652,834,304 bytes, SHA-256 `7a92103830649bb2416f31d2af418f2fa8147184ee8da011a888f613a86f3f18`; not the signed release) and booted in QEMU with `tests/iso/smoke.py`, BIOS and UEFI (OVMF 202602): boot menu, licence notice, main menu STANDARD v0.5.0, system OPERATIONAL, network, status, local messages running, PASS (2026-11-19, screenshots reviewed). Previous: 2026-11-18 on `develop` for release 0.4.0 (version bump `f1bfa51`): 22 of 23 checks PASS in 44 min, one build at a time; `vm-update` FAILED (the update installed, but the test still expected `from=0.3.0` in the audit line); fixed in `8bfa6bd` (the test reads the running version), then `vm-update` PASS alone; the other 22 derivations are unchanged by that fix, so all 23 checks PASS at `8bfa6bd`. Previous: 2026-11-18 on `develop` at `0217f4d` (offline updates ADR 0023, licence notice ADR 0024, the owner's release key in `nix/release-keys.nix`): all 23 checks incl. 17 VM tests (new: `vm-update`, `vm-licence`) PASS, built as derivations with 2 jobs at a time, 27 min. Previous: 2026-11-18 on `feat/installer` at `84bf3c4` (the installer, ADR 0022): all 21 checks incl. 15 VM tests (new: `vm-install`, `vm-install-uefi`) PASS, built as derivations (see below) with 2 jobs at a time. Previous full run (`nix flake check -L --max-jobs 1 --keep-going`, all 19 checks incl. 13 VM tests): 2026-11-17 on `develop` at `af4b661` (mesh network, ADR 0021), every check PASS in 13 min; `vm-comms`, `vm-mesh` and `comms-messages` were taken from their passing builds of the same derivations in the run just before (at `7039e06`). That run and the one before it each had one failure, both fixed: `vm-crypto` (GnuPG asked a third time for the passphrase while creating a key on the loaded host: `max-cache-ttl 0` expires the creation's cache nonce; the tool now says so and the test answers it) and `vm-modes` (`stty` on tty2 failed with EIO while its getty started; every test's `tty_text` now retries it). Earlier full run: 2026-11-17 on `feat/comms-files` at `73754e8` (multi-line messages, ADR 0020 files), every check PASS in 17 min; `vm-comms` and `comms-messages` were taken from their passing builds of the same derivations earlier that day (vm-comms 318 s), the other 10 VM tests ran. Earlier full run: 2026-11-17 on `feat/comms` at `ba62020` (ADR 0019), every check PASS in 36 min. Previous full run 2026-11-16/17 (slice 3 + messaging on in standard): `vm-crypto` failed on the first pass (it pressed `3` for Security, which slice 9's Maps & navigation had moved to `5`); fixed in `7f1a0ac`, then PASS. ISO last built and boot-tested 2026-11-17 from `develop` at `af4b661` (see "ISO boot"; bit-for-bit reproducibility not verified).
 
@@ -351,6 +355,25 @@ does not list it as a stick.
 | Back: generation 1 → Make default (Cancel default, `y`) → administrator password → "Generation 1 is now started by default (it was 2)" → restart: STANDARD v0.4.0, generation 2 still in the list | PASS (2026-11-20) |
 
 
+### Release 0.6.0 — offline update 0.5.0 → 0.6.0 → back (manual, QEMU, screenshots reviewed)
+
+The signed release folder made by the owner with `make-release.sh` at tag
+`v0.6.0` (`1f7069b`, 2026-11-21): `SHA256SUMS.minisig` verified with
+`keys/resilience-release.minisign.pub`, all sums OK, the ISO
+byte-identical to the boot-tested candidate (`3c5fc344…`), the source
+archive identical to `git archive v0.6.0`. The 0.5.0 release ISO installed
+with `tests/iso/install.py --uefi` (OVMF 202602, no encryption); the update
+file extracted onto a FAT32 image attached as a removable USB stick.
+
+| Check | Result |
+|---|---|
+| 0.5.0 installed: STANDARD v0.5.0, OPERATIONAL | PASS (2026-11-21) |
+| Recovery → Update from a USB stick: "UPDATESTICK 2.1 GiB" → Enter → "The stick says Resilience standard 0.6.0" | PASS (2026-11-21) |
+| `c` (as `user`): Intact yes, Authentic (signed by a release key) yes, Complete yes | PASS (2026-11-21) |
+| Install (Cancel default, `y`) → polkit `org.resilience.admin.apply-update` as administrator → 35 missing paths copied → "Resilience 0.6.0 is installed. It starts at the next restart" | PASS (2026-11-21) |
+| Restart without the stick: STANDARD v0.6.0, OPERATIONAL, the account and its licence acceptance kept; generations: 2 "started, default", 1 kept | PASS (2026-11-21) |
+| Back: generation 1 → Make default → administrator password → "Generation 1 is now started by default (it was 2)" → restart: STANDARD v0.5.0, OPERATIONAL | PASS (2026-11-21) |
+
 ### VM: `vm-licence` — the licence notice (ADR 0024), driven through the TUI
 
 | Check | Result |
@@ -381,6 +404,48 @@ second radio in a network namespace playing the other computer.
 | Wi-Fi (delta): `set-mesh on` with no device configured takes the first card (wlan0): type IBSS, joined cell `02:52:45:53:4d:31`; a BATMAN-adv neighbour (the other radio); ping6 to it over `bat0` | PASS (2026-11-17) |
 | Wi-Fi: `set-mesh off` → no `bat0`, the card back to type managed and to its NetworkManager state | PASS (2026-11-17) |
 
+### Maps: search (ADR 0016 slice 10, `feat/maps-search`)
+
+| Scenario | Result |
+|---|---|
+| Core: user words to an FTS5 expression; 15 hostile inputs (quotes, `*`, `^`, `-`, `:`, `NEAR(...)`, `AND`, parentheses, braces, NUL, bidirectional override) give only quoted words of letters and digits; at most 8 words of 32 characters; folding shared with the pack builder (accents, case, ß, Œ, decomposed accents, other scripts kept) | PASS (2026-11-19, unit tests) |
+| Ranking: exact folded name first, then kind, rank, distance; the same place in two packs once; "15 km SW" | PASS (2026-11-19, unit tests) |
+| Pack reader: real FTS5 queries through the hardened connection (authorizer, budget): prefixes, accents/case, two words, nothing found, hostile words harmless, empty query, a pack without the search tables; nothing written beside the file | PASS (2026-11-19) |
+| Viewer (TestBackend): `/`, typing, Enter; results from the overview and the detailed pack ranked (town before pharmacy, "near Testville", distance and direction); Enter centres the map at a scale for the kind; `/` again keeps the results, Down + Enter takes the second; new words search again; "Nothing found in: World overview, Testland … cannot be found"; hostile words; Esc does not move; `--search` runs once the packs are open; a map without search tables says so and asks nothing | PASS (2026-11-19) |
+| Nearby (slice 11), core: boxes of 500 m, 2 km, 10 km in microdegrees, cut at the poles and the antimeridian; points nearest first with their category (from the builder's table, now in core); settlements and streets left out; duplicates from two packs once | PASS (2026-11-19, unit tests) |
+| Nearby, pack reader: the R*Tree through the hardened connection, widening until found, nothing 30 km away, a pack without the R*Tree | PASS (2026-11-19) |
+| Nearby, viewer: `n` lists pharmacy, fountain, peak, shelter, cafe nearest first with category, kind and "m N"; Tab only health, then only water; Shift-Tab back to every kind; Enter centres on the chosen point; far from everything: "Nothing within 10 km in: Testland" | PASS (2026-11-19) |
+| Go to (slice 11), viewer: `g`, the examples shown; "north of here" refused with a message and nothing moves; "49 36 41.8 N 6 7 54.8 E" centres the map, scale kept; latitude 95 refused | PASS (2026-11-19) |
+| Spot heights (slice 12): converter on Natural Earth samples (summit with height and zoom 4, depression -416, pass as saddle kept at zoom 7, impossible height dropped but the point kept, unnamed with height drawn and not searched, unnamed without height left out, a line refused); style: summit `^` and depression `v` visible, named and with height at 5,000 m/px, not at 20,000 | PASS (2026-11-19, unit tests) |
+| Spot heights in the real world overview (`map-world`): 711 elevation points written; Mount Everest a `summit` search row and in the R*Tree; Death Valley a `depression`; at least 640 searchable; size 11.9 MB; integrity ok | PASS (2026-11-19; the first run FAILED: the Dead Sea shore point is unnamed in Natural Earth and was dropped; unnamed spot heights are now drawn with their height) |
+| `vm-maps` on the console (Ultra-Stable account, no network): `/` finds Mount Everest (summit) and jumps to it, the label "Mount Everest 8848 m" is drawn; `n` lists it nearest first; `g` goes to 47.3769 8.5417 and "Zürich" is drawn with its ü; searching "zurich" finds "Zürich (city)" | PASS (2026-11-19; the first two runs FAILED on the test's own longitude pattern: Natural Earth's Everest point is at 86.88060 E) |
+| Real packs built on the host (`nix build .#mapPacks.ID`, 7 GB scope): Luxembourg (Geofabrik 2026-01-01) 29,315,072 bytes, SHA-256 `79dc79e1c17e6083f60b843309381fa225c2a54e3d4302821aa441a28b0d8971`; Bretagne (Geofabrik 2026-11-18) 173,797,376 bytes, 15,793 tiles, zoom 1-14, SHA-256 `6e66b4e08d1605a284a6e830850d79c9133863f1da562a0f4bd179c9ba4502de`, 270,184 search rows ("quimper" finds Quimper, accented names such as Cesson-Sévigné kept); `resilience-maps info --check`: integrity ok, search and points of interest available, for both | PASS (2026-11-19) |
+| Keys typed at once after quitting the viewer (Esc, `q`, Esc x4 in one burst): the interface stayed up; before the fix it stopped with "The cursor position could not be read within a normal duration" (ratatui `Terminal::clear` querying the cursor). Stress: 15 trials x 2 VM runs, all kept; regression subtest in `vm-maps` (5 trials) | PASS (2026-11-20) |
+| Catalog entries `map-luxembourg` and `map-bretagne` (nix/packs/maps.nix): uploaded to https://mirror.canevet.eu/files/resilience/packs/maps/ (with SHA256SUMS), downloaded back over HTTPS: HTTP 200, exact sizes, `sha256sum -c` OK; the live ISO's catalog lists both; vm-packs and vm-maps PASS with them | PASS (2026-11-20) |
+| Installing a catalog map pack through Resource packs (download, store hash check) | NOT TESTED (needs the Internet in a VM; the same path as ZIM packs, tested in vm-packs) |
+| Real packs in the viewer, ad hoc VM (not committed: the packs exist only in a local store), 1366x768 = 170x48, Luxembourg + Bretagne + overview opened from the TUI: search (quimper, pharmacie, rue de la gare, cesson sevigne, clervaux, kirchberg) finds and jumps; nearby with Tab; go-to Brest; viewer peak memory 27 MiB | PASS (2026-11-20) |
+| Findings of that run, fixed: the pieces of one road listed many times ("Route de Quimper" x15: streets with one name now merge over 2 km, chained); unnamed points "(cannot be shown)" (now "(no name)"); kind "(yes)" from shop=yes (now no kind) | PASS (unit and TestBackend tests, 2026-11-20); not yet re-run on the real packs |
+| Findings still open: inside a regional pack at 500 m/px and finer the sea is black (land) with only coastline lines, because OSM extracts have coastlines but no sea polygons and osmcoastline is not in nixpkgs (needs sea polygons built by the mapmaker: pack format change, packs rebuilt, new hashes); too many names at city scales (style question) | sea FIXED 2026-11-21 (next rows); names OPEN |
+| The sea inside regional packs (2026-11-21, `feat/maps-sea`): `mapmaker sea` (polygons and multipolygons kept, lines, points, positions outside the world, broken JSON skipped and counted, RS record separators read, the output flushed and checked); `poly::bounds`; style `water/sea` filled blue under every other area, on the legend's "Sea" line (legend test); the viewer draws a detailed pack's sea blue at 50 m while the same pack without it stays land; `map-pack-testland` with a synthetic sea (one square cut to the region by ogr2ogr, one far away left out; `sea` features at z5 and z14; bounds unchanged; pack now from z3) and `map-pack-reproducible` with it | PASS (unit, TestBackend and Nix checks) |
+| The real Bretagne pack with its sea (`tests/world.rs`, on demand, with the overview, 120×40): open sea north of Roscoff at 200 m 100% blue; the Rade de Brest at 100 m 50% blue with the Plougastel peninsula and the Elorn estuary in place (screen looked at); Rennes inland at 50 m 3% (rivers) | PASS (2026-11-21) |
+| Catalog packs rebuilt on the Debian host (2026-11-21): Luxembourg 29,315,072 bytes, SHA-256 `2c07ad41ce6b01c187d9795b6391a7f770900a568d4038053c6bcf64bd6f7f60`; Bretagne 177,532,928 bytes, SHA-256 `ca72abfd5f05d4ee2cf24db38c01948dd8f846f37074ca4d6d5e7291149b5a43` (24 sea polygons, 4 min); published on the mirror and downloaded back through the public URL, `sha256sum -c` OK; their inputs (Geofabrik PBF and .poly, the water polygons) mirrored under `packs/maps/sources/`. Found on the way: Geofabrik moved every region into its own folder, and `bretagne-261118.osm.pbf` was re-published with other bytes (same replication timestamp 2026-11-18T21:21:02Z, sequence 4970): re-pinned | PASS |
+| Independent review of the maps crate (2026-11-21, code-review skill at high, `crates/resilience-maps`): 5 important, 5 minor findings, all fixed with tests: damaged or still-checking packs no longer answer search or nearby (the viewer sends its usable packs; `--search` waits for the checks); nearby orders each box by distance before its 1,000-row limit (20 nearest kept under 1,500 farther rows inserted first) and keeps the smaller box's points when a wider box is too slow; `mapmaker sea` flushes and fails on a write error; the reader's text bounds are the builder's (a valid 415-byte name is found); search distances wrap at the antimeridian (a hut 1.6 km across it comes first); 200 rows per pack so road pieces merged by the ranking still leave several streets; a lost reader ends a waiting search; CLAUDE.md and the profile documentation | PASS (host); nearby's boxes still stop at the antimeridian (known limit) |
+| README screenshots (`nix build .#screenshots`, tests/screenshots.nix: standard edition, 1024x768, Luxembourg pack rebuilt from this tree with the folded index): main menu, library, map at 2 and 10 km, search, nearby, local messages all reached; "pharmacie" from Luxembourg City lists pharmacies nearest first (130 m, 170 m, ...), confirming the new search order and index on a real pack. Seen: Nearby shows most points as kind "other" (restaurants, shops) | PASS (2026-11-20, looked at the pictures) |
+| Search index over the folded name (`rs_place_fts` = fts5(fold)): "lodz", "ŁÓDŹ", "oresund", "dakov", "aeroskobing" find Łódź, Øresund, Đakovo, Ærøskøbing through the hardened reader; `map-pack-testland` builds with it, the reader says "search: available" and its FTS checks pass | PASS (2026-11-20, unit test and Nix check); the world overview, the catalog packs and vm-maps not yet rebuilt/re-run |
+| Search order (fixes the run's "pharmacie" finding: an exact name 63 km away came before "Pharmacie du Centre" 2 km away): an exact name comes first for a settlement anywhere, for anything else only within 10 km; each pack returns its 50 rows already in the ranking's order (exact, kind, rank, flat distance), so a pack with hundreds of matches gives the nearest, not any 50. Measured with that ORDER BY on the real Bretagne index: 1 ms for "pharmacie", 32 ms for the one letter "r" (every match sorted) | PASS (2026-11-20, unit tests and a 203-row pack test); not yet re-run on the real packs in the viewer |
+
+
+### Maps: accented names (ADR 0016, `feat/maps-accents`)
+
+| Scenario | Result |
+|---|---|
+| Font: the accented Latin letters of `ter-i16n.psf.gz` (nixpkgs `terminus_font` 4.49.1) read from its PSF1 Unicode table with a Python parser and with kbd's `psfgettable`: the same 34 CP437 letters (plus `ƒ`, `ⁿ`, not used) | PASS (2026-11-19) |
+| Core `label::fold`: the 34 letters kept alone and in context ("Orléans", "Zürich", "Straße", "Æblegård", "Saint-Étienne"); others folded (Île→Ile, Łódź→Lódz, São→Sao, Œ→OE, Ø→O); control, bidirectional and combining characters as before; every character of U+0000–U+2FFFF gives only ASCII or a console letter; 40-character cap counted in characters ("é"×50 → 37 + "..."); placement measures cells in characters | PASS (2026-11-19, unit tests) |
+| `fold_ascii_to` and `search_fold` unchanged (Zürich→Zurich, Straße→Strasse, Æ→AE; every console letter folds to ASCII letters); existing search tests pass | PASS (2026-11-19, unit tests) |
+| `is_console_char` allows exactly the 34 letters (and not Ł, Ø, À, Ê, ã, Œ, ƒ, ⁿ, combining marks); the canvas turns other letters into `?` | PASS (2026-11-19, unit tests) |
+| Viewer (TestBackend): a hostile name with `É` and `Ł` drawn as `ÉvryL…` and only console characters; search "orleans", "Orléans", "ORLÉANS" each show "Orléans (town)"; "ile" shows "Ile-d'Arz (village)" | PASS (2026-11-19) |
+| The letters on a real Linux console (VM or hardware) | NOT TESTED (no VM or ISO run in this slice) |
+
 ### VM: `vm-cable` — computers on a switch with no router (2026-11-19, after the owner's real-hardware case)
 
 alpha, beta and gamma on one switch (vlan 1), with no address from the
@@ -394,7 +459,9 @@ test framework (NetworkManager alone) and the cables unplugged at start
 | Each hears the other two; alpha→beta, beta→gamma, gamma→alpha all `delivered` and received | PASS (2026-11-19) |
 | alpha unplugged and plugged again: back on "Wired without router", a message to gamma delivered | PASS (2026-11-19) |
 | An ordinary wired network with a DHCP server still uses "Wired" (DHCP) | NOT TESTED in a VM (the other VM tests use addresses set by the test framework) |
-| Two real computers with a cable or a switch | NOT TESTED (the owner's 0.4.0 attempt failed without these fixes) |
+| Two real computers with a cable | PASS (owner, 2026-11-20, release 0.5.0: ThinkPad L15 + ThinkPad Yoga 11e; see "Physical hardware: two laptops") |
+| Two real computers on a switch; three or more | NOT TESTED |
+| Race found on 2026-11-21: the state was read once while the device was still "connecting"; the test now waits for "connected" | PASS (2026-11-21, 203 s) |
 
 ### VM: `vm-hotspot` — the hotspot (ADR 0025 slice 6), a "phone" and the outside
 
@@ -412,7 +479,8 @@ udhcpc, dig, curl); `outside` is on hot's cable (vlan 1).
 | `set-mesh on` refused while the hotspot is on, no `bat0`, the hotspot still on | PASS (2026-11-19) |
 | `set-hotspot off`: unit inactive; profile, password and state files gone; NetworkManager no longer knows the connection; both chains empty; the phone loses the network; turning it on again gives a different password | PASS (2026-11-19) |
 | After the independent review: a decoy profile named `resilience-hotspot` (open, as an account could make) is never activated: the unit's own UUID is the connection on wlan0, the decoy untouched; `set-hotspot on` while on is refused ("already on"); an unconditional DROP in the forward chain; the DROP rules present in 20 checks right after a firewall reload (the hotspot's own reload no longer empties the chain first) | PASS (2026-11-19; the first run after the review FAILED on that last point: the reload emptied and refilled the chain) |
-| On real Wi-Fi cards and phones | NOT TESTED |
+| On real Wi-Fi cards: the hotspot used between two laptops | PASS (owner, 2026-11-20, release 0.5.0; Wi-Fi cards and the joining device not recorded) |
+| A phone joining the hotspot; "never routed" checked on real hardware | NOT TESTED |
 
 ### Check: `comms-messages`, community network part (ADR 0025 slice 3)
 
@@ -447,7 +515,8 @@ in the catalog, and files in the shared folder: public (0644), private
 | Shared folder (slice 5) through the TUI: `notice.txt` copied into ~/Received (content intact, 0600); `private.txt` (0600 on the server, listed by nginx) refused with "Nothing was kept", no partial file left | PASS (2026-11-19) |
 | After the independent review: nginx kept to eth1 by the kernel (`RestrictNetworkInterfaces` in a drop-in the helper writes for the instance): with TCP 80 opened on eth2 in the firewall by hand, `far` still gets no answer; sharing on a disconnected interface (eth2 after `nmcli device disconnect`) refused | PASS (2026-11-19; the first run FAILED: systemd does not expand `%i` in `RestrictNetworkInterfaces`, which kept nginx to the loopback; now a per-instance drop-in) |
 | The helper reports a failing library unit (kiwix-serve exits after the start job) | NOT TESTED (the helper only sees systemctl's start job; the unit restarts and is visible in the journal) |
-| Real Wi-Fi cards (IBSS on iwlwifi and others), radio range, several hops over the air, battery use | NOT TESTED |
+| Real Wi-Fi cards: the mesh over the air between two laptops | PASS (owner, 2026-11-20, release 0.5.0; Wi-Fi cards and distance not recorded) |
+| Several hops over the air, radio range, battery use | NOT TESTED |
 
 ### VM: `vm-install` — the text installer (ADR 0022), driven through the TUI
 
@@ -527,6 +596,10 @@ press (the passwords wait at `passwd`): any key wakes it.
 | Release 0.1.0 rebuilt from tag `v0.1.0` for the owner's mirror (`resilience-standard-0.1.0-x86_64-linux.iso`, 1,478,590,464 bytes, SHA-256 `d8e0335cf94555cc8722d1f851d46cfafe0b8c78e3dac1efb856a88ece3e2f6f`): BIOS 2048 MiB — TUI shows v0.1.0, system OPERATIONAL, no failed service. The tags `v0.2.0` and `v0.3.0` give the same ISOs (same SHA-256) as the release builds below | PASS (2026-11-18) |
 | `develop` at `83cdebc` (offline updates, licence notice, the owner's release key; `resilience-standard-0.3.0-x86_64-linux.iso` still says 0.3.0, SHA-256 `2d7ec78de4c6eb13c740406d52d835f47d0379c1bc54306119128285964fed88`): BIOS 2048 MiB, UEFI 2048 MiB (OVMF 202602), BIOS 1024 MiB — the licence notice first, then (after `smoke.py` accepts it) v0.3.0, OPERATIONAL, no failed service, Local messages running | PASS (2026-11-18) |
 | Release 0.3.0 build from `release/0.3.0` at `c6c1fb5` (the installer; `resilience-standard-0.3.0-x86_64-linux.iso`, 1,647,968,256 bytes, SHA-256 `dbbc44bef7999b7eaa7d6ef54fd5c3044fa027970470a60795b00434fd3788e4`): BIOS 2048 MiB, UEFI 2048 MiB (OVMF 202602, GRUB 2.12), BIOS 1024 MiB — TUI shows v0.3.0, system OPERATIONAL, no failed service, status, network, Local messages running with the message store | PASS (2026-11-18) |
+| Release candidate 0.6.0 from `develop` at `1ab33f0` (offline maps; `resilience-standard-0.6.0-x86_64-linux.iso`, 1,652,834,304 bytes, SHA-256 `3c5fc344ebf8d8dcdb19c93d75e5e0495deb2ac23d74db0802daec5313abc687`; not the signed release; put on the mirror under `testing/0.6.0-candidate/` for the owner's hardware test): BIOS 2048 MiB, UEFI 2048 MiB (OVMF 202602, GRUB 2.12) — boot menu, licence notice recorded, STANDARD v0.6.0, OPERATIONAL, network, status, Local messages running | PASS (2026-11-21, screenshots reviewed) |
+| Same ISO on the owner's ThinkPad Yoga 11e, booted through a Ventoy stick (UEFI "Generic USB Device"; SHA-256 checked): the UEFI boot menu (GRUB) is unreadable, white with blue streaks, at every boot; waiting 10 s or pressing Enter starts the live system, which displays and works normally (installation under way). The boot loader files are byte-identical to 0.4.0 and 0.5.0 (BOOTX64.EFI, grub.cfg apart from store paths, kernel); GRUB is already in text mode (`isoImage.forceTextMode`). Suspect, not verified: nixpkgs' menu still runs `background_image` and sets a `gfxmode`, which can change the screen mode under the firmware's text console when chain-loaded | KNOWN ISSUE (cosmetic; 2026-11-21, owner) |
+| Same ISO installed on the owner's MSI GL73 8SE (2026-11-21): installed system starts, STANDARD v0.6.0, OPERATIONAL, online, battery read; the Bretagne pack drawn around Rennes at 2 km (roads, rivers, forests, accented names: Bouëxière, Chevaigné, Cesson-Sévigné) | PASS (owner, photos) |
+| Same ISO installed on the ThinkPad Yoga 11e: install finishes without error, but the firmware does not start the installed system (back to its boot menu; old entries of earlier systems reboot). Live ISO fine on both ThinkPads. Secure Boot is off and the firmware is in "Legacy and UEFI" mode (owner), so not Secure Boot; to check: which firmware the installer saw (UEFI or BIOS line of its summary) and the boot order between legacy and UEFI | FAIL (owner, 2026-11-21; cause open) |
 
 ### Keyboard layout (ADR 0017), in vm-boot-offline
 
@@ -540,7 +613,25 @@ press (the passwords wait at `passwd`): any key wakes it.
 | Physical keyboard, several people on several consoles at once | NOT TESTED |
 | Heavy use at low memory (Kiwix reader, backups, map viewer at ≤1 GiB) | NOT TESTED |
 | Physical hardware: Lenovo ThinkPad L15 Gen 1, ISO built from `develop` (end of Phase 4) — boots without problem | PASS (owner, 2026-11-16; firmware mode, ISO hash and checklist items not recorded) |
+| Physical hardware: ThinkPad L15 + ThinkPad Yoga 11e, release 0.5.0 (see "Physical hardware: two laptops") | PASS (owner, 2026-11-20) |
 | Physical hardware: other machines | NOT TESTED |
+
+### Physical hardware: two laptops (release 0.5.0, owner, 2026-11-20)
+
+A Lenovo ThinkPad L15 and a Lenovo ThinkPad Yoga 11e running release 0.5.0,
+tried by the owner. The owner reports no errors from Resilience (only their
+own mistakes while learning the screens). Not recorded: whether each ran
+the live ISO or an installed system, firmware mode, the Wi-Fi cards'
+models, distances.
+
+| Scenario | Result |
+|---|---|
+| Direct Ethernet cable between the two, no router ("Wired without router") | PASS |
+| Sharing on one ("Share this computer's resources"), the other getting a pack from it | PASS |
+| Hotspot on one, used from the other | PASS |
+| Mesh network over the air (IBSS + BATMAN-adv on real cards) | PASS |
+| Local messages between the two | PASS |
+| Files in messages, store-and-forward (a third machine or an account logged out), reading the other's library and pages | NOT TESTED (not reported) |
 
 Last ISO run (2026-11-17): `feat/comms` at `9d3ebd2`,
 `resilience-standard-0.1.0-x86_64-linux.iso`, 1,554,186,240 bytes, SHA-256
@@ -586,7 +677,7 @@ modest machine running the live ISO has little room for files.
 | 10 | Access local files (file manager) | NOT TESTED in VM (mc launch untested) |
 | 11 | Import a resource pack from USB | PASS (vm-packs, QEMU usb-storage) |
 | 12 | Verify an offline update bundle | PASS in VM (vm-update: signed bundle on a USB stick, checked, installed through the TUI, refusals); a real release key and physical hardware NOT TESTED |
-| 13 | Communicate across a local network | PASS between two VMs (vm-comms), and across a relay with no shared network (vm-mesh, cables and simulated Wi-Fi); physical network NOT TESTED |
+| 13 | Communicate across a local network | PASS between two VMs (vm-comms), and across a relay with no shared network (vm-mesh, cables and simulated Wi-Fi); PASS between two real laptops over a cable, the hotspot and the mesh (owner, 2026-11-20) |
 | — | Installer, rollback to previous generation | BLOCKED — no installer yet |
 | — | Recovery section with real generations; diagnostic report on a real system | NOT TESTED in VM (unit/TUI tests with fake profiles only) |
 | — | Backup / restore with a physical USB stick | NOT TESTED (QEMU usb-storage only) |

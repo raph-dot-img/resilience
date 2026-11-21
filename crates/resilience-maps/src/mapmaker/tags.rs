@@ -13,6 +13,8 @@
 
 use std::borrow::Cow;
 
+pub use resilience_core::maps::style::{POIS, poi_category};
+
 use resilience_core::maps::style::{
     self, AdminLevel, Class, LandClass, PeakClass, PlaceClass, PoiCategory, RailClass, RoadClass,
     WaterClass,
@@ -156,40 +158,6 @@ pub const PLACES: &[(&str, PlaceClass)] = &[
 /// style has no class for them) and never used as `near`.
 pub const PLACES_SEARCH_ONLY: &[&str] = &["suburb", "quarter", "neighbourhood"];
 
-/// Points of interest, most urgent category first (ADR 0016 §4): (key,
-/// value, category). The value is the `rs_place.class` of the row, and
-/// [`poi_category`] maps it back, so every value appears once.
-/// `man_made=water_tap` counts only with `drinking_water=yes` (see
-/// [`poi`]).
-pub const POIS: &[(&str, &str, PoiCategory)] = &[
-    ("amenity", "hospital", PoiCategory::Health),
-    ("amenity", "clinic", PoiCategory::Health),
-    ("amenity", "doctors", PoiCategory::Health),
-    ("amenity", "pharmacy", PoiCategory::Health),
-    ("healthcare", "hospital", PoiCategory::Health),
-    ("healthcare", "clinic", PoiCategory::Health),
-    ("healthcare", "doctor", PoiCategory::Health),
-    ("healthcare", "pharmacy", PoiCategory::Health),
-    ("amenity", "drinking_water", PoiCategory::Water),
-    ("amenity", "water_point", PoiCategory::Water),
-    ("natural", "spring", PoiCategory::Water),
-    ("man_made", "water_tap", PoiCategory::Water),
-    ("amenity", "shelter", PoiCategory::Shelter),
-    ("tourism", "alpine_hut", PoiCategory::Shelter),
-    ("tourism", "wilderness_hut", PoiCategory::Shelter),
-    ("tourism", "camp_site", PoiCategory::Shelter),
-    ("amenity", "police", PoiCategory::Safety),
-    ("amenity", "fire_station", PoiCategory::Safety),
-    ("emergency", "defibrillator", PoiCategory::Safety),
-    ("shop", "supermarket", PoiCategory::Food),
-    ("shop", "bakery", PoiCategory::Food),
-    ("amenity", "marketplace", PoiCategory::Food),
-    ("amenity", "fuel", PoiCategory::Fuel),
-    ("amenity", "toilets", PoiCategory::Toilets),
-    ("amenity", "post_office", PoiCategory::Post),
-    ("amenity", "townhall", PoiCategory::TownHall),
-];
-
 /// Keys whose other values are "other named places" (category `other`),
 /// only with a name, in this order of preference. `railway` only for
 /// stations and halts.
@@ -206,14 +174,6 @@ pub const PEAKS: &[(&str, PeakClass)] = &[
 fn lookup<T: Copy>(table: &[(&str, T)], value: Option<&str>) -> Option<T> {
     let v = value?;
     table.iter().find(|(k, _)| *k == v).map(|(_, c)| *c)
-}
-
-/// The category of a POI row's class (an OSM value). Values not in
-/// [`POIS`] are "other".
-pub fn poi_category(class: &str) -> PoiCategory {
-    POIS.iter()
-        .find(|(_, v, _)| *v == class)
-        .map_or(PoiCategory::Other, |(_, _, c)| *c)
 }
 
 // ---------------------------------------------------------------------------
@@ -669,7 +629,7 @@ pub fn natural_rank(class: &str) -> i64 {
     match class {
         "lake" | "reservoir" => 0,
         "river" => 1,
-        "peak" | "volcano" => 2,
+        "peak" | "volcano" | "summit" => 2,
         _ => 3,
     }
 }

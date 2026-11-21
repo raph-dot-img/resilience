@@ -19,9 +19,15 @@
 //!     viewer's reader.
 //! resilience-mapmaker natural-earth --rows ROWS.jsonl --output FEATURES.geojsonseq
 //!                                   [--land F] [--countries F] [--regions F]
-//!                                   [--lakes F] [--rivers F] [--places F]
+//!                                   [--lakes F] [--rivers F] [--places F] [--elevations F]
 //!     Natural Earth GeoJSON files to the same two files as classify, for
 //!     the built-in world overview.
+//! resilience-mapmaker bounds --poly COVERAGE.poly
+//!     prints "WEST SOUTH EAST NORTH" of the coverage, in degrees (for
+//!     ogr2ogr -spat when cutting the sea to the region).
+//! resilience-mapmaker sea --poly COVERAGE.poly [--output FEATURES.geojsonseq] [INPUT|-]
+//!     OpenStreetMap water polygons cut by ogr2ogr (GeoJSON sequence) to
+//!     features of class sea for tippecanoe (standard output by default).
 //! ```
 //!
 //! A summary goes to standard error. Exit status: 0 success, 1 failure,
@@ -33,7 +39,7 @@ use std::io::{self, BufReader, BufWriter, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-use resilience_maps::mapmaker::{classify, finish, overview, poly};
+use resilience_maps::mapmaker::{classify, finish, overview, poly, sea};
 
 const USAGE: &str = "\
 Usage:
@@ -43,7 +49,10 @@ Usage:
       [--description TEXT] [--license SPDX] [--attribution TEXT] [--tools TEXT]
       [--center LON,LAT,ZOOM]
   resilience-mapmaker natural-earth --rows FILE --output FILE [--land FILE]
-      [--countries FILE] [--regions FILE] [--lakes FILE] [--rivers FILE] [--places FILE]";
+      [--countries FILE] [--regions FILE] [--lakes FILE] [--rivers FILE] [--places FILE]
+      [--elevations FILE]
+  resilience-mapmaker bounds --poly FILE
+  resilience-mapmaker sea --poly FILE [--output FILE] [INPUT|-]";
 
 const EXIT_USAGE: u8 = 64;
 
@@ -107,6 +116,53 @@ fn run_classify(args: &[String]) -> Result<(), String> {
         opts.max_abs_lat,
         stats.report()
     );
+    Ok(())
+}
+
+fn read_poly(o: &BTreeMap<String, String>) -> Result<Vec<poly::PolyRing>, String> {
+    let text = std::fs::read_to_string(need(o, "poly")?).map_err(|e| format!("--poly: {e}"))?;
+    poly::parse(&text).map_err(|e| format!("--poly: {e}"))
+}
+
+fn run_bounds(args: &[String]) -> Result<(), String> {
+    let (o, rest) = parse(args, &["poly"])?;
+    if !rest.is_empty() {
+        return Err("bounds takes no positional arguments".into());
+    }
+    let (w, s, e, n) = poly::bounds(&read_poly(&o)?).ok_or("--poly: no points")?;
+    println!("{w:.6} {s:.6} {e:.6} {n:.6}");
+    Ok(())
+}
+
+fn run_sea(args: &[String]) -> Result<(), String> {
+    let (o, rest) = parse(args, &["poly", "output"])?;
+    let max_abs_lat = poly::max_abs_lat(&read_poly(&o)?);
+    let out: Box<dyn Write> = match o.get("output") {
+        Some(p) => Box::new(BufWriter::new(
+            File::create_new(p).map_err(|e| format!("--output: {e}"))?,
+        )),
+        None => Box::new(BufWriter::new(io::stdout().lock())),
+    };
+    let mut stats = sea::Stats::default();
+    match rest.as_slice() {
+        [] => sea::convert(io::stdin().lock(), out, max_abs_lat, &mut stats),
+        [p] if p == "-" => sea::convert(io::stdin().lock(), out, max_abs_lat, &mut stats),
+        [p] => {
+            let f = File::open(p).map_err(|e| format!("{p}: {e}"))?;
+            sea::convert(
+                BufReader::with_capacity(1 << 20, f),
+                out,
+                max_abs_lat,
+                &mut stats,
+            )
+        }
+        _ => return Err("one input at most".into()),
+    }
+    .map_err(|e| format!("sea: {e}"))?;
+    eprintln!("{}", stats.report());
+    if stats.written == 0 {
+        return Err("sea: no polygon written (is the region inland? leave the sea out)".into());
+    }
     Ok(())
 }
 
@@ -218,6 +274,8 @@ fn main() -> ExitCode {
         Some("classify") => run_classify(&args[1..]),
         Some("finish") => run_finish(&args[1..]),
         Some("natural-earth") => run_natural_earth(&args[1..]),
+        Some("bounds") => run_bounds(&args[1..]),
+        Some("sea") => run_sea(&args[1..]),
         Some("--version") => {
             println!("resilience-mapmaker {}", resilience_core::VERSION);
             return ExitCode::SUCCESS;

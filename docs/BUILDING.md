@@ -102,17 +102,50 @@ filled by hand (older releases), `--resign DIR` rewrites and signs the sums.
 `--index VERSION OUTDIR` writes only `README.txt`, `LATEST` and the public
 key, for a tree rebuilt from existing releases.
 
-Uploading (the owner's server, through Tor): a key restricted with
-`rrsync` to the mirror folder (`ssh yoga-mirror-claude`), then
-`rsync -rt --partial --ignore-existing --delay-updates --chmod=D755,F644
-OUTDIR/releases/ yoga-mirror-claude:releases/`, and the top files last.
-Published files are never changed: `--ignore-existing` keeps it so.
+Publishing (since 2026-11-20): the mirror is served from the development
+machine itself (`~/Mirror`, nginx in Docker behind an FRP tunnel; files in
+`~/Mirror/files/resilience/`). Copy the release into the hidden
+`.staging/VERSION/` (nginx does not serve dotfiles), run `sha256sum -c
+SHA256SUMS` and `minisign -Vm SHA256SUMS -p resilience-release.minisign.pub`
+there, `chmod 644` every file and `755` the folder, then one `mv -n` into
+`releases/`; the top files (`LATEST` last) afterwards. Published files are
+never changed. Check from outside that **every file answers HTTP 200**
+(a file left 0600 gets 403 from nginx).
 
-On a connection that drops (as for 0.2.0 and 0.4.0, 2026-11-18), the
-release went first into a hidden `.staging/VERSION/` (nginx does not serve
-dotfiles) with `rsync -rt --append-verify --chmod=D700,F644`, retried until
-complete, then on the server `sha256sum -c SHA256SUMS`, `chmod 644` on every
-file, `chmod 755` on the folder and one `mv -n` into `releases/`. Check
-from outside that **every file answers HTTP 200**: a file whose transfer
-was resumed can keep rsync's temporary mode 0600 despite `--chmod`, and
-nginx then answers 403 (it happened to both ISOs; fixed with `chmod 644`).
+Then the torrent (since 2026-11-21): `~/Torrents/make-torrent.sh VERSION
+[EDITION]` makes `releases/torrents/resilience_EDITION_VERSION.torrent` from the
+published folder (qBittorrent's creator: hybrid v1+v2, the mirror as web
+seed, the trackers of `~/Torrents/trackers.txt`), starts seeding it and
+updates `releases/torrents/SHA256SUMS`. The torrent's name is the folder's
+name (a multi-file web seed is fetched at `<url>/<name>/<file>`). The trust
+chain is unchanged: the signed `SHA256SUMS` is inside the torrent.
+
+The seed (`~/Torrents`, Docker): qBittorrent-nox shares the network of
+gluetun, which holds a ProtonVPN WireGuard tunnel (P2P servers in Germany,
+NAT-PMP port forwarding pushed into qBittorrent; gluetun's firewall drops
+everything outside the tunnel). The private key is in `~/Torrents/.env`
+(0600), the Web UI password in `~/Torrents/webui-password` (0600); the Web
+UI listens on `127.0.0.1:8080` only. The release folders are mounted
+read-only. See `~/Torrents/README.md`.
+
+Until 0.4.0 the upload went to the owner's server through Tor (rsync over
+SSH with an `rrsync`-restricted key, resumed transfers into `.staging/`);
+that path is retired.
+
+## Debian host: KVM for the Nix build users
+
+NixOS VM tests run QEMU inside the Nix build sandbox as the `nixbld*`
+users. NixOS makes `/dev/kvm` mode 0666; Debian makes it `root:kvm 0660`,
+so in the sandbox QEMU prints `failed to initialize kvm: Permission
+denied`, falls back to emulating the CPU, and the tests time out (first
+full run on the Debian host, 2026-11-21). The owner, as root, once:
+
+```sh
+echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+  | sudo tee /etc/udev/rules.d/99-kvm-nix.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger --name-match=kvm
+ls -l /dev/kvm     # crw-rw-rw- ... /dev/kvm
+```
+
+Check without a full run: `nix build --rebuild .#checks.x86_64-linux.vm-licence -L 2>&1 | grep -c 'failed to initialize kvm'` must print 0.

@@ -1,8 +1,8 @@
 # The built-in world overview (ADR 0016 §2): a small map pack of profile
 # resilience-1, zooms 0 to 7, made at build time from Natural Earth and
 # shipped in the system image (also on the live ISO). It has coastlines,
-# country and region borders, large lakes and rivers and about 7,300
-# towns; no streets.
+# country and region borders, large lakes and rivers, about 7,300 towns
+# and 711 spot heights (major summits with their height); no streets.
 #
 #   Natural Earth GeoJSON (fixed-output fetches of the v5.1.2 tag)
 #     -> resilience-mapmaker natural-earth
@@ -41,6 +41,8 @@ let
   lakes = ne "lakes" "sha256-LQNvU97exXgAHFwwwpWe59TuvBMGkA+kNnxJkp7I8tk=";
   rivers = ne "rivers_lake_centerlines" "sha256-u4VKkA7L07QI30bV4W4+D5dLpVmT+di1wm6FUnPAkFo=";
   places = ne "populated_places_simple" "sha256-/T+oZ6Mgy9XFtrtbxVCv7sKTn7LO9ojlCABygqVaxC8=";
+  # 711 summits, spot elevations, depressions and passes (ADR 0016 §5).
+  elevations = ne "geography_regions_elevation_points" "sha256-+YoWhnhnFG7EFG1tSxjII+7tsoJZR95mYRbPmk4/Q8s=";
 
   # The whole world as Web Mercator shows it.
   world = writeText "world.poly" ''
@@ -54,7 +56,7 @@ let
     END
   '';
 
-  coverage = "The whole world at overview detail (1:10 million): coasts, borders, large lakes and rivers, towns. No streets.";
+  coverage = "The whole world at overview detail (1:10 million): coasts, borders, large lakes and rivers, towns, major summits with their heights. No streets.";
 in
 runCommand "resilience-world-map-${version}"
   {
@@ -81,6 +83,7 @@ runCommand "resilience-world-map-${version}"
     resilience-mapmaker natural-earth \
       --land ${land} --countries ${countries} --regions ${regions} \
       --lakes ${lakes} --rivers ${rivers} --places ${places} \
+      --elevations ${elevations} \
       --rows rows.jsonl --output features.geojsonseq
     tippecanoe --quiet --no-progress-indicator \
       --output=tiles.mbtiles --read-parallel \

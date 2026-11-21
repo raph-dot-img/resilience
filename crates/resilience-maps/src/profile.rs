@@ -40,9 +40,14 @@
 //!
 //! # `rs_place_fts`, `rs_poi_rtree`
 //!
-//! The FTS5 index over `rs_place.name` (external content, rowid =
-//! `rs_place.id`) and the R*Tree over points of interest and peaks (id =
-//! `rs_place.id`; for a point, min = max).
+//! The FTS5 index over `rs_place.fold` (external content, rowid =
+//! `rs_place.id`): the folded name, so that letters `unicode61` keeps
+//! (`Ł`, `Ø`, `Đ`) are found from plain letters ("lodz" finds "Łódź").
+//! Packs built before 2026-11-20 index `name`: they have no search until
+//! rebuilt (their maps and "nearby" still work).
+//!
+//! The R*Tree over points of interest and peaks (id = `rs_place.id`; for a
+//! point, min = max).
 
 /// Value of the `resilience_profile` metadata key for this profile.
 pub const PROFILE_VALUE: &str = "1";
@@ -53,7 +58,7 @@ pub const RS_COVERAGE: &str = "CREATE TABLE rs_coverage (ring INTEGER PRIMARY KE
 
 pub const RS_PLACE: &str = "CREATE TABLE rs_place (id INTEGER PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('settlement', 'street', 'poi', 'natural')), class TEXT NOT NULL, name TEXT NOT NULL, fold TEXT NOT NULL, near TEXT, lon INTEGER NOT NULL, lat INTEGER NOT NULL, rank INTEGER NOT NULL, bbox BLOB)";
 
-pub const RS_PLACE_FTS: &str = "CREATE VIRTUAL TABLE rs_place_fts USING fts5(name, content='rs_place', content_rowid='id', tokenize='unicode61 remove_diacritics 2', prefix='2 3')";
+pub const RS_PLACE_FTS: &str = "CREATE VIRTUAL TABLE rs_place_fts USING fts5(fold, content='rs_place', content_rowid='id', tokenize='unicode61 remove_diacritics 2', prefix='2 3')";
 
 pub const RS_POI_RTREE: &str =
     "CREATE VIRTUAL TABLE rs_poi_rtree USING rtree_i32(id, min_lon, max_lon, min_lat, max_lat)";

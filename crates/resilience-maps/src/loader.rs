@@ -29,8 +29,8 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
-use resilience_core::maps::geo::TileId;
-use resilience_core::maps::mvt;
+use resilience_core::maps::geo::{LatLon, TileId};
+use resilience_core::maps::{mvt, search};
 use resilience_core::packs::PackConfig;
 
 use crate::cache::{self, Key};
@@ -129,6 +129,24 @@ pub enum Request {
         generation: u64,
         tiles: Vec<Key>,
     },
+    /// Search the packs `packs` (the viewer's usable ones: never a
+    /// damaged pack or one still being checked) for `fts`, an FTS5
+    /// expression from `search::fts_query` (never user text); each pack
+    /// orders its rows for the folded query `exact` seen from `centre`.
+    Search {
+        generation: u64,
+        fts: String,
+        exact: String,
+        centre: LatLon,
+        packs: Vec<usize>,
+    },
+    /// Points of interest and peaks around `at`, in the packs `packs`
+    /// (usable ones, as for search) that have the R*Tree.
+    Nearby {
+        generation: u64,
+        at: LatLon,
+        packs: Vec<usize>,
+    },
 }
 
 /// The outcome of one tile read.
@@ -170,6 +188,20 @@ pub enum Response {
         result: TileResult,
         elapsed: Duration,
     },
+    /// The places found, with the packs searched and those that failed.
+    Found {
+        generation: u64,
+        hits: Vec<search::Hit>,
+        searched: Vec<usize>,
+        failed: Vec<(usize, String)>,
+    },
+    /// What is near a point, from every pack asked.
+    NearbyFound {
+        generation: u64,
+        hits: Vec<search::Hit>,
+        searched: Vec<usize>,
+        failed: Vec<(usize, String)>,
+    },
 }
 
 /// The reader's state: the open packs, by the viewer's index.
@@ -209,6 +241,18 @@ impl Worker {
                     send(self.tile(generation, key));
                 }
             }
+            Request::Search {
+                generation,
+                fts,
+                exact,
+                centre,
+                packs,
+            } => send(self.search(generation, &fts, &exact, centre, &packs)),
+            Request::Nearby {
+                generation,
+                at,
+                packs,
+            } => send(self.nearby(generation, at, &packs)),
         }
     }
 
@@ -290,6 +334,72 @@ impl Worker {
             *self.slot(index) = None;
         }
         send(Response::Checked { index, result });
+    }
+
+    /// Search the packs `only` that are open and have the search tables.
+    pub fn search(
+        &mut self,
+        generation: u64,
+        fts: &str,
+        exact: &str,
+        centre: LatLon,
+        only: &[usize],
+    ) -> Response {
+        let (mut hits, mut searched, mut failed) = (Vec::new(), Vec::new(), Vec::new());
+        for (index, pack) in self.packs.iter().enumerate() {
+            let Some(pack) = pack.as_ref().filter(|_| only.contains(&index)) else {
+                continue;
+            };
+            if pack.capabilities().search.is_err() {
+                continue;
+            }
+            match pack.search(fts, exact, centre) {
+                Ok(found) => {
+                    searched.push(index);
+                    hits.extend(found.into_iter().map(|mut h| {
+                        h.pack = index;
+                        h
+                    }));
+                }
+                Err(e) => failed.push((index, e.to_string())),
+            }
+        }
+        Response::Found {
+            generation,
+            hits,
+            searched,
+            failed,
+        }
+    }
+
+    /// Points near `at` in the packs `only` that are open and have the
+    /// R*Tree.
+    pub fn nearby(&mut self, generation: u64, at: LatLon, only: &[usize]) -> Response {
+        let (mut hits, mut searched, mut failed) = (Vec::new(), Vec::new(), Vec::new());
+        for (index, pack) in self.packs.iter().enumerate() {
+            let Some(pack) = pack.as_ref().filter(|_| only.contains(&index)) else {
+                continue;
+            };
+            if pack.capabilities().nearby.is_err() {
+                continue;
+            }
+            match pack.nearby(at) {
+                Ok(found) => {
+                    searched.push(index);
+                    hits.extend(found.into_iter().map(|mut h| {
+                        h.pack = index;
+                        h
+                    }));
+                }
+                Err(e) => failed.push((index, e.to_string())),
+            }
+        }
+        Response::NearbyFound {
+            generation,
+            hits,
+            searched,
+            failed,
+        }
     }
 
     /// Read and decode one tile.

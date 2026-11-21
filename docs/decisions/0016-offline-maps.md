@@ -61,7 +61,7 @@ rs_coverage         rings of the region covered, i32 microdegrees, little-endian
 rs_place            id, kind (settlement|street|poi|natural), class, name, fold
                     (name folded for comparison), near (nearest settlement), lon, lat,
                     rank, bbox
-rs_place_fts        FTS5 over rs_place.name (external content, unicode61
+rs_place_fts        FTS5 over rs_place.fold (external content, unicode61
                     remove_diacritics 2, prefix 2 3)
 rs_poi_rtree        rtree_i32 (microdegrees) over POIs and peaks
 ```
@@ -319,9 +319,16 @@ background. Text (labels, markers) replaces whole cells.
   most 8 tokens of up to 32 characters are kept. **User text never
   reaches FTS5's query syntax.** Each open pack is queried (`LIMIT 50`)
   and the results are merged and ranked:
-  1. exact match on the folded name;
+  1. exact match on the folded name (for a street, a POI or a natural
+     feature only within 10 km of the view's centre: "pharmacie" must
+     not put a "Pharmacie" 60 km away before "Pharmacie du Centre" 2 km
+     away; amended 2026-11-20);
   2. kind (settlements by rank, then streets, then POIs);
   3. distance from the view's centre.
+
+  Each pack applies the same order in its query (flat distance) before
+  `LIMIT 50`, so a pack with hundreds of matches returns the ones that
+  count.
 
   Measured on the Luxembourg index: 0.1 to 1 ms per query. A result shows
   its name, kind, `near` and distance and direction ("Esch-sur-Alzette,
@@ -811,6 +818,102 @@ Decided while adding maps to the TUI (slice 9, 2026-11-16):
   `library.rs`.
 - The entries exist only on a system with resource packs
   (`/etc/resilience/packs.toml`), like the Offline library.
+
+Decided while adding spot heights (slice 12, 2026-11-19):
+
+- **Two new classes in the `peaks` layer**: `summit` (Natural Earth's
+  mountains, plateaus and spot elevations: `^`) and `depression` (`v`,
+  so that the Dead Sea shore is not drawn as a peak); Natural Earth's two
+  passes are `saddle`. A viewer that does not know a class skips it, so
+  older viewers still read new packs.
+- **The rule**: `summit` and `depression` are drawn, named and with their
+  height (`ele`) up to 10,000 m per pixel; which ones appear at the
+  coarsest scales is Natural Earth's own `min_zoom` (4 to 8; points beyond
+  zoom 7 are kept at 7, like places). OSM peaks keep their rule (200 m per
+  pixel, height from 100 m per pixel). The 711 points are search rows and
+  in the R*Tree, so they are found with `/` and listed under `n`.
+- Heights outside the accepted range (-500 to 9,000 m) are left out; the
+  point stays.
+
+Open (found 2026-11-19, to settle before the maps review):
+
+- **Letters `unicode61` does not fold** (settled 2026-11-20): the FTS
+  index was built on the raw name with `remove_diacritics 2`, which
+  removes combining accents but does not turn `Ł` into `l`, `Ø` into `o`
+  or `Đ` into `d`, so "lodz" did not find "Łódź". `rs_place_fts` now
+  indexes `rs_place.fold` (folded by the builder with the same function
+  as the query). Search was never released before this change, so the
+  reader accepts only the new definition: packs built before it open
+  with their maps but without search until rebuilt (the two catalog
+  packs are rebuilt for 0.6.0).
+
+Decided by the project owner on 2026-11-19 (maps resumed for 0.6.0):
+
+- **Catalog regions**: Luxembourg and Bretagne (built, hashed and
+  hosted as GitHub Release assets; slice 13).
+- **Spot heights** (slice 12) are in 0.6.0.
+- **Accented names**: yes. Labels and search results use the console
+  font's CP437 accented letters instead of folding them to ASCII; the
+  glyph rule of CLAUDE.md §4 and its test change with it (a slice of its
+  own, after search).
+- **Order**: search (slice 10) first, then nearby and go-to (11), spot
+  heights (12), accents, catalog and VM test (13), and an independent
+  review of the pack builder and viewer before release.
+
+Decided while showing accented names (2026-11-19):
+
+- **The letters**: read from the Unicode table of `ter-i16n.psf.gz` in
+  the pinned nixpkgs (`terminus_font` 4.49.1; a PSF1 font, 256 glyphs),
+  with a small Python parser and checked with kbd's `psfgettable`. Its
+  accented Latin letters are exactly the CP437 ones:
+  `ÄÅÆÇÉÑÖÜßàáâäåæçèéêëìíîïñòóôöùúûüÿ` (34; `canvas::CONSOLE_LETTERS`).
+  `ƒ` and `ⁿ` are in the font too but are not used as letters.
+- **`label::fold` keeps them** and folds every other accented letter as
+  before: `Orléans`, `Zürich`, `Straße`, `Æblegård` are shown as written;
+  `Saint-Étienne` keeps its `É`, but `Île` becomes `Ile`, `Łódź` becomes
+  `Lódz`, `São` becomes `Sao`, `Œ` stays `OE` (À, Â, È, Ê, Ë, Î, Ô, Û, Ø,
+  ã, õ and the Latin Extended letters are not in the font). Lengths are
+  counted in characters (each is one cell), so the 40-character cap is
+  unchanged.
+- **Search is unchanged**: `search::search_fold` (and the pack builder's
+  `rs_place.fold`) uses `label::fold_ascii_to`, the ASCII-only fold, so
+  existing packs still match. Results are shown with `fold`.
+- **The glyph rule**: `canvas::is_console_char` (every map cell and the
+  viewer's screens) allows these 34 letters. The main TUI draws no map
+  names, so its test `only_console_font_glyphs_are_drawn` is unchanged.
+
+Decided for the sea inside regional packs (2026-11-21, owner's go-ahead
+to settle the open finding before rebuilding the catalog packs):
+
+- **The finding**: at 500 m per pixel and finer, a detailed pack's layer
+  starts black (land) so that the overview's coarse coastline never shows
+  at street scale; a Geofabrik region's coverage polygon reaches into the
+  sea, and an extract has coastline lines but no sea areas, so the sea
+  inside Bretagne was black with blue coastline lines.
+- **Chosen**: OpenStreetMap's water polygons (`water-polygons-split-4326`,
+  osmdata.openstreetmap.de, made from the whole planet's coastline by
+  osmcoastline; ODbL like the packs), cut at build time to the rectangle
+  around the region with GDAL's `ogr2ogr -spat ... -clipsrc spat_extent`
+  and written by `resilience-mapmaker sea` as layer `water`, class `sea`
+  (style: filled blue at every scale, under every other area; the legend's
+  existing "Sea" line stands for it). The viewer already clips a pack to
+  its coverage polygon, so the rectangle is enough.
+- **Pinned on the project's mirror**: osmdata replaces the file daily and
+  keeps no old version, so one download (2026-11-20, 909 MB, SHA-256
+  `8c02ca8554882c7e99efeefa8f618e12395bced404a97c47a65a32d25fe39d05`) is
+  published unchanged under `packs/maps/sources/` and fetched from there
+  by hash. The pack's `resilience_source` names it next to the PBF. The
+  coastline in the water polygons can differ slightly from the extract's
+  (two days apart for Bretagne); the extract's coastline lines are still
+  drawn.
+- **Rejected**: letting the overview's sea show through (its coastline is
+  kilometres off at street scale); assembling the sea from the extract's
+  coastline (it is cut open at the extract's edge; closing it along the
+  boundary is osmcoastline's hard part, and osmcoastline is not in
+  nixpkgs and wants the whole planet).
+- **Compatible**: the class is new, the profile stays `resilience-1`, and
+  a viewer that does not know `sea` skips those features (the sea stays
+  black there, as before). Inland regions (Luxembourg) have no sea input.
 
 Decided by the project owner on 2026-11-15:
 

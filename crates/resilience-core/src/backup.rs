@@ -740,7 +740,7 @@ mod tests {
         // the cause, the consumer's failure is.
         let e = run_pipeline(
             &[
-                Stage::new(sh("yes"), true),
+                Stage::new(sh("exec yes"), true),
                 Stage::new(sh("head -c 10 >/dev/null; echo broken >&2; exit 3"), true),
             ],
             Stdio::null(),

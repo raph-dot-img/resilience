@@ -4,9 +4,10 @@
 # information screen, quit; the viewer runs as the user, writes only its
 # last position and stays small.
 #
-# First part of the `vm-maps` test of ADR 0016 §8 (its step 1). A detailed
-# pack from a stick, search, nearby and hostile files come with the
-# later slices.
+# Then, on the same overview: search (`/`), what is near (`n`), go to
+# coordinates (`g`), a spot height with its height, and an accented name
+# drawn as such on the console (slices 10 to 12 and the accents). A
+# detailed pack from a stick and hostile files come with slice 13.
 { self }:
 { ... }:
 {
@@ -47,6 +48,7 @@
             if _time.monotonic() > deadline:
                 print(f"--- tty{tty} contents ---")
                 print(text)
+                print(machine.execute("cat /home/alice/.local/state/resilience/tui.log")[1][-3000:])
                 raise Exception(f"timed out waiting for {regexp!r} on tty{tty}")
             _time.sleep(0.5)
 
@@ -129,6 +131,59 @@
         machine.send_chars("q")
         wait_tty("1", "World overview map")
         home()
+
+    with subtest("search, nearby, go-to, spot heights and accents on the overview"):
+        machine.send_chars("/atlas")
+        wait_tty("1", "Map")
+        machine.send_key("ret")
+        wait_tty("1", "Natural Earth")
+        # Search: Mount Everest, a summit with its height.
+        machine.send_chars("/")
+        wait_tty("1", "FIND A PLACE")
+        machine.send_chars("everest\n")
+        wait_tty("1", r"Mount Everest \(summit\)", timeout=30)
+        machine.send_key("ret")
+        text = wait_tty("1", r"27\.9\d{4} N  86\.\d{5} E")
+        wait_tty("1", "Mount Everest 8848 m")
+        # What is near: the summit itself, nearest first.
+        machine.send_chars("n")
+        wait_tty("1", "NEARBY")
+        wait_tty("1", r"Mount Everest \(summit\)", timeout=30)
+        machine.send_key("esc")
+        # Go to coordinates: Zurich, its name drawn with the accent.
+        machine.send_chars("g")
+        wait_tty("1", "GO TO COORDINATES")
+        machine.send_chars("47.3769 8.5417\n")
+        text = wait_tty("1", r"47\.37\d{3} N  8\.54\d{3} E")
+        for _ in range(6):
+            machine.send_chars("-")
+        wait_tty("1", "Zürich", timeout=30)
+        # Searching without the accent finds it, shown with it.
+        machine.send_chars("/")
+        wait_tty("1", "FIND A PLACE")
+        for _ in range(10):
+            machine.send_key("backspace")
+        machine.send_chars("zurich\n")
+        wait_tty("1", r"Zürich \(city\)", timeout=30)
+        machine.send_key("esc")
+        machine.send_chars("q")
+        home()
+
+    with subtest("keys typed at once after quitting the viewer keep the interface"):
+        # Regression (2026-11-20): taking the screen back asked the terminal
+        # for the cursor position; Esc typed at that moment mixed with the
+        # answer and the interface stopped (exit code 1).
+        for _ in range(5):
+            machine.send_chars("/atlas")
+            wait_tty("1", "Map")
+            machine.send_key("ret")
+            wait_tty("1", "Natural Earth")
+            machine.send_key("esc")
+            machine.send_chars("q")
+            for _ in range(4):
+                machine.send_key("esc")
+            wait_tty("1", "MAIN MENU", timeout=15)
+        machine.fail("grep -F 'interface failed' /home/alice/.local/state/resilience/tui.log")
 
     with subtest("found by searching, and the system is healthy"):
         machine.send_chars("/atlas")

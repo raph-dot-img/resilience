@@ -18,7 +18,9 @@
 //! - [`poly`]: Geofabrik `.poly` coverage files;
 //! - [`finish`]: the `finish` step, which writes the pack;
 //! - [`overview`]: Natural Earth to the same two streams as `classify`,
-//!   for the built-in world overview.
+//!   for the built-in world overview;
+//! - [`sea`]: OpenStreetMap's water polygons, cut to the region, to `sea`
+//!   features.
 //!
 //! Input is untrusted and messy (OSM tags are free text): strings are
 //! bounded, what does not parse is skipped and counted, nothing panics.
@@ -31,4 +33,5 @@ pub mod geom;
 pub mod overview;
 pub mod poly;
 pub mod rows;
+pub mod sea;
 pub mod tags;
