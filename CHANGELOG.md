@@ -32,6 +32,14 @@ see docs/TESTING.md for what ran on real hardware.
   (`releases/torrents/resilience_EDITION_VERSION.torrent`, the mirror as
   web seed); the signed `SHA256SUMS` checks it as before.
 
+### Known issues
+- On a ThinkPad Yoga 11e, the installed system does not start (the
+  firmware goes back to its boot menu; Secure Boot suspected, not
+  confirmed). The live system works there, and the installed system
+  starts on an MSI GL73 8SE. Turn Secure Boot off before installing.
+- Started through a Ventoy stick on that Yoga, the ISO's boot menu is
+  unreadable; it still starts the live system after 10 s or with Enter.
+
 ### Fixed
 - The interface could stop (and restart, "exit code 1") when keys were
   typed at the very moment a program such as the map viewer ended: taking
