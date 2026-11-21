@@ -413,7 +413,8 @@ it concurrently with VM tests.
   coverage. Run all of it inside `systemd-run --user --scope -p
   MemoryMax=7G` so that only our job can be killed. The host is dedicated
   to the project: full runs and ISO builds may start at any time (owner,
-  2026-11-20), one heavy job at a time.
+  2026-11-20), using as much of the machine as it allows (builds with
+  `--max-jobs 2`, the daemon's limit).
 - Report each test as PASS / FAIL / BLOCKED / NOT TESTED in docs/TESTING.md.
   Never mark untested things as passing.
 
@@ -422,7 +423,9 @@ it concurrently with VM tests.
 Host (since 2026-11-20, a machine dedicated to development): Debian 13,
 Intel i3-6100 (2c/4t), 11 GiB RAM, user `claude` (groups kvm, docker),
 lingering on. Nix 2.36 multi-user daemon (user IS trusted; cache.nixos.org
-works; `kvm` and `nixos-test` system features; max-jobs 2, cores 2). Rust
+works; `kvm` and `nixos-test` system features; max-jobs 2, cores 2;
+the build users need `/dev/kvm` 0666, docs/BUILDING.md, or VM tests
+emulate the CPU and time out). Rust
 via rustup in ~/.cargo; age and gnupg in the user's nix profile; qemu,
 minisign and jq from Debian. `/bin/sh` is dash (tests must not rely on
 bash behaviour). The launcher may pass another user's
@@ -436,8 +439,10 @@ see its README): publishing = copying into `~/Mirror/files/resilience/`.
   firewall, networking, disks or anything outside this repo (and user-local
   caches). If root is required, write instructions for the user instead.
 - Never install Resilience on the host. Destructive tests only in disposable VMs.
-- ≤ 2 concurrent heavyweight jobs; never two VM tests or a VM test + ISO build
-  at the same time. Default test VM: 2 vCPU, ≤ 2 GiB RAM.
+- The machine is dedicated to the project (owner, 2026-11-20): use as
+  much of it as it allows. Memory is the limit (11 GiB): two VM tests at
+  once fit (`--max-jobs 2`); an ISO build next to VM tests only while
+  `free -h` shows room. Default test VM: 2 vCPU, ≤ 2 GiB RAM.
 
 ## 8. Git conventions
 
