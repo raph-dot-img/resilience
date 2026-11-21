@@ -1,6 +1,6 @@
 # Resilience OS logos
 
-Made by the project's owner (2026-11-21). Licence: see `LICENSE` in this
+Made by the project's owner for RESILIENCE INFORMATION SYSTEMS (2026-11-21). Licence: see `LICENSE` in this
 folder (not the code's Hippocratic License).
 
 | File | Use |
