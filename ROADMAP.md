@@ -290,6 +290,16 @@ decided by the owner on 2026-11-20: release 0.7.0, after maps (0.6.0).
   the service unprivileged and stopped after use; a model file with a
   wrong hash refused.
 
+## Phase 13 — Media and translation ⬜ (requested 2026-11-21; release 0.9.0, owner 2026-11-21)
+All offline, the same screens in the TUI and the GUI (resilience-shell), ADR first.
+- Music player: ~/Music, USB sticks, later music packs (public domain / CC); playback goes on
+  in the background (mpv over JSON IPC, no network, no scripts); proposal: PipeWire user service.
+- Audio recorder: microphone to ~/Recordings (Opus), level meter, pause, no upload.
+- Video recorder: webcam (V4L2) to ~/Videos, visible recording indicator, camera off when idle.
+- Offline translation: a local engine (candidate: Bergamot / Firefox Translations models, or
+  Argos/OPUS-MT) with language pairs as hash-pinned downloadable packs (ADR 0013).
+- Threat model: crafted media files, camera/microphone privacy, model packs integrity.
+
 ## Disk space (estimate, 2026-11-16)
 Measured: the system closure (live-standard) is **2.3 GiB**, of which
 `linux-firmware` 825 MiB, a nixpkgs source copy 197 MiB, Python 128 MiB.
