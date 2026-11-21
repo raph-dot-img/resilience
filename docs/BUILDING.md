@@ -115,3 +115,21 @@ never changed. Check from outside that **every file answers HTTP 200**
 Until 0.4.0 the upload went to the owner's server through Tor (rsync over
 SSH with an `rrsync`-restricted key, resumed transfers into `.staging/`);
 that path is retired.
+
+## Debian host: KVM for the Nix build users
+
+NixOS VM tests run QEMU inside the Nix build sandbox as the `nixbld*`
+users. NixOS makes `/dev/kvm` mode 0666; Debian makes it `root:kvm 0660`,
+so in the sandbox QEMU prints `failed to initialize kvm: Permission
+denied`, falls back to emulating the CPU, and the tests time out (first
+full run on the Debian host, 2026-11-21). The owner, as root, once:
+
+```sh
+echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+  | sudo tee /etc/udev/rules.d/99-kvm-nix.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger --name-match=kvm
+ls -l /dev/kvm     # crw-rw-rw- ... /dev/kvm
+```
+
+Check without a full run: `nix build --rebuild .#checks.x86_64-linux.vm-licence -L 2>&1 | grep -c 'failed to initialize kvm'` must print 0.

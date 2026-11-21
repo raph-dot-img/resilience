@@ -63,8 +63,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use resilience_core::maps::geo::{TileId, TmsTile};
+use resilience_core::maps::geo::{LatLon, TileId, TmsTile};
 use resilience_core::maps::mvt;
+use resilience_core::maps::{nearby, search};
 use rusqlite::config::DbConfig;
 use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
 use rusqlite::limits::Limit;
@@ -975,6 +976,138 @@ impl Pack {
             return Err(PackError::Coverage("no rings".into()));
         }
         Ok(Some(Coverage { rings }))
+    }
+
+    /// Places matching `fts` (an FTS5 expression built by
+    /// [`resilience_core::maps::search::fts_query`], never user text), at
+    /// most [`search::PER_PACK`], within [`QUERY_BUDGET`], in the order of
+    /// [`search::rank`] for the folded query `exact` seen from `centre`:
+    /// a pack with hundreds of matches returns the ones that count, not
+    /// any 50. Distances here are flat (longitude scaled by the cosine of
+    /// the centre's latitude), which is close enough for an order. Empty
+    /// when the file has no verified search tables. Rows with an unknown
+    /// kind, a position outside the world or oversized text are left out.
+    pub fn search(
+        &self,
+        fts: &str,
+        exact: &str,
+        centre: LatLon,
+    ) -> Result<Vec<search::Hit>, PackError> {
+        if self.capabilities.search.is_err() || fts.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.budget.arm(QUERY_BUDGET);
+        let limit = i64::try_from(search::PER_PACK).unwrap_or(50);
+        // Microdegrees, as stored.
+        let (lon, lat) = (centre.lon() * 1e6, centre.lat() * 1e6);
+        let cos = centre.lat().to_radians().cos();
+        let reach = search::EXACT_REACH_M / 111_195.0 * 1e6;
+        self.places(
+            "SELECT p.kind, p.class, p.name, p.fold, p.near, p.lon, p.lat, p.rank \
+             FROM rs_place_fts JOIN rs_place AS p ON p.id = rs_place_fts.rowid \
+             WHERE rs_place_fts MATCH ?1 \
+             ORDER BY NOT (p.fold = ?3 AND (p.kind = 'settlement' OR \
+                 ((p.lon - ?4) * ?6) * ((p.lon - ?4) * ?6) + (p.lat - ?5) * (p.lat - ?5) \
+                 <= ?7 * ?7)), \
+               CASE p.kind WHEN 'settlement' THEN 0 WHEN 'street' THEN 1 \
+                 WHEN 'poi' THEN 2 ELSE 3 END, \
+               p.rank, \
+               ((p.lon - ?4) * ?6) * ((p.lon - ?4) * ?6) + (p.lat - ?5) * (p.lat - ?5) \
+             LIMIT ?2",
+            rusqlite::params![fts, limit, exact, lon, lat, cos, reach],
+        )
+    }
+
+    /// Points of interest and peaks around `centre` (ADR 0016 §4, `n`):
+    /// a box of [`nearby::BOXES_M`]`[0]`, widened while fewer than
+    /// [`nearby::WANT`] are found; each box within [`QUERY_BUDGET`] and
+    /// [`nearby::MAX_ROWS`] rows. Empty when the file has no verified
+    /// R*Tree.
+    pub fn nearby(&self, centre: LatLon) -> Result<Vec<search::Hit>, PackError> {
+        if self.capabilities.nearby.is_err() {
+            return Ok(Vec::new());
+        }
+        let limit = i64::try_from(nearby::MAX_ROWS).unwrap_or(1000);
+        let mut found = Vec::new();
+        for half in nearby::BOXES_M {
+            let (w, s, e, n) = nearby::box_micro(centre, half);
+            self.budget.arm(QUERY_BUDGET);
+            found = self.places(
+                "SELECT p.kind, p.class, p.name, p.fold, p.near, p.lon, p.lat, p.rank \
+                 FROM rs_poi_rtree AS r JOIN rs_place AS p ON p.id = r.id \
+                 WHERE r.max_lon >= ?1 AND r.min_lon <= ?3 AND r.max_lat >= ?2 AND r.min_lat <= ?4 \
+                 LIMIT ?5",
+                rusqlite::params![w, s, e, n, limit],
+            )?;
+            if found.len() >= nearby::WANT {
+                break;
+            }
+        }
+        Ok(found)
+    }
+
+    /// Run a query over `rs_place` columns (kind, class, name, fold, near,
+    /// lon, lat, rank) and keep the well-formed rows: a known kind, a
+    /// position inside the world, bounded text.
+    fn places(
+        &self,
+        sql: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<Vec<search::Hit>, PackError> {
+        let mut st = self.conn.prepare(sql).map_err(sql_err)?;
+        let mut rows = st.query(params).map_err(sql_err)?;
+        let text = |v: ValueRef<'_>, max: usize| -> Option<String> {
+            match v {
+                ValueRef::Text(t) if t.len() <= max => {
+                    std::str::from_utf8(t).ok().map(String::from)
+                }
+                _ => None,
+            }
+        };
+        let mut out = Vec::new();
+        while let Some(r) = rows.next().map_err(sql_err)? {
+            let get = |i| r.get_ref(i).map_err(sql_err);
+            let kind = text(get(0)?, 16).and_then(|k| search::Kind::parse(&k));
+            let class = text(get(1)?, 64);
+            let name = text(get(2)?, 400);
+            let fold = text(get(3)?, 800);
+            let near = match get(4)? {
+                ValueRef::Null => Some(None),
+                v => text(v, 400).map(Some),
+            };
+            let pos = match (get(5)?, get(6)?) {
+                (ValueRef::Integer(lon), ValueRef::Integer(lat)) => {
+                    LatLon::new(lat as f64 / 1e6, lon as f64 / 1e6)
+                }
+                _ => None,
+            };
+            let rank = match get(7)? {
+                ValueRef::Integer(n) => Some(n),
+                _ => None,
+            };
+            if let (
+                Some(kind),
+                Some(class),
+                Some(name),
+                Some(fold),
+                Some(near),
+                Some(at),
+                Some(rank),
+            ) = (kind, class, name, fold, near, pos, rank)
+            {
+                out.push(search::Hit {
+                    pack: 0,
+                    kind,
+                    class,
+                    name,
+                    fold,
+                    near,
+                    at,
+                    rank,
+                });
+            }
+        }
+        Ok(out)
     }
 
     /// The number of tiles, or `None` if counting would take more than

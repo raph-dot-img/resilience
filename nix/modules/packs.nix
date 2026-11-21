@@ -296,8 +296,8 @@ in
     };
     catalog = mkOption {
       type = types.listOf (types.submodule packModule);
-      default = import ../packs/kiwix.nix;
-      defaultText = lib.literalExpression "import ./nix/packs/kiwix.nix";
+      default = import ../packs/kiwix.nix ++ import ../packs/maps.nix;
+      defaultText = lib.literalExpression "import ./nix/packs/kiwix.nix ++ import ./nix/packs/maps.nix";
       description = ''
         Packs offered for download or installation from a USB stick. Only a
         file with exactly this size and SHA-256 is installed.

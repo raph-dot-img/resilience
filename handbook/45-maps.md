@@ -8,6 +8,9 @@ OPENING THE MAP
   Open MAPS & NAVIGATION > Map.
     Arrows           move the map (with Shift: one small step)
     + / -            zoom in / out
+    /                find a place, a street or a point of interest
+    n                what is near the cross (water, health, shelter...)
+    g                go to coordinates you type
     d                coordinates as degrees, minutes and seconds
     i                what each map covers, its date, source and licence
     L                legend: what the colours and signs mean
@@ -17,9 +20,36 @@ OPENING THE MAP
   screen, a scale bar, and which map is shown. The map remembers where
   you were for the next time.
 
+FINDING A PLACE
+  Press / and type a name, or its beginning ("esch al" finds
+  Esch-sur-Alzette); accents and capitals do not matter. Enter searches
+  every open map. Each result says what it is, the place it is near, and
+  how far and in which direction it is from the cross ("15 km SW").
+  Up/Down chooses a result and Enter shows it on the map. Only the open
+  maps are searched: the world overview knows towns and cities, a
+  detailed map also knows villages, streets and points of interest.
+  "Nothing found" lists the maps that were searched.
+
+WHAT IS NEAR
+  Press n to list what is around the cross in the middle of the map,
+  nearest first, with the distance and direction: health (hospital,
+  doctor, pharmacy), water (drinking water, spring), shelter, safety
+  (police, fire station, defibrillator), food, fuel, toilets, post, town
+  hall, other named places and peaks (with their height when known). Tab shows one kind at a time, most
+  urgent first. Enter shows the chosen one on the map. It looks up to
+  10 km away, in the open detailed maps only.
+
+GOING TO COORDINATES
+  Press g and type a latitude, then a longitude: decimal degrees
+  (49.6116 6.1319) or degrees, minutes and seconds (49 36 41.8 N
+  6 7 54.8 E). A minus sign means south or west. The bottom line of the
+  map gives the cross's coordinates in the same forms.
+
 WHAT THE WORLD OVERVIEW SHOWS
-  Coasts, country and region borders, large lakes and rivers, and about
-  7,300 towns and cities. It has no streets and no villages. It comes
+  Coasts, country and region borders, large lakes and rivers, about
+  7,300 towns and cities, and 711 spot heights: major summits (^) and
+  places below sea level such as the Dead Sea shore (v), with their
+  height. It has no streets and no villages. It comes
   from Natural Earth (public domain), data of 2022. Every border is
   drawn the same way, whether or not it is disputed.
 

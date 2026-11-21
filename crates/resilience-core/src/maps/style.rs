@@ -188,6 +188,11 @@ names! {
         Peak = "peak",
         Volcano = "volcano",
         Saddle = "saddle",
+        /// A major summit of the world overview (Natural Earth's elevation
+        /// points), drawn from overview scales with its height.
+        Summit = "summit",
+        /// A place below its surroundings (the Dead Sea shore), overview.
+        Depression = "depression",
     }
 }
 
@@ -229,6 +234,48 @@ impl PoiCategory {
             PoiCategory::Other => 'o',
         }
     }
+}
+
+/// Points of interest, most urgent category first (ADR 0016 §4): (key,
+/// value, category). The value is the `rs_place.class` of the row, and
+/// [`poi_category`] maps it back, so every value appears once.
+/// `man_made=water_tap` counts only with `drinking_water=yes` (see
+/// [`poi`]).
+pub const POIS: &[(&str, &str, PoiCategory)] = &[
+    ("amenity", "hospital", PoiCategory::Health),
+    ("amenity", "clinic", PoiCategory::Health),
+    ("amenity", "doctors", PoiCategory::Health),
+    ("amenity", "pharmacy", PoiCategory::Health),
+    ("healthcare", "hospital", PoiCategory::Health),
+    ("healthcare", "clinic", PoiCategory::Health),
+    ("healthcare", "doctor", PoiCategory::Health),
+    ("healthcare", "pharmacy", PoiCategory::Health),
+    ("amenity", "drinking_water", PoiCategory::Water),
+    ("amenity", "water_point", PoiCategory::Water),
+    ("natural", "spring", PoiCategory::Water),
+    ("man_made", "water_tap", PoiCategory::Water),
+    ("amenity", "shelter", PoiCategory::Shelter),
+    ("tourism", "alpine_hut", PoiCategory::Shelter),
+    ("tourism", "wilderness_hut", PoiCategory::Shelter),
+    ("tourism", "camp_site", PoiCategory::Shelter),
+    ("amenity", "police", PoiCategory::Safety),
+    ("amenity", "fire_station", PoiCategory::Safety),
+    ("emergency", "defibrillator", PoiCategory::Safety),
+    ("shop", "supermarket", PoiCategory::Food),
+    ("shop", "bakery", PoiCategory::Food),
+    ("amenity", "marketplace", PoiCategory::Food),
+    ("amenity", "fuel", PoiCategory::Fuel),
+    ("amenity", "toilets", PoiCategory::Toilets),
+    ("amenity", "post_office", PoiCategory::Post),
+    ("amenity", "townhall", PoiCategory::TownHall),
+];
+
+/// The category of a POI row's class (an OSM value). Values not in
+/// [`POIS`] are "other".
+pub fn poi_category(class: &str) -> PoiCategory {
+    POIS.iter()
+        .find(|(_, v, _)| *v == class)
+        .map_or(PoiCategory::Other, |(_, _, c)| *c)
 }
 
 /// A class of one layer of `resilience-1`.
@@ -381,6 +428,8 @@ impl Class {
                 PeakClass::Peak => "peak",
                 PeakClass::Volcano => "volcano",
                 PeakClass::Saddle => "mountain pass",
+                PeakClass::Summit => "major summit (height in metres)",
+                PeakClass::Depression => "depression (height in metres)",
             },
         }
     }
@@ -563,6 +612,25 @@ const fn peak(class: PeakClass) -> Rule {
     }
 }
 
+/// A spot height of the world overview: visible, with its name and height,
+/// from overview scales (ADR 0016 §5); the overview's own minimum zooms
+/// keep only the major ones at the coarsest scales.
+const fn spot(class: PeakClass, marker: char) -> Rule {
+    Rule {
+        class: Class::Peak(class),
+        max_scale: 10_000.0,
+        colour: Colour::White,
+        draw: Draw::Label(LabelRule {
+            marker: Some(marker),
+            priority: PEAK_PRIORITY,
+            name_max_scale: 10_000.0,
+            detail_max_scale: Some(10_000.0),
+            keep_marker: true,
+        }),
+        rank: PEAK_PRIORITY,
+    }
+}
+
 const fn poi(cat: PoiCategory, priority: u16) -> Rule {
     Rule {
         class: Class::Poi(cat),
@@ -661,6 +729,8 @@ pub static RULES: &[Rule] = &[
     peak(PeakClass::Peak),
     peak(PeakClass::Volcano),
     peak(PeakClass::Saddle),
+    spot(PeakClass::Summit, '^'),
+    spot(PeakClass::Depression, 'v'),
     place(PlaceClass::Village, 200.0, 70),
     place(PlaceClass::Hamlet, 50.0, 60),
     poi(PoiCategory::Health, 59),
@@ -952,6 +1022,17 @@ mod tests {
             .copied();
         let poi = poi.expect("poi rule");
         assert!(poi.name_visible(10.0) && !poi.name_visible(20.0));
+        // The overview's spot heights are visible, named and with their
+        // height at overview scales; a depression is not drawn as a peak.
+        for (c, m) in [(PeakClass::Summit, '^'), (PeakClass::Depression, 'v')] {
+            let r = rule(Class::Peak(c)).expect("spot height rule");
+            assert!(r.visible(5_000.0) && !r.visible(20_000.0));
+            let Draw::Label(l) = r.draw else {
+                panic!("a label")
+            };
+            assert_eq!(l.marker, Some(m));
+            assert!(l.name_visible(5_000.0) && l.detail_visible(5_000.0));
+        }
         let peak = rule(Class::Peak(PeakClass::Peak))
             .and_then(Rule::label)
             .copied();

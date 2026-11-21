@@ -766,23 +766,334 @@ fn legend_follows_the_scale_and_shows_all_on_request_and_help() {
     assert_eq!(h.key(KeyCode::Char('q')), Effect::Quit);
 }
 
+/// Real packs (2026-11-20): an unnamed point is "(no name)", not "(cannot
+/// be shown)", and a bare `yes` class (shop=yes) shows no kind.
 #[test]
-fn reserved_keys_do_nothing_yet() {
+fn nearby_names_unnamed_points_plainly() {
+    let t = testland("Testland", "2026-01-01")
+        .place("poi", "defibrillator", "", None, (49.6121, 6.1319), 3)
+        .place("poi", "yes", "uewen&feier", None, (49.6143, 6.1319), 3);
+    let mut h = Harness::new("unnamed", &[("t.mbtiles", &t)], Some(TESTVILLE), Some(50.0));
+    h.key(KeyCode::Char('n'));
+    let s = h.screen(110, 30);
+    assert!(s.contains("(no name) (defibrillator)"), "{s}");
+    assert!(!s.contains("cannot be shown"), "{s}");
+    assert!(s.contains("uewen&feier  ") && !s.contains("(yes)"), "{s}");
+}
+
+/// Nearby (`n`, slice 11): points around the crosshair, nearest first,
+/// one kind at a time with Tab, Enter centres the map; peaks count,
+/// settlements and streets do not.
+#[test]
+fn nearby_lists_points_around_the_crosshair() {
+    let t = testland("Testland", "2026-01-01")
+        .place(
+            "poi",
+            "pharmacy",
+            "Pharmacie du Test",
+            Some("Testville"),
+            (49.6121, 6.1319),
+            3,
+        )
+        .place(
+            "poi",
+            "drinking_water",
+            "Fontaine",
+            None,
+            (49.6143, 6.1319),
+            1,
+        )
+        .place("natural", "peak", "Mont Test", None, (49.6197, 6.1319), 2)
+        .place("poi", "shelter", "Abri", None, (49.6250, 6.1319), 2)
+        .place("poi", "cafe", "Cafe Loin", None, (49.6800, 6.1319), 9)
+        .place("settlement", "town", "Testville", None, TESTVILLE, 1)
+        .place(
+            "street",
+            "residential",
+            "Rue de l'Essai",
+            None,
+            (49.6117, 6.1319),
+            1,
+        );
+    let mut h = Harness::new("nearby", &[("t.mbtiles", &t)], Some(TESTVILLE), Some(50.0));
+    assert_eq!(h.key(KeyCode::Char('n')), Effect::None);
+    assert_eq!(h.app.screen, Screen::Nearby);
+    let s = h.screen(110, 30);
+    let order: Vec<usize> = [
+        "Pharmacie du Test",
+        "Fontaine",
+        "Mont Test",
+        "Abri",
+        "Cafe Loin",
+    ]
+    .iter()
+    .map(|n| s.find(n).unwrap_or_else(|| panic!("{n}: {s}")))
+    .collect();
+    assert!(order.windows(2).all(|w| w[0] < w[1]), "{s}");
+    assert!(
+        s.contains("health") && s.contains("(pharmacy)") && s.contains("m N"),
+        "{s}"
+    );
+    assert!(
+        !s.contains("Rue de l'Essai") && !s.contains("Testville (town)"),
+        "{s}"
+    );
+    assert!(s.contains("Nearest first, from: Testland"), "{s}");
+    assert_console_glyphs(&s);
+    // Tab: one kind at a time, most urgent first; Shift-Tab back.
+    h.key(KeyCode::Tab);
+    let s = h.screen(110, 30);
+    assert!(
+        s.contains("only health") && s.contains("Pharmacie") && !s.contains("Fontaine"),
+        "{s}"
+    );
+    h.key(KeyCode::Tab);
+    let s = h.screen(110, 30);
+    assert!(
+        s.contains("only water") && s.contains("Fontaine") && !s.contains("Pharmacie"),
+        "{s}"
+    );
+    h.key(KeyCode::BackTab);
+    h.key(KeyCode::BackTab);
+    assert!(h.screen(110, 30).contains("every kind"));
+    // Enter shows the chosen point on the map.
+    h.key(KeyCode::Down);
+    h.key(KeyCode::Enter);
+    assert_eq!(h.app.screen, Screen::Map);
+    assert!((h.app.view().center().lat() - 49.6143).abs() < 1e-6);
+    // From somewhere with nothing near: said plainly.
+    h.app
+        .handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+    type_text(&mut h, "49.52 6.29");
+    h.key(KeyCode::Enter);
+    h.key(KeyCode::Char('n'));
+    assert!(flat(&h.screen(110, 30)).contains("Nothing within 10 km in: Testland"));
+}
+
+/// Go to (`g`): typed coordinates in the forms the readout prints;
+/// mistakes are explained and nothing moves.
+#[test]
+fn go_to_coordinates() {
     let t = testland("Testland", "2026-01-01");
+    let mut h = Harness::new("goto", &[("t.mbtiles", &t)], Some(TESTVILLE), Some(50.0));
+    h.key(KeyCode::Char('g'));
+    assert_eq!(h.app.screen, Screen::GoTo);
+    let s = h.screen(100, 30);
+    assert!(
+        s.contains("GO TO COORDINATES") && s.contains("49.6116 6.1319"),
+        "{s}"
+    );
+    let before = *h.app.view();
+    type_text(&mut h, "north of here");
+    h.key(KeyCode::Enter);
+    assert_eq!(h.app.screen, Screen::GoTo);
+    assert!(h.screen(100, 30).contains("[!!]"));
+    assert_eq!(*h.app.view(), before);
+    h.key(KeyCode::Esc);
+    h.key(KeyCode::Char('g'));
+    for _ in 0..13 {
+        h.key(KeyCode::Backspace);
+    }
+    type_text(&mut h, "49 36 41.8 N 6 7 54.8 E");
+    h.key(KeyCode::Enter);
+    assert_eq!(h.app.screen, Screen::Map);
+    let c = h.app.view().center();
+    assert!(
+        (c.lat() - 49.611_61).abs() < 1e-4 && (c.lon() - 6.131_89).abs() < 1e-4,
+        "{c:?}"
+    );
+    assert_eq!(h.app.view().scale(), before.scale(), "the scale is kept");
+    // A latitude out of range is refused.
+    h.key(KeyCode::Char('g'));
+    for _ in 0..30 {
+        h.key(KeyCode::Backspace);
+    }
+    type_text(&mut h, "95 6");
+    h.key(KeyCode::Enter);
+    assert_eq!(h.app.screen, Screen::GoTo);
+}
+
+fn type_text(h: &mut Harness, text: &str) {
+    for c in text.chars() {
+        h.key(KeyCode::Char(c));
+    }
+}
+
+/// Search (ADR 0016 slice 10): `/`, words, Enter, results from every
+/// open pack ranked, Enter centres the map; nothing found says which maps
+/// were searched; `--search` runs once the packs are open.
+#[test]
+fn search_finds_places_and_centres_the_map() {
+    let t = testland("Testland", "2026-01-01")
+        .place("settlement", "town", "Testville", None, TESTVILLE, 1)
+        .place(
+            "poi",
+            "pharmacy",
+            "Pharmacie du Test",
+            Some("Testville"),
+            (49.6110, 6.1320),
+            1,
+        )
+        .place(
+            "street",
+            "residential",
+            "Rue de l'Essai",
+            Some("Testville"),
+            (49.6120, 6.1310),
+            1,
+        )
+        .place("settlement", "village", "Farbourg", None, (49.69, 6.29), 3);
+    let w = world().place("settlement", "city", "Bigcity", None, (48.5, 4.0), 1);
     let mut h = Harness::new(
-        "reserved",
-        &[("t.mbtiles", &t)],
+        "search",
+        &[("w.mbtiles", &w), ("t.mbtiles", &t)],
+        Some((49.0, 5.0)),
+        Some(20_000.0),
+    );
+    assert_eq!(h.key(KeyCode::Char('/')), Effect::None);
+    assert_eq!(h.app.screen, Screen::Search);
+    let s = h.screen(100, 30);
+    assert!(s.contains("FIND A PLACE") && s.contains("Find:"), "{s}");
+    type_text(&mut h, "tes");
+    h.key(KeyCode::Enter);
+    let s = h.screen(100, 30);
+    // The town first (settlements before points of interest), with where it is.
+    let town = s.find("Testville (town)").unwrap_or_else(|| panic!("{s}"));
+    let shop = s
+        .find("Pharmacie du Test (pharmacy, near Testville)")
+        .unwrap_or_else(|| panic!("{s}"));
+    assert!(town < shop, "{s}");
+    assert!(s.contains("2 found in: World overview, Testland"), "{s}");
+    assert!(s.contains("km NE"), "{s}");
+    assert_console_glyphs(&s);
+    // Enter goes to the first result.
+    h.key(KeyCode::Enter);
+    assert_eq!(h.app.screen, Screen::Map);
+    let c = h.app.view().center();
+    assert!((c.lat() - TESTVILLE.0).abs() < 1e-6 && (c.lon() - TESTVILLE.1).abs() < 1e-6);
+    assert!(h.app.view().scale() <= 20.0);
+    // `/` again: the same words and results; Down + Enter takes the second.
+    h.key(KeyCode::Char('/'));
+    assert!(h.screen(100, 30).contains("Testville (town)"));
+    h.key(KeyCode::Down);
+    h.key(KeyCode::Enter);
+    let c = h.app.view().center();
+    assert!((c.lat() - 49.6110).abs() < 1e-6, "{c:?}");
+    // Changing the words searches again; the overview's city is found too.
+    h.key(KeyCode::Char('/'));
+    for _ in 0..3 {
+        h.key(KeyCode::Backspace);
+    }
+    type_text(&mut h, "big");
+    h.key(KeyCode::Enter);
+    assert!(h.screen(100, 30).contains("Bigcity (city)"));
+    // Nothing found: which maps were searched, and that others cannot be.
+    for _ in 0..3 {
+        h.key(KeyCode::Backspace);
+    }
+    type_text(&mut h, "nowhere");
+    h.key(KeyCode::Enter);
+    let s = flat(&h.screen(100, 30));
+    assert!(
+        s.contains("Nothing found in: World overview, Testland"),
+        "{s}"
+    );
+    assert!(s.contains("outside these maps cannot be found"), "{s}");
+    // Hostile words are only words.
+    for _ in 0..7 {
+        h.key(KeyCode::Backspace);
+    }
+    type_text(&mut h, "\" OR \"x*");
+    h.key(KeyCode::Enter);
+    assert!(flat(&h.screen(100, 30)).contains("Nothing found"));
+    // Esc leaves the search without moving.
+    let before = *h.app.view();
+    h.key(KeyCode::Esc);
+    assert_eq!(h.app.screen, Screen::Map);
+    assert_eq!(*h.app.view(), before);
+}
+
+/// Accented names (ADR 0016, "Decided while showing accented names"):
+/// results show the letters the console font has and fold the others;
+/// typing with or without accents finds the same place.
+#[test]
+fn search_shows_accented_names() {
+    let t = testland("Testland", "2026-01-01")
+        .place("settlement", "town", "Orléans", None, TESTVILLE, 1)
+        .place("settlement", "village", "Île-d'Arz", None, (49.69, 6.29), 1);
+    let mut h = Harness::new("accents", &[("t.mbtiles", &t)], None, None);
+    for words in ["orleans", "Orléans", "ORLÉANS"] {
+        h.key(KeyCode::Char('/'));
+        for _ in 0..20 {
+            h.key(KeyCode::Backspace);
+        }
+        type_text(&mut h, words);
+        h.key(KeyCode::Enter);
+        let s = h.screen(100, 30);
+        assert!(s.contains("Orléans (town)"), "{words}: {s}");
+        assert_console_glyphs(&s);
+        h.key(KeyCode::Esc);
+    }
+    h.key(KeyCode::Char('/'));
+    for _ in 0..20 {
+        h.key(KeyCode::Backspace);
+    }
+    type_text(&mut h, "ile");
+    h.key(KeyCode::Enter);
+    let s = h.screen(100, 30);
+    // Î is not in the font: folded.
+    assert!(s.contains("Ile-d'Arz (village)"), "{s}");
+    assert_console_glyphs(&s);
+}
+
+#[test]
+fn search_given_at_start_and_maps_without_search() {
+    let t = testland("Testland", "2026-01-01").place(
+        "settlement",
+        "town",
+        "Testville",
+        None,
+        TESTVILLE,
+        1,
+    );
+    let dir = TempDir::new("search-start");
+    let p = dir.file("t.mbtiles");
+    t.write(&p);
+    let now = Instant::now();
+    let mut app = MapApp::new(Start {
+        packs: vec![p],
+        at: None,
+        scale: None,
+        search: Some("Testville".into()),
+        saved: None,
+        theme: ThemeName::Green,
+        now,
+    });
+    let mut worker = Worker::new(Catalog::none());
+    for _ in 0..10 {
+        let reqs = app.take_requests();
+        if reqs.is_empty() {
+            break;
+        }
+        for r in worker.handle_all(reqs) {
+            app.on_response(r);
+        }
+    }
+    assert_eq!(app.screen, Screen::Search);
+    assert_eq!(app.find.results.len(), 1);
+    // A map without search tables: said plainly, no request.
+    let plain = testland("Plain", "2026-01-01");
+    let mut h = Harness::new(
+        "nosearch",
+        &[("p.mbtiles", &plain)],
         Some(TESTVILLE),
         Some(50.0),
     );
-    let before = *h.app.view();
-    for c in ['/', 'n', 'g'] {
-        assert_eq!(h.key(KeyCode::Char(c)), Effect::None);
-        assert_eq!(h.app.screen, Screen::Map);
-    }
-    assert_eq!(*h.app.view(), before);
-    let s = h.screen(160, 50);
-    assert!(!s.contains("/ Search") && !s.contains("n Nearby"), "{s}");
+    h.key(KeyCode::Char('/'));
+    type_text(&mut h, "test");
+    h.key(KeyCode::Enter);
+    assert!(!h.app.has_requests());
+    assert!(flat(&h.screen(100, 30)).contains("no open map can be searched"));
 }
 
 #[test]
@@ -1088,7 +1399,8 @@ fn the_last_position_is_used_unless_overridden() {
         now: Instant::now(),
     });
     assert_eq!(app.view_to_save(), None);
-    assert_eq!(app.search.as_deref(), Some("essai"));
+    assert_eq!(app.find.input, "essai");
+    assert_eq!(app.screen, Screen::Search);
 }
 
 // ---------------------------------------------------------------------------
@@ -1349,7 +1661,7 @@ fn names_from_the_file_are_folded_and_cannot_reach_the_terminal() {
             ("class", Attr::S("town")),
             (
                 "name",
-                Attr::S("\u{c9}vry\x1b]0;pwned\x07\x1b[2J\u{202e}x \u{43c}\u{43e}\u{441}"),
+                Attr::S("\u{c9}vry\u{141}\x1b]0;pwned\x07\x1b[2J\u{202e}x \u{43c}\u{43e}\u{441}"),
             ),
         ],
         (49.6125, 6.1319),
@@ -1376,7 +1688,8 @@ fn names_from_the_file_are_folded_and_cannot_reach_the_terminal() {
         }],
     );
     let text = c.text();
-    assert!(text.contains("Evry]0;pwned[2Jx ?"), "{text}");
+    // É is in the console font and kept; Ł is not and folds to L.
+    assert!(text.contains("\u{c9}vryL]0;pwned[2Jx ?"), "{text}");
     for cell in c.cells() {
         assert!(is_console_char(cell.ch), "{:?}", cell.ch);
     }

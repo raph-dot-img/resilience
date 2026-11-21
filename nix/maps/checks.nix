@@ -166,6 +166,12 @@ in
         check "SELECT count(*) > 0 FROM rs_place WHERE kind = 'natural' AND class = 'river' AND name = 'Rhine'" 1
         check "SELECT count(*) > 0 FROM rs_place WHERE kind = 'natural' AND class = 'lake' AND name = 'Lake Victoria'" 1
         check "SELECT count(*) FROM rs_place_fts WHERE rs_place_fts MATCH '\"reykjav\"*'" 1
+        # Spot heights (ADR 0016 slice 12): summits, depressions, passes;
+        # searchable and in the R*Tree for "nearby".
+        check "SELECT class FROM rs_place WHERE kind = 'natural' AND name = 'Mount Everest'" summit
+        check "SELECT class FROM rs_place WHERE kind = 'natural' AND name = 'Death Valley'" depression
+        check "SELECT count(*) >= 640 FROM rs_place WHERE class IN ('summit', 'depression', 'saddle')" 1
+        check "SELECT count(*) FROM rs_poi_rtree r JOIN rs_place p ON p.id = r.id WHERE p.name = 'Mount Everest'" 1
         # The whole world at zoom 0, and every zoom up to 7.
         check "SELECT count(*) FROM tiles WHERE zoom_level = 0" 1
         check "SELECT count(DISTINCT zoom_level) FROM tiles" 8

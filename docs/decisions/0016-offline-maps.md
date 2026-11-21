@@ -61,7 +61,7 @@ rs_coverage         rings of the region covered, i32 microdegrees, little-endian
 rs_place            id, kind (settlement|street|poi|natural), class, name, fold
                     (name folded for comparison), near (nearest settlement), lon, lat,
                     rank, bbox
-rs_place_fts        FTS5 over rs_place.name (external content, unicode61
+rs_place_fts        FTS5 over rs_place.fold (external content, unicode61
                     remove_diacritics 2, prefix 2 3)
 rs_poi_rtree        rtree_i32 (microdegrees) over POIs and peaks
 ```
@@ -319,9 +319,16 @@ background. Text (labels, markers) replaces whole cells.
   most 8 tokens of up to 32 characters are kept. **User text never
   reaches FTS5's query syntax.** Each open pack is queried (`LIMIT 50`)
   and the results are merged and ranked:
-  1. exact match on the folded name;
+  1. exact match on the folded name (for a street, a POI or a natural
+     feature only within 10 km of the view's centre: "pharmacie" must
+     not put a "Pharmacie" 60 km away before "Pharmacie du Centre" 2 km
+     away; amended 2026-11-20);
   2. kind (settlements by rank, then streets, then POIs);
   3. distance from the view's centre.
+
+  Each pack applies the same order in its query (flat distance) before
+  `LIMIT 50`, so a pack with hundreds of matches returns the ones that
+  count.
 
   Measured on the Luxembourg index: 0.1 to 1 ms per query. A result shows
   its name, kind, `near` and distance and direction ("Esch-sur-Alzette,
@@ -811,6 +818,69 @@ Decided while adding maps to the TUI (slice 9, 2026-11-16):
   `library.rs`.
 - The entries exist only on a system with resource packs
   (`/etc/resilience/packs.toml`), like the Offline library.
+
+Decided while adding spot heights (slice 12, 2026-11-19):
+
+- **Two new classes in the `peaks` layer**: `summit` (Natural Earth's
+  mountains, plateaus and spot elevations: `^`) and `depression` (`v`,
+  so that the Dead Sea shore is not drawn as a peak); Natural Earth's two
+  passes are `saddle`. A viewer that does not know a class skips it, so
+  older viewers still read new packs.
+- **The rule**: `summit` and `depression` are drawn, named and with their
+  height (`ele`) up to 10,000 m per pixel; which ones appear at the
+  coarsest scales is Natural Earth's own `min_zoom` (4 to 8; points beyond
+  zoom 7 are kept at 7, like places). OSM peaks keep their rule (200 m per
+  pixel, height from 100 m per pixel). The 711 points are search rows and
+  in the R*Tree, so they are found with `/` and listed under `n`.
+- Heights outside the accepted range (-500 to 9,000 m) are left out; the
+  point stays.
+
+Open (found 2026-11-19, to settle before the maps review):
+
+- **Letters `unicode61` does not fold** (settled 2026-11-20): the FTS
+  index was built on the raw name with `remove_diacritics 2`, which
+  removes combining accents but does not turn `Ł` into `l`, `Ø` into `o`
+  or `Đ` into `d`, so "lodz" did not find "Łódź". `rs_place_fts` now
+  indexes `rs_place.fold` (folded by the builder with the same function
+  as the query). Search was never released before this change, so the
+  reader accepts only the new definition: packs built before it open
+  with their maps but without search until rebuilt (the two catalog
+  packs are rebuilt for 0.6.0).
+
+Decided by the project owner on 2026-11-19 (maps resumed for 0.6.0):
+
+- **Catalog regions**: Luxembourg and Bretagne (built, hashed and
+  hosted as GitHub Release assets; slice 13).
+- **Spot heights** (slice 12) are in 0.6.0.
+- **Accented names**: yes. Labels and search results use the console
+  font's CP437 accented letters instead of folding them to ASCII; the
+  glyph rule of CLAUDE.md §4 and its test change with it (a slice of its
+  own, after search).
+- **Order**: search (slice 10) first, then nearby and go-to (11), spot
+  heights (12), accents, catalog and VM test (13), and an independent
+  review of the pack builder and viewer before release.
+
+Decided while showing accented names (2026-11-19):
+
+- **The letters**: read from the Unicode table of `ter-i16n.psf.gz` in
+  the pinned nixpkgs (`terminus_font` 4.49.1; a PSF1 font, 256 glyphs),
+  with a small Python parser and checked with kbd's `psfgettable`. Its
+  accented Latin letters are exactly the CP437 ones:
+  `ÄÅÆÇÉÑÖÜßàáâäåæçèéêëìíîïñòóôöùúûüÿ` (34; `canvas::CONSOLE_LETTERS`).
+  `ƒ` and `ⁿ` are in the font too but are not used as letters.
+- **`label::fold` keeps them** and folds every other accented letter as
+  before: `Orléans`, `Zürich`, `Straße`, `Æblegård` are shown as written;
+  `Saint-Étienne` keeps its `É`, but `Île` becomes `Ile`, `Łódź` becomes
+  `Lódz`, `São` becomes `Sao`, `Œ` stays `OE` (À, Â, È, Ê, Ë, Î, Ô, Û, Ø,
+  ã, õ and the Latin Extended letters are not in the font). Lengths are
+  counted in characters (each is one cell), so the 40-character cap is
+  unchanged.
+- **Search is unchanged**: `search::search_fold` (and the pack builder's
+  `rs_place.fold`) uses `label::fold_ascii_to`, the ASCII-only fold, so
+  existing packs still match. Results are shown with `fold`.
+- **The glyph rule**: `canvas::is_console_char` (every map cell and the
+  viewer's screens) allows these 34 letters. The main TUI draws no map
+  names, so its test `only_console_font_glyphs_are_drawn` is unchanged.
 
 Decided by the project owner on 2026-11-15:
 

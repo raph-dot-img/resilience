@@ -2,16 +2,19 @@
 //! greedy placement (ADR 0016 §3).
 //!
 //! Names come from map files, which are untrusted. [`fold`] turns any
-//! string into printable ASCII (labels are folded to ASCII in Phase 5, see
-//! the ADR's decisions): control and formatting characters are removed,
-//! accented Latin letters and ligatures become their ASCII letters, and
-//! every run of other characters becomes one `?`. Attribution strings go
-//! through the same function (`©` becomes `(c)`).
+//! string into printable ASCII plus the accented letters the console font
+//! has ([`CONSOLE_LETTERS`]: "Orléans", "Zürich"; ADR 0016, "Decided while
+//! showing accented names"): control and formatting characters are
+//! removed, other accented Latin letters and ligatures become their ASCII
+//! letters ("Łódź" is "Lodz"), and every run of other characters becomes
+//! one `?`. Attribution strings go through the same function (`©` becomes
+//! `(c)`). [`fold_ascii_to`] is the same without the kept letters (place
+//! search compares in ASCII).
 //!
 //! [`place`] puts labels on the screen in priority order without overlap,
 //! and [`street_anchor`] finds where a street name fits along its line.
 
-use super::canvas::{Canvas, Colour, MAX_COLS, MAX_ROWS, Point};
+use super::canvas::{CONSOLE_LETTERS, Canvas, Colour, MAX_COLS, MAX_ROWS, Point};
 
 /// Longest label, in characters (ADR 0016 §3).
 pub const MAX_LABEL: usize = 40;
@@ -24,42 +27,63 @@ pub fn fold(name: &str) -> Option<String> {
     fold_to(name, MAX_LABEL)
 }
 
-/// Fold untrusted text to printable ASCII of at most `max` characters
-/// (longer text is cut and ends with `...`).
+/// Fold untrusted text to what the console shows, at most `max`
+/// characters (longer text is cut and ends with `...`). Every character of
+/// the result is one cell wide: printable ASCII or one of
+/// [`CONSOLE_LETTERS`].
 ///
 /// - whitespace of any kind becomes one space; leading and trailing
 ///   spaces are removed;
 /// - control characters, invisible formatting characters (bidirectional
 ///   overrides, zero-width characters, soft hyphen, byte order mark) and
 ///   combining marks are dropped, so a decomposed `e` + acute is `e`;
-/// - Latin-1, Latin Extended-A, a few Latin Extended-B letters, fullwidth
-///   ASCII and common punctuation are folded by a table (é→e, ß→ss, Ø→O,
-///   Œ→OE, ©→(c), “→");
+/// - the accented letters of [`CONSOLE_LETTERS`] are kept (é, ü, ß, æ...);
+/// - other Latin-1, Latin Extended-A, a few Latin Extended-B letters,
+///   fullwidth ASCII and common punctuation are folded by a table (È→E,
+///   Ø→O, Ł→L, Œ→OE, ©→(c), “→");
 /// - any other run of characters becomes a single `?`, so the reader can
 ///   see that part of the name could not be shown (Cyrillic, Greek, CJK,
 ///   right-to-left scripts). The builder prefers `name:latin` or
 ///   `name:en` for such names.
 ///
-/// Returns `None` when nothing worth showing is left: no ASCII letter or
-/// digit (an empty name, only `?`, only punctuation). The cost is bounded
-/// by `max`, not by the input length.
+/// Returns `None` when nothing worth showing is left: no letter or digit
+/// (an empty name, only `?`, only punctuation). The cost is bounded by
+/// `max`, not by the input length.
 pub fn fold_to(text: &str, max: usize) -> Option<String> {
+    fold_with(text, max, true)
+}
+
+/// [`fold_to`] to printable ASCII only: every accented Latin letter is
+/// folded by the table (é→e, ß→ss, Æ→AE). Used for comparison
+/// (`search::search_fold`), which must match what the pack builder wrote.
+pub fn fold_ascii_to(text: &str, max: usize) -> Option<String> {
+    fold_with(text, max, false)
+}
+
+fn fold_with(text: &str, max: usize, keep_letters: bool) -> Option<String> {
     let max = max.max(4);
     let mut out = String::new();
+    // Characters in `out` (not bytes: kept letters are two bytes long).
+    let mut count = 0usize;
     let mut unknown_run = false;
     // Characters consumed from the input, so a huge string of dropped
     // characters cannot cost more than this.
     let budget = max.saturating_mul(16).max(1024);
     for (n, c) in text.chars().enumerate() {
-        if n >= budget || out.len() > max {
+        if n >= budget || count > max {
             break;
         }
-        let f = fold_char(c);
+        let f = if keep_letters && CONSOLE_LETTERS.contains(c) {
+            Fold::Char(c)
+        } else {
+            fold_char(c)
+        };
         match f {
             Fold::Drop => continue,
             Fold::Unknown => {
                 if !unknown_run {
                     out.push('?');
+                    count += 1;
                 }
                 unknown_run = true;
                 continue;
@@ -67,23 +91,32 @@ pub fn fold_to(text: &str, max: usize) -> Option<String> {
             Fold::Space => {
                 if !out.is_empty() && !out.ends_with(' ') {
                     out.push(' ');
+                    count += 1;
                 }
             }
-            Fold::Char(ch) => out.push(ch),
-            Fold::Str(s) => out.push_str(s),
+            Fold::Char(ch) => {
+                out.push(ch);
+                count += 1;
+            }
+            Fold::Str(s) => {
+                // Table entries are ASCII.
+                out.push_str(s);
+                count += s.len();
+            }
         }
         unknown_run = false;
     }
     let mut out = out.trim_end().to_string();
-    if out.len() > max {
-        // ASCII only, so byte positions are character positions.
-        out.truncate(max - 3);
-        let mut cut = out.trim_end().to_string();
+    if out.chars().count() > max {
+        let mut cut: String = out.chars().take(max - 3).collect();
+        cut.truncate(cut.trim_end().len());
         cut.push_str("...");
         out = cut;
     }
-    debug_assert!(out.chars().all(|c| c == ' ' || c.is_ascii_graphic()));
-    if out.bytes().any(|b| b.is_ascii_alphanumeric()) {
+    debug_assert!(out.chars().all(|c| c == ' '
+        || c.is_ascii_graphic()
+        || (keep_letters && CONSOLE_LETTERS.contains(c))));
+    if out.chars().any(char::is_alphanumeric) {
         Some(out)
     } else {
         None
@@ -670,22 +703,32 @@ mod tests {
     #[test]
     fn folding_table() {
         let cases = [
-            ("Zürich", "Zurich"),
-            ("Besançon", "Besancon"),
-            ("Saint-Étienne", "Saint-Etienne"),
-            ("Straße", "Strasse"),
-            ("Ørsted Ålesund", "Orsted Alesund"),
+            // Letters the console font has are kept.
+            ("Zürich", "Zürich"),
+            ("Besançon", "Besançon"),
+            ("Orléans", "Orléans"),
+            ("Straße", "Straße"),
+            ("Ålesund Malmö Århus", "Ålesund Malmö Århus"),
+            ("Æblegård", "Æblegård"),
+            ("Ñuñoa", "Ñuñoa"),
+            ("Évreux Ühlingen Öland Ærø", "Évreux Ühlingen Öland Æro"),
+            ("L’Haÿ-les-Roses", "L'Haÿ-les-Roses"),
+            // Letters it does not have are folded; kept ones stay.
+            ("Saint-Étienne", "Saint-Étienne"),
+            ("Ørsted Ålesund", "Orsted Ålesund"),
             ("Œuvre cœur", "OEuvre coeur"),
-            ("Æblegård", "AEblegard"),
             ("Þingvellir", "THingvellir"),
-            ("Łódź", "Lodz"),
-            ("Kraków Gdańsk", "Krakow Gdansk"),
+            ("Łódź", "Lódz"),
+            ("Kraków Gdańsk", "Kraków Gdansk"),
             ("İstanbul ışık", "Istanbul isik"),
             ("Ĳsselmeer", "IJsselmeer"),
             ("Brașov Timișoara", "Brasov Timisoara"),
-            ("Čeština Ďáblice Ňůž", "Cestina Dablice Nuz"),
+            ("Čeština Ďáblice Ňůž", "Cestina Dáblice Nuz"),
             ("Győr Szőny", "Gyor Szony"),
-            ("L’Haÿ-les-Roses", "L'Hay-les-Roses"),
+            ("Île-de-France Ête", "Ile-de-France Ete"),
+            ("São Tomé", "Sao Tomé"),
+            ("Àger Ìsola Ùrbe Ýdra", "Ager Isola Urbe Ydra"),
+            ("ƒ ª º", "f a o"),
             (
                 "© OpenStreetMap contributors",
                 "(c) OpenStreetMap contributors",
@@ -699,6 +742,85 @@ mod tests {
         for (input, want) in cases {
             assert_eq!(f(input).as_deref(), Some(want), "{input:?}");
         }
+    }
+
+    #[test]
+    fn ascii_folding_is_unchanged() {
+        // fold_ascii_to keeps the Phase 5 table: no accented letter left.
+        let cases = [
+            ("Zürich", "Zurich"),
+            ("Besançon", "Besancon"),
+            ("Straße", "Strasse"),
+            ("Ørsted Ålesund", "Orsted Alesund"),
+            ("Æblegård", "AEblegard"),
+            ("Łódź", "Lodz"),
+            ("L’Haÿ-les-Roses", "L'Hay-les-Roses"),
+            ("Tokyo 東京", "Tokyo ?"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(fold_ascii_to(input, MAX_LABEL).as_deref(), Some(want));
+        }
+        for c in CONSOLE_LETTERS.chars() {
+            let out = fold_ascii_to(&c.to_string(), 8).unwrap_or_default();
+            assert!(
+                !out.is_empty() && out.bytes().all(|b| b.is_ascii_alphabetic()),
+                "{c:?} -> {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn kept_letters_are_exactly_the_console_letters() {
+        // Every console letter is kept alone and in context, and its
+        // decomposed form (base + combining mark) folds to the base letter.
+        for c in CONSOLE_LETTERS.chars() {
+            assert_eq!(f(&format!("A{c}b")), Some(format!("A{c}b")));
+            assert_eq!(f(&c.to_string()), Some(c.to_string()), "{c:?}");
+        }
+        assert_eq!(f("e\u{301}").as_deref(), Some("e"));
+        // A name made only of kept letters is shown.
+        assert_eq!(f("Åå").as_deref(), Some("Åå"));
+        // Nothing outside ASCII and CONSOLE_LETTERS ever comes out.
+        for cp in 0x80..0x3_0000u32 {
+            let Some(c) = char::from_u32(cp) else {
+                continue;
+            };
+            let out = f(&format!("x{c}")).unwrap_or_default();
+            for o in out.chars() {
+                assert!(
+                    o == ' ' || o.is_ascii_graphic() || (o == c && CONSOLE_LETTERS.contains(c)),
+                    "U+{cp:04X} -> {out:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn widths_count_characters_not_bytes() {
+        // 50 two-byte letters: cut at 40 characters (37 + "..."), not at
+        // 40 bytes.
+        let long = "é".repeat(50);
+        let got = f(&long).unwrap_or_default();
+        assert_eq!(got.chars().count(), MAX_LABEL);
+        assert_eq!(got, format!("{}...", "é".repeat(37)));
+        // Exactly 40 letters: not cut.
+        let forty = "ü".repeat(40);
+        assert_eq!(f(&forty).as_deref(), Some(forty.as_str()));
+        // The cap applies to a mix too, and the dots follow a whole letter.
+        let mixed = format!("{} {}", "Orléans".repeat(5), "x".repeat(10));
+        let got = f(&mixed).unwrap_or_default();
+        assert_eq!(got.chars().count(), MAX_LABEL);
+        assert!(got.ends_with("...") && got.starts_with("OrléansOrléans"));
+        // A cut never leaves a trailing space before the dots.
+        let spaced = format!("{} {}", "ß".repeat(36), "b".repeat(10));
+        assert_eq!(f(&spaced), Some(format!("{}...", "ß".repeat(36))));
+        // Placement measures in characters: "Orléans" takes 7 cells.
+        let placed = place(&[cand(10, 10, 1, None, "Orléans")], 20, 3, &[]);
+        let (col, _, text) = placed[0].text.clone().unwrap_or_default();
+        assert_eq!(text, "Orléans");
+        assert_eq!(col, 7);
+        let drawn = render(20, 3, &placed);
+        assert_eq!(drawn.lines().nth(1), Some("       Orléans      "));
     }
 
     #[test]
@@ -742,6 +864,8 @@ mod tests {
         assert!(got.ends_with("...") && got.starts_with("Llanfair"));
         let start = Instant::now();
         let huge = "é".repeat(5_000_000) + &"\u{301}".repeat(5_000_000);
+        assert_eq!(f(&huge).map(|s| s.chars().count()), Some(MAX_LABEL));
+        let huge = "ę".repeat(5_000_000);
         assert_eq!(f(&huge).map(|s| s.len()), Some(MAX_LABEL));
         let only_marks = "\u{301}".repeat(5_000_000) + "Late";
         assert_eq!(f(&only_marks), None);
@@ -757,9 +881,10 @@ mod tests {
     }
 
     #[test]
-    fn folding_output_is_always_printable_ascii() {
+    fn folding_output_is_always_console_text() {
         // Every character of the Basic Multilingual Plane and a few beyond,
-        // alone and in context.
+        // alone and in context: printable ASCII or a console letter, at
+        // most MAX_LABEL characters.
         for cp in (0..0x3_0000u32)
             .step_by(1)
             .filter(|c| *c < 0xD800 || *c > 0xDFFF)
@@ -770,10 +895,17 @@ mod tests {
             let s = format!("A{c}b");
             let out = f(&s).unwrap_or_default();
             assert!(
-                out.chars().all(|c| c == ' ' || c.is_ascii_graphic()),
+                out.chars()
+                    .all(|c| c == ' ' || c.is_ascii_graphic() || CONSOLE_LETTERS.contains(c)),
                 "U+{cp:04X} -> {out:?}"
             );
-            assert!(out.len() <= MAX_LABEL);
+            assert!(out.chars().all(is_console_char));
+            assert!(out.chars().count() <= MAX_LABEL);
+            let ascii = fold_ascii_to(&s, MAX_LABEL).unwrap_or_default();
+            assert!(
+                ascii.chars().all(|c| c == ' ' || c.is_ascii_graphic()),
+                "U+{cp:04X} -> {ascii:?}"
+            );
         }
     }
 
@@ -1253,6 +1385,6 @@ mod tests {
             .collect();
         draw(&mut c, &place(&cands, 30, 3, &[]));
         assert!(c.text().chars().all(|ch| ch == '\n' || is_console_char(ch)));
-        assert!(c.text().contains("Zurich"));
+        assert!(c.text().contains("Zürich"));
     }
 }

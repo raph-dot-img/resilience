@@ -166,6 +166,25 @@ let
     };
     dataDate = "2026-01-01";
   };
+
+  # Bretagne (owner's choice for 0.6.0, ADR 0016): Geofabrik's extract of
+  # 18 November 2026 and the region's boundary (same caveat for the .poly).
+  bretagne = {
+    id = "bretagne";
+    name = "Bretagne";
+    description = "OpenStreetMap data for Bretagne, France (Geofabrik extract of 2026-11-18)";
+    coverage = "Bretagne (France), the whole region: Côtes-d'Armor, Finistère, Ille-et-Vilaine, Morbihan (Geofabrik extract boundary)";
+    pbf = fetchurl {
+      url = "https://download.geofabrik.de/europe/france/bretagne-261118.osm.pbf";
+      hash = "sha256-S+Cx7OTjFa/OL92mnRuy7rUWchAJyhGm2NQHvq86jPc=";
+    };
+    sourceName = "bretagne-261118.osm.pbf";
+    poly = fetchurl {
+      url = "https://download.geofabrik.de/europe/france/bretagne.poly";
+      hash = "sha256-yVBSJ1ZNQbWrAN6BqTzMuFlxeiLQPDvPV4Iqv+r2PU0=";
+    };
+    dataDate = "2026-11-18";
+  };
 in
 {
   inherit mkPack mapmaker;
@@ -173,6 +192,7 @@ in
   packs = {
     testland = mkPack testland;
     luxembourg = mkPack luxembourg;
+    bretagne = mkPack bretagne;
   };
 
   # The same test pack built on one thread (TIPPECANOE_MAX_THREADS=1,

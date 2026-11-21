@@ -162,7 +162,11 @@
       # `nix build .#mapPacks.<id>` -> result/map-osm-<id>_<YYYY-MM>.mbtiles.
       # A set of packs is not a derivation, so it lives in legacyPackages
       # (`packages` may only hold derivations); `nix build` finds it there.
-      legacyPackages.${system}.mapPacks = maps.packs;
+      legacyPackages.${system} = {
+        mapPacks = maps.packs;
+        # README screenshots (tests/screenshots.nix): `nix build .#screenshots`.
+        screenshots = vmTest ./tests/screenshots.nix;
+      };
 
       apps.${system}.vm = {
         type = "app";

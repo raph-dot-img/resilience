@@ -19,7 +19,7 @@
 //!     viewer's reader.
 //! resilience-mapmaker natural-earth --rows ROWS.jsonl --output FEATURES.geojsonseq
 //!                                   [--land F] [--countries F] [--regions F]
-//!                                   [--lakes F] [--rivers F] [--places F]
+//!                                   [--lakes F] [--rivers F] [--places F] [--elevations F]
 //!     Natural Earth GeoJSON files to the same two files as classify, for
 //!     the built-in world overview.
 //! ```
@@ -43,7 +43,8 @@ Usage:
       [--description TEXT] [--license SPDX] [--attribution TEXT] [--tools TEXT]
       [--center LON,LAT,ZOOM]
   resilience-mapmaker natural-earth --rows FILE --output FILE [--land FILE]
-      [--countries FILE] [--regions FILE] [--lakes FILE] [--rivers FILE] [--places FILE]";
+      [--countries FILE] [--regions FILE] [--lakes FILE] [--rivers FILE] [--places FILE]
+      [--elevations FILE]";
 
 const EXIT_USAGE: u8 = 64;
 

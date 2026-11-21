@@ -314,6 +314,9 @@ new profile. Never `nmcli --ask` (wrong password = inescapable prompt loop).
   glyphs limited to `▀▄█═║╔╗╚╝─│┌┐└┘░▒▓` (console font `ter-i16n`, CP437
   repertoire, 256 glyphs so the VT keeps 16 colours). Enforced by the test
   `only_console_font_glyphs_are_drawn`. ter-v16n lacks ▀▄ and double lines.
+  The map viewer may also draw the font's 34 accented letters
+  `ÄÅÆÇÉÑÖÜßàáâäåæçèéêëìíîïñòóôöùúûüÿ` in place names (verified from the
+  PSF table; `maps::canvas::CONSOLE_LETTERS`, `is_console_char`; ADR 0016).
 - See `docs/COMPONENTS.md` for every third-party component, version and license.
 - Resilience's own code: **Hippocratic License 2.1** (`LICENSE`, owner's decision
   2026-11-16; SPDX `Hippocratic-2.1` in Cargo.toml; Nix `meta.license = import
@@ -389,6 +392,10 @@ it concurrently with VM tests.
   with `boot.kernelParams = [ "video=1366x768" ]` and `-vga std` gives a
   170x48 console. QEMU's screendump of a 1366-wide framebuffer is skewed
   (1360-pixel PNG): re-stride the pixels to 1366 to look at it.
+- README screenshots: `scripts/update-screenshots.sh` (VM
+  `tests/screenshots.nix`, exposed as `legacyPackages.screenshots`, not a
+  check; one VM) writes `docs/images/*.png`. Look at them before committing;
+  retake them at each release.
 - World overview: `nix build .#resilience-world-map`, then
   `RESILIENCE_WORLD_PACK=$(echo result/share/resilience/packs/*.mbtiles) cargo test -p
   resilience-maps --test world -- --ignored --nocapture` prints real screens (text only:
@@ -404,8 +411,10 @@ it concurrently with VM tests.
   process (peak ~6.4 GB, freed on exit), then build the list of `.drv^*`
   with one `nix build --no-link --keep-going -L --max-jobs 1`. Same
   coverage. Run all of it inside `systemd-run --user --scope -p
-  MemoryMax=7G` so that only our job can be killed. Ask the owner for a
-  time before the full run or an ISO build (see the memory notes).
+  MemoryMax=7G` so that only our job can be killed. The host is dedicated
+  to the project: full runs and ISO builds may start at any time (owner,
+  2026-11-20), using as much of the machine as it allows (builds with
+  `--max-jobs 2`, the daemon's limit).
 - Report each test as PASS / FAIL / BLOCKED / NOT TESTED in docs/TESTING.md.
   Never mark untested things as passing.
 
@@ -414,7 +423,9 @@ it concurrently with VM tests.
 Host (since 2026-11-20, a machine dedicated to development): Debian 13,
 Intel i3-6100 (2c/4t), 11 GiB RAM, user `claude` (groups kvm, docker),
 lingering on. Nix 2.36 multi-user daemon (user IS trusted; cache.nixos.org
-works; `kvm` and `nixos-test` system features; max-jobs 2, cores 2). Rust
+works; `kvm` and `nixos-test` system features; max-jobs 2, cores 2;
+the build users need `/dev/kvm` 0666, docs/BUILDING.md, or VM tests
+emulate the CPU and time out). Rust
 via rustup in ~/.cargo; age and gnupg in the user's nix profile; qemu,
 minisign and jq from Debian. `/bin/sh` is dash (tests must not rely on
 bash behaviour). The launcher may pass another user's
@@ -428,8 +439,10 @@ see its README): publishing = copying into `~/Mirror/files/resilience/`.
   firewall, networking, disks or anything outside this repo (and user-local
   caches). If root is required, write instructions for the user instead.
 - Never install Resilience on the host. Destructive tests only in disposable VMs.
-- ≤ 2 concurrent heavyweight jobs; never two VM tests or a VM test + ISO build
-  at the same time. Default test VM: 2 vCPU, ≤ 2 GiB RAM.
+- The machine is dedicated to the project (owner, 2026-11-20): use as
+  much of it as it allows. Memory is the limit (11 GiB): two VM tests at
+  once fit (`--max-jobs 2`); an ISO build next to VM tests only while
+  `free -h` shows room. Default test VM: 2 vCPU, ≤ 2 GiB RAM.
 
 ## 8. Git conventions
 
@@ -558,8 +571,8 @@ alone gives OVMF + direct kernel boot (`/sys/firmware/efi` exists); a
 `efi.keepVariables = false` (otherwise it builds its own disk image).
 Phase 7 (SDR) is POSTPONED by the owner (2026-11-17) until they buy the
 hardware: do not start it. Power profiles stay open (need hardware).
-Maps (Phase 5) were parked by the owner on 2026-11-16 after slice 9: do
-not continue slices 10 to 13 unless asked. Phase 6 so far: ADR 0018
+Maps (Phase 5) were parked on 2026-11-16 after slice 9 and resumed for
+0.6.0 on 2026-11-19 (state below). Phase 6 so far: ADR 0018
 (Reticulum + LXMF, opt-in because their licence is not free: owner's
 decision); slice 1 = `nix/modules/comms.nix`, `nix/packages/
 resilience-reticulum`, `vm-comms`; slice 2 = the per-user program
@@ -586,7 +599,17 @@ booted in QEMU (BIOS, UEFI, 1 GiB) with Local messages running. After
 slice 4 (ADR 0019): full flake check passed again and the ISO, rebuilt,
 boots with the message store running (2026-11-17).
 
-Phase 5 state when parked:
+Phase 5 state (2026-11-20): slices 10 (search), 11 (nearby `n`, go-to
+`g`), 12 (spot heights on the world overview), accented names (the 34
+CP437 letters of ter-i16n, `canvas::CONSOLE_LETTERS`) and slice 13's
+catalog (Luxembourg + Bretagne in nix/packs/maps.nix, on the mirror)
+and `vm-maps` (search, nearby, go-to, a spot height, an accented name)
+are on `feat/maps-search`, with the TUI fix for keys typed right after
+a program quits. Left for 0.6.0: rebuild the two catalog packs with the
+folded search index (new sizes and hashes, upload); the sea inside
+regional packs (open finding, pack format change); the independent
+review of the pack builder and viewer (owner's order, ADR 0016); full
+test run, merge into `develop`, ISO, release. History before slice 10:
 
 Phases 0 to 4 are done (see ROADMAP.md). Phase 5 (offline maps, ADR 0016):
 slices 1 to 9 are in `develop`. Slices 1 to 7 came with PR #1; slice 8
@@ -600,10 +623,7 @@ maths, MVT decoder, canvas/style/labels, hardened pack reader); slice 6
 (viewer `resilience-maps view`) reviewed in its risky parts and run on the
 real Luxembourg pack in QEMU at 170x48 (label fixes followed); slice 7
 (pack builder `resilience-mapmaker`, `nix/maps/`) merged, builds the
-Luxembourg pack, code not reviewed line by line. Slices 10 to 13 (search,
-nearby/go-to, spot heights, the rest of `vm-maps`, catalog) are not
-started (parked). If resumed: slice 10 (search: `maps/search.rs`, the
-viewer's dialog).
+Luxembourg pack, code not reviewed line by line.
 
 Also done with `feat/maps` (2026-11-16): keyboard layouts (ADR 0017: US default,
 choice in Settings through `set-keymap`); `scripts/hw-report.sh` and
@@ -676,11 +696,19 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 - Keyboard: all consoles share one keymap (kernel); a login prompt starting
   on any console resets it to the system layout, and the TUI reloads its
   user's layout only at session start (ADR 0017).
-- Maps: no search, nearby or go-to yet; no regional pack in the catalog
-  (packs are built with `nix build .#mapPacks.ID` and opened from a
-  stick); the world overview has no elevation points and draws disputed
-  borders like any other; too many point-of-interest names at city scales
-  (style question open); osmium tags-filter needs ~2 GB RAM to build a pack.
+- Maps: search, nearby and go-to exist on `feat/maps-search` (0.6.0);
+  the search index is over the folded name since 2026-11-20 ("lodz" finds
+  "Łódź"): packs built before have no search until rebuilt, which
+  includes the two catalog packs on the mirror (rebuild them, upload, and
+  update their size and SHA-256 in nix/packs/maps.nix before 0.6.0); two
+  regional packs in the catalog (Luxembourg, Bretagne, hosted on the
+  owner's mirror under packs/maps/; others are built with `nix build
+  .#mapPacks.ID` and opened from a stick); inside a regional pack the sea
+  is black at 500 m/px and finer (no sea polygons: open); the world
+  overview draws disputed borders like any other; too many
+  point-of-interest names at city scales (style question open); an exact
+  name ranks first only for towns or within 10 km (ADR 0016 §4,
+  2026-11-20); osmium tags-filter needs ~2 GB RAM to build a pack.
 - Physical hardware: the live ISO booted on a ThinkPad L15 Gen 1 (owner,
   2026-11-16); release 0.5.0 on a ThinkPad L15 + ThinkPad Yoga 11e (owner,
   2026-11-20: cable, sharing + a pack, hotspot, mesh, messages, no errors;
@@ -688,10 +716,11 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Current: maps (Phase 5, slices 10-13) for 0.6.0
-(owner, 2026-11-19); 0.5.0 is released and validated on two laptops
-(2026-11-20). Requested
-2026-11-19: Phase 11, offline assistant (local model via Ollama or
+See ROADMAP.md. Current: 0.5.0 is released and validated on two laptops
+(2026-11-20); maps (Phase 5, slices 10-13; the TUI stop after quitting a
+program, found 2026-11-20, is fixed on `feat/maps-search`) for 0.6.0
+(owner, 2026-11-19). Release
+0.7.0 (owner, 2026-11-20): Phase 11, offline assistant (local model via Ollama or
 llama.cpp, models as hash-pinned packs, answers grounded in the
 libraries and handbook with sources); ADR first; not started.
 
