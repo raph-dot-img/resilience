@@ -43,9 +43,11 @@
 //! The FTS5 index over `rs_place.fold` (external content, rowid =
 //! `rs_place.id`): the folded name, so that letters `unicode61` keeps
 //! (`Ł`, `Ø`, `Đ`) are found from plain letters ("lodz" finds "Łódź").
-//! Packs built before 2026-11-20 index `name` and have no search until
-//! rebuilt (their maps still open) and the R*Tree over points of interest and peaks (id =
-//! `rs_place.id`; for a point, min = max).
+//! Packs built before 2026-11-20 index `name`: they have no search until
+//! rebuilt (their maps and "nearby" still work).
+//!
+//! The R*Tree over points of interest and peaks (id = `rs_place.id`; for a
+//! point, min = max).
 
 /// Value of the `resilience_profile` metadata key for this profile.
 pub const PROFILE_VALUE: &str = "1";

@@ -73,6 +73,7 @@ use rusqlite::types::ValueRef;
 use rusqlite::{Connection, ErrorCode, OpenFlags};
 
 use crate::inflate::{self, MAX_COMPRESSED, TileError};
+use crate::mapmaker::rows;
 use crate::metadata::{Collector, Metadata, MetadataError, Profile, RawValue};
 use crate::profile::{self, Micro};
 use crate::schema::{self, Family, FamilyState, SchemaError, SchemaRow, TileLayout};
@@ -758,6 +759,21 @@ fn capabilities(
     Ok((caps, readable))
 }
 
+/// The squared flat distance between `rs_place` row `p` and the centre:
+/// parameters `lon` and `lat` in microdegrees and `cos`, the cosine of its
+/// latitude (as `?4` and so on), with the longitude difference taken across
+/// the antimeridian when that is shorter. Only arithmetic and CASE: no
+/// function the authorizer would refuse. Past 2^63 SQLite switches to
+/// floating point, so a crafted position cannot make the statement fail.
+fn flat_distance2(lon: &str, lat: &str, cos: &str) -> String {
+    let dlon = format!(
+        "CASE WHEN p.lon - {lon} > 180000000 THEN p.lon - {lon} - 360000000 \
+         WHEN p.lon - {lon} < -180000000 THEN p.lon - {lon} + 360000000 \
+         ELSE p.lon - {lon} END"
+    );
+    format!("(({dlon}) * {cos}) * (({dlon}) * {cos}) + (p.lat - {lat}) * (p.lat - {lat})")
+}
+
 /// Tile numbers in either convention.
 pub trait TileKey: Copy {
     fn tms(self) -> TmsTile;
@@ -1002,18 +1018,19 @@ impl Pack {
         let (lon, lat) = (centre.lon() * 1e6, centre.lat() * 1e6);
         let cos = centre.lat().to_radians().cos();
         let reach = search::EXACT_REACH_M / 111_195.0 * 1e6;
-        self.places(
+        let sql = format!(
             "SELECT p.kind, p.class, p.name, p.fold, p.near, p.lon, p.lat, p.rank \
              FROM rs_place_fts JOIN rs_place AS p ON p.id = rs_place_fts.rowid \
              WHERE rs_place_fts MATCH ?1 \
-             ORDER BY NOT (p.fold = ?3 AND (p.kind = 'settlement' OR \
-                 ((p.lon - ?4) * ?6) * ((p.lon - ?4) * ?6) + (p.lat - ?5) * (p.lat - ?5) \
-                 <= ?7 * ?7)), \
+             ORDER BY NOT (p.fold = ?3 AND (p.kind = 'settlement' OR {d2} <= ?7 * ?7)), \
                CASE p.kind WHEN 'settlement' THEN 0 WHEN 'street' THEN 1 \
                  WHEN 'poi' THEN 2 ELSE 3 END, \
-               p.rank, \
-               ((p.lon - ?4) * ?6) * ((p.lon - ?4) * ?6) + (p.lat - ?5) * (p.lat - ?5) \
+               p.rank, {d2} \
              LIMIT ?2",
+            d2 = flat_distance2("?4", "?5", "?6")
+        );
+        self.places(
+            &sql,
             rusqlite::params![fts, limit, exact, lon, lat, cos, reach],
         )
     }
@@ -1028,17 +1045,27 @@ impl Pack {
             return Ok(Vec::new());
         }
         let limit = i64::try_from(nearby::MAX_ROWS).unwrap_or(1000);
+        let (lon, lat) = (centre.lon() * 1e6, centre.lat() * 1e6);
+        let cos = centre.lat().to_radians().cos();
+        let sql = format!(
+            "SELECT p.kind, p.class, p.name, p.fold, p.near, p.lon, p.lat, p.rank \
+             FROM rs_poi_rtree AS r JOIN rs_place AS p ON p.id = r.id \
+             WHERE r.max_lon >= ?1 AND r.min_lon <= ?3 AND r.max_lat >= ?2 AND r.min_lat <= ?4 \
+             ORDER BY {d2} LIMIT ?5",
+            d2 = flat_distance2("?6", "?7", "?8")
+        );
         let mut found = Vec::new();
         for half in nearby::BOXES_M {
             let (w, s, e, n) = nearby::box_micro(centre, half);
             self.budget.arm(QUERY_BUDGET);
-            found = self.places(
-                "SELECT p.kind, p.class, p.name, p.fold, p.near, p.lon, p.lat, p.rank \
-                 FROM rs_poi_rtree AS r JOIN rs_place AS p ON p.id = r.id \
-                 WHERE r.max_lon >= ?1 AND r.min_lon <= ?3 AND r.max_lat >= ?2 AND r.min_lat <= ?4 \
-                 LIMIT ?5",
-                rusqlite::params![w, s, e, n, limit],
-            )?;
+            // Each wider box holds the smaller one, and rows come nearest
+            // first, so the nearest are never the ones the limit cuts.
+            match self.places(&sql, rusqlite::params![w, s, e, n, limit, lon, lat, cos]) {
+                Ok(rows) => found = rows,
+                // A slow stick: keep what the smaller box found.
+                Err(PackError::TooSlow) if !found.is_empty() => break,
+                Err(e) => return Err(e),
+            }
             if found.len() >= nearby::WANT {
                 break;
             }
@@ -1068,12 +1095,14 @@ impl Pack {
         while let Some(r) = rows.next().map_err(sql_err)? {
             let get = |i| r.get_ref(i).map_err(sql_err);
             let kind = text(get(0)?, 16).and_then(|k| search::Kind::parse(&k));
-            let class = text(get(1)?, 64);
-            let name = text(get(2)?, 400);
-            let fold = text(get(3)?, 800);
+            // The builder's own bounds (`rows`): a valid row is never
+            // dropped, a crafted one is.
+            let class = text(get(1)?, rows::MAX_CLASS);
+            let name = text(get(2)?, rows::MAX_NAME_BYTES);
+            let fold = text(get(3)?, 2 * rows::MAX_NAME_BYTES);
             let near = match get(4)? {
                 ValueRef::Null => Some(None),
-                v => text(v, 400).map(Some),
+                v => text(v, rows::MAX_NAME_BYTES).map(Some),
             };
             let pos = match (get(5)?, get(6)?) {
                 (ValueRef::Integer(lon), ValueRef::Integer(lat)) => {

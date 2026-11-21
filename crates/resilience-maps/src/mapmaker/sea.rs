@@ -110,7 +110,9 @@ pub fn convert(
         out.write_all(b"\n")?;
         stats.written += 1;
     }
-    Ok(())
+    // A write error in the last buffer must fail the step, not vanish
+    // when the writer is dropped.
+    out.flush()
 }
 
 fn trim(mut b: &[u8]) -> &[u8] {

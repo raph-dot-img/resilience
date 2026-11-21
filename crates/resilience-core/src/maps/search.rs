@@ -21,7 +21,7 @@ pub const MAX_TOKEN_CHARS: usize = 32;
 /// At most this many characters of the input are read.
 pub const MAX_INPUT_CHARS: usize = 200;
 /// Rows asked of each pack.
-pub const PER_PACK: usize = 50;
+pub const PER_PACK: usize = 200;
 /// Results shown after merging.
 pub const MAX_RESULTS: usize = 100;
 

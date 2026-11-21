@@ -1849,3 +1849,76 @@ fn a_regional_pack_s_sea_is_blue_at_street_scale() {
         "without sea polygons it stays land ({b})\n{s}"
     );
 }
+
+/// Review finding (2026-11-21): a pack the viewer shows as damaged, or one
+/// still being checked, must not answer searches or "nearby"; neither must
+/// the reader keep a search waiting forever once it is gone.
+#[test]
+fn damaged_packs_are_not_searched_and_a_lost_reader_ends_a_search() {
+    let t = testland("Testland", "2026-01-01").place(
+        "settlement",
+        "town",
+        "Testville",
+        None,
+        TESTVILLE,
+        1,
+    );
+    let w = world().place("settlement", "city", "Bigcity", None, (48.5, 4.0), 1);
+    let mut h = Harness::new(
+        "damaged-search",
+        &[("w.mbtiles", &w), ("t.mbtiles", &t)],
+        Some(TESTVILLE),
+        Some(50.0),
+    );
+    // The detailed pack's check fails (as a damaged file on a stick would).
+    h.app.on_response(Response::Checked {
+        index: 1,
+        result: Err("the integrity check failed: page 3 is damaged".into()),
+    });
+    h.key(KeyCode::Char('/'));
+    type_text(&mut h, "testville");
+    h.key(KeyCode::Enter);
+    let reqs = h.app.take_requests();
+    let asked: Vec<&Vec<usize>> = reqs
+        .iter()
+        .filter_map(|r| match r {
+            Request::Search { packs, .. } => Some(packs),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked, [&vec![0usize]], "only the overview is asked");
+    for r in h.worker.handle_all(reqs) {
+        h.app.on_response(r);
+    }
+    assert!(
+        h.app.find.results.is_empty(),
+        "nothing from the damaged pack"
+    );
+    h.key(KeyCode::Esc);
+    h.key(KeyCode::Char('n'));
+    let near: Vec<Vec<usize>> = h
+        .app
+        .take_requests()
+        .into_iter()
+        .filter_map(|r| match r {
+            Request::Nearby { packs, .. } => Some(packs),
+            _ => None,
+        })
+        .collect();
+    assert!(near.iter().all(|p| !p.contains(&1)), "{near:?}");
+
+    // A search waiting when the reader thread dies ends with every map
+    // named as unreadable, not "Searching..." forever.
+    h.key(KeyCode::Esc);
+    h.key(KeyCode::Char('/'));
+    h.key(KeyCode::Enter);
+    let _ = h.app.take_requests();
+    assert!(matches!(
+        h.app.find.status,
+        crate::app::FindStatus::Searching { .. }
+    ));
+    h.app.on_reader_lost();
+    let s = flat(&h.screen(100, 30));
+    assert!(!s.contains("Searching..."), "{s}");
+    assert!(s.contains("Could not be searched: World overview"), "{s}");
+}

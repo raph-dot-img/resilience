@@ -477,6 +477,22 @@ impl MapApp {
             self.reader_lost = true;
             self.dirty = true;
         }
+        // A search or nearby lookup waiting for the reader will never get
+        // an answer: say that every open map could not be read, rather
+        // than "Searching..." forever.
+        let failed: Vec<String> = self.open_packs().map(|(_, p)| p.title.clone()).collect();
+        for (status, query) in [
+            (&mut self.find.status, self.find.input.clone()),
+            (&mut self.around.status, String::new()),
+        ] {
+            if matches!(status, FindStatus::Searching { .. }) {
+                *status = FindStatus::Done {
+                    query,
+                    searched: Vec::new(),
+                    failed: failed.clone(),
+                };
+            }
+        }
     }
 
     fn title_of(&self, index: usize) -> String {
@@ -558,7 +574,14 @@ impl MapApp {
                 failed,
             } => self.on_nearby(generation, hits, &searched, &failed),
         }
-        if self.search_pending && !self.slots.iter().any(|s| matches!(s, Slot::Opening { .. })) {
+        // `--search`: once every pack has opened and finished its check
+        // (a pack being checked is not searched).
+        let busy = self.slots.iter().any(|s| match s {
+            Slot::Opening { .. } => true,
+            Slot::Open(p) => p.summary.integrity == Integrity::Checking,
+            Slot::Failed { .. } => false,
+        });
+        if self.search_pending && !busy {
             self.search_pending = false;
             self.start_search();
         }
@@ -608,10 +631,12 @@ impl MapApp {
             );
             return;
         };
-        if self
+        let packs: Vec<usize> = self
             .open_packs()
-            .all(|(_, p)| p.summary.capabilities.search.is_err())
-        {
+            .filter(|(_, p)| p.usable() && p.summary.capabilities.search.is_ok())
+            .map(|(i, _)| i)
+            .collect();
+        if packs.is_empty() {
             self.find.results.clear();
             self.find.status = FindStatus::Done {
                 query: self.find.input.clone(),
@@ -629,6 +654,7 @@ impl MapApp {
             fts,
             exact: search::search_fold(&self.find.input),
             centre: self.view.center(),
+            packs,
         });
     }
 
@@ -659,10 +685,12 @@ impl MapApp {
             at: Some(at),
             ..Around::default()
         };
-        if self
+        let packs: Vec<usize> = self
             .open_packs()
-            .all(|(_, p)| p.summary.capabilities.nearby.is_err())
-        {
+            .filter(|(_, p)| p.usable() && p.summary.capabilities.nearby.is_ok())
+            .map(|(i, _)| i)
+            .collect();
+        if packs.is_empty() {
             self.around.status = FindStatus::Done {
                 query: String::new(),
                 searched: Vec::new(),
@@ -677,6 +705,7 @@ impl MapApp {
         self.outbox.push(Request::Nearby {
             generation: self.search_generation,
             at,
+            packs,
         });
     }
 

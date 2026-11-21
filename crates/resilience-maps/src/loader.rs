@@ -129,7 +129,8 @@ pub enum Request {
         generation: u64,
         tiles: Vec<Key>,
     },
-    /// Search every open pack that can be searched for `fts`, an FTS5
+    /// Search the packs `packs` (the viewer's usable ones: never a
+    /// damaged pack or one still being checked) for `fts`, an FTS5
     /// expression from `search::fts_query` (never user text); each pack
     /// orders its rows for the folded query `exact` seen from `centre`.
     Search {
@@ -137,12 +138,14 @@ pub enum Request {
         fts: String,
         exact: String,
         centre: LatLon,
+        packs: Vec<usize>,
     },
-    /// Points of interest and peaks around `at`, in every open pack with
-    /// the R*Tree.
+    /// Points of interest and peaks around `at`, in the packs `packs`
+    /// (usable ones, as for search) that have the R*Tree.
     Nearby {
         generation: u64,
         at: LatLon,
+        packs: Vec<usize>,
     },
 }
 
@@ -243,8 +246,13 @@ impl Worker {
                 fts,
                 exact,
                 centre,
-            } => send(self.search(generation, &fts, &exact, centre)),
-            Request::Nearby { generation, at } => send(self.nearby(generation, at)),
+                packs,
+            } => send(self.search(generation, &fts, &exact, centre, &packs)),
+            Request::Nearby {
+                generation,
+                at,
+                packs,
+            } => send(self.nearby(generation, at, &packs)),
         }
     }
 
@@ -328,11 +336,20 @@ impl Worker {
         send(Response::Checked { index, result });
     }
 
-    /// Search every open pack that has the search tables.
-    pub fn search(&mut self, generation: u64, fts: &str, exact: &str, centre: LatLon) -> Response {
+    /// Search the packs `only` that are open and have the search tables.
+    pub fn search(
+        &mut self,
+        generation: u64,
+        fts: &str,
+        exact: &str,
+        centre: LatLon,
+        only: &[usize],
+    ) -> Response {
         let (mut hits, mut searched, mut failed) = (Vec::new(), Vec::new(), Vec::new());
         for (index, pack) in self.packs.iter().enumerate() {
-            let Some(pack) = pack else { continue };
+            let Some(pack) = pack.as_ref().filter(|_| only.contains(&index)) else {
+                continue;
+            };
             if pack.capabilities().search.is_err() {
                 continue;
             }
@@ -355,11 +372,14 @@ impl Worker {
         }
     }
 
-    /// Points near `at` in every open pack that has the R*Tree.
-    pub fn nearby(&mut self, generation: u64, at: LatLon) -> Response {
+    /// Points near `at` in the packs `only` that are open and have the
+    /// R*Tree.
+    pub fn nearby(&mut self, generation: u64, at: LatLon, only: &[usize]) -> Response {
         let (mut hits, mut searched, mut failed) = (Vec::new(), Vec::new(), Vec::new());
         for (index, pack) in self.packs.iter().enumerate() {
-            let Some(pack) = pack else { continue };
+            let Some(pack) = pack.as_ref().filter(|_| only.contains(&index)) else {
+                continue;
+            };
             if pack.capabilities().nearby.is_err() {
                 continue;
             }

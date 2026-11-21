@@ -143,8 +143,9 @@ crates/resilience-crypto binary `resilience-crypto` (UNPRIVILEGED, ADR 0015, for
 crates/resilience-maps  binaries (ADR 0016, UNPRIVILEGED): `resilience-maps` (view [--pack F]..
                         [--at LAT,LON] [--scale M] | info [--check] F: hardened MBTiles reader,
                         reader thread, tile cache, 1 GiB address-space limit) and
-                        `resilience-mapmaker` (classify | natural-earth | finish; build
-                        machines only, not installed in the system).
+                        `resilience-mapmaker` (classify | natural-earth | bounds | sea |
+                        finish; build machines only, not installed in the system; `sea`
+                        writes OpenStreetMap water polygons cut by ogr2ogr as water/sea).
                         nix/packages/resilience-world-map: the built-in world overview
                         (Natural Earth, z0-7), a `[[builtin]]` maps entry of packs.toml
 crates/resilience-tui   binary `resilience`: app.rs (state machine, returns Effects),
@@ -605,11 +606,15 @@ CP437 letters of ter-i16n, `canvas::CONSOLE_LETTERS`) and slice 13's
 catalog (Luxembourg + Bretagne in nix/packs/maps.nix, on the mirror)
 and `vm-maps` (search, nearby, go-to, a spot height, an accented name)
 are on `feat/maps-search`, with the TUI fix for keys typed right after
-a program quits. Left for 0.6.0: rebuild the two catalog packs with the
-folded search index (new sizes and hashes, upload); the sea inside
-regional packs (open finding, pack format change); the independent
-review of the pack builder and viewer (owner's order, ADR 0016); full
-test run, merge into `develop`, ISO, release. History before slice 10:
+a program quits; merged into `develop` 2026-11-21. Then on
+`feat/maps-sea` (2026-11-21): the sea inside regional packs
+(OpenStreetMap water polygons, pinned on the mirror, `mapmaker sea`,
+class water/sea; ADR 0016), the two catalog packs rebuilt with the
+folded index (Bretagne with its sea) and republished with their inputs
+(`packs/maps/sources/`), and the independent review of the maps crate
+(code-review skill, high) with its 10 findings fixed. Left for 0.6.0:
+full test run, merge into `develop`, version bump, ISO, release.
+History before slice 10:
 
 Phases 0 to 4 are done (see ROADMAP.md). Phase 5 (offline maps, ADR 0016):
 slices 1 to 9 are in `develop`. Slices 1 to 7 came with PR #1; slice 8
@@ -696,15 +701,15 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 - Keyboard: all consoles share one keymap (kernel); a login prompt starting
   on any console resets it to the system layout, and the TUI reloads its
   user's layout only at session start (ADR 0017).
-- Maps: search, nearby and go-to exist on `feat/maps-search` (0.6.0);
-  the search index is over the folded name since 2026-11-20 ("lodz" finds
-  "Łódź"): packs built before have no search until rebuilt, which
-  includes the two catalog packs on the mirror (rebuild them, upload, and
-  update their size and SHA-256 in nix/packs/maps.nix before 0.6.0); two
-  regional packs in the catalog (Luxembourg, Bretagne, hosted on the
-  owner's mirror under packs/maps/; others are built with `nix build
-  .#mapPacks.ID` and opened from a stick); inside a regional pack the sea
-  is black at 500 m/px and finer (no sea polygons: open); the world
+- Maps: search, nearby and go-to in 0.6.0; the search index is over the
+  folded name since 2026-11-20 ("lodz" finds "Łódź"): packs built before
+  have no search until rebuilt (the catalog packs were rebuilt on
+  2026-11-21); two regional packs in the catalog (Luxembourg, Bretagne,
+  hosted on the owner's mirror under packs/maps/, their inputs under
+  packs/maps/sources/; others are built with `nix build .#mapPacks.ID`
+  and opened from a stick); the sea of a coastal pack comes from
+  OpenStreetMap's water polygons of 2026-11-20, a few days older than
+  the extract; nearby's boxes are cut at the antimeridian; the world
   overview draws disputed borders like any other; too many
   point-of-interest names at city scales (style question open); an exact
   name ranks first only for towns or within 10 km (ADR 0016 §4,
