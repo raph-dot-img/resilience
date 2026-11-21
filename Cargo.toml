@@ -4,6 +4,7 @@ members = [
   "crates/resilience-core",
   "crates/resilience-shell",
   "crates/resilience-tui",
+  "crates/resilience-gui",
   "crates/resilience-admin",
   "crates/resilience-backup",
   "crates/resilience-library",

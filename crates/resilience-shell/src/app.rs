@@ -972,7 +972,7 @@ pub enum Modal {
 }
 
 /// A program to run in the foreground with the terminal released.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RunRequest {
     pub label: String,
     pub argv: Vec<String>,
@@ -1347,6 +1347,76 @@ impl App {
     }
 
     // ----- navigation -------------------------------------------------------
+
+    /// The selection of the current view, for the views a pointer can
+    /// choose rows in (the GUI, ADR 0026).
+    pub fn list_mut(&mut self) -> Option<&mut ListState> {
+        match self.stack.last_mut()? {
+            View::Home { list }
+            | View::Category { list, .. }
+            | View::Search { list, .. }
+            | View::Settings { list } => Some(list),
+            _ => None,
+        }
+    }
+
+    /// The selected row of the current view (see [`App::list_mut`]).
+    pub fn selected_row(&self) -> Option<usize> {
+        match self.view() {
+            View::Home { list }
+            | View::Category { list, .. }
+            | View::Search { list, .. }
+            | View::Settings { list } => list.selected(),
+            _ => None,
+        }
+    }
+
+    /// Selects row `i` of the current view and activates it, exactly as
+    /// moving there and pressing Enter would.
+    pub fn choose_row(&mut self, i: usize) -> Effect {
+        if self.modal.is_some() {
+            return Effect::None;
+        }
+        match self.list_mut() {
+            Some(l) => l.select(Some(i)),
+            None => return Effect::None,
+        }
+        self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+    }
+
+    /// Back to the main menu, as repeated Esc would (never past the
+    /// licence notice, which takes Esc itself).
+    pub fn go_home(&mut self) {
+        while self.stack.len() > 1 && self.modal.is_none() {
+            if matches!(self.view(), View::Licence { .. }) {
+                return;
+            }
+            let n = self.stack.len();
+            self.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+            if self.stack.len() >= n {
+                return;
+            }
+        }
+    }
+
+    /// Opens Search (if needed) with `query` typed in it.
+    pub fn set_search(&mut self, query: &str) {
+        if self.modal.is_some() || matches!(self.view(), View::Licence { .. }) {
+            return;
+        }
+        let q: String = query.chars().take(64).collect();
+        let hits = self.search(&q);
+        let list = ListState::default().with_selected((!hits.is_empty()).then_some(0));
+        let v = View::Search {
+            query: q,
+            hits,
+            list,
+        };
+        match self.stack.last_mut() {
+            Some(top @ View::Search { .. }) => *top = v,
+            _ => self.push(v),
+        }
+    }
 
     pub fn view(&self) -> &View {
         self.stack.last().expect("view stack is never empty")

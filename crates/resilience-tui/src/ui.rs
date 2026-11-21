@@ -69,6 +69,27 @@ fn marker(ok: Option<bool>, t: &Theme) -> Span<'static> {
     }
 }
 
+/// The screen without the big header, for the GUI's text panel (ADR 0026):
+/// the GUI draws its own title and status bars around it.
+pub fn draw_panel(f: &mut Frame, app: &mut App) {
+    let area = f.area();
+    let theme = Theme::new(app.theme);
+    f.render_widget(Block::new().style(theme.base), area);
+    let [body, footer] = Layout::vertical([Constraint::Min(0), Constraint::Length(2)]).areas(area);
+    let body = match app.sharing_banner() {
+        Some(b) => {
+            let [line, rest] =
+                Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(body);
+            f.render_widget(Paragraph::new(Span::styled(b, theme.warn)), line);
+            rest
+        }
+        None => body,
+    };
+    draw_body(f, app, body);
+    draw_footer(f, app, footer);
+    draw_modal(f, app, area);
+}
+
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
     let theme = Theme::new(app.theme);
