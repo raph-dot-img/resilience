@@ -60,13 +60,13 @@ in
         expect "coverage: Testland (synthetic): the area west of 6.1 E only"
         expect "format: pbf"
         # No feature is drawn below z4 in so small a region (the lake is tiny).
-        expect "zoom: 4-14"
+        expect "zoom: 3-14" # the sea from z3, the other layers from z4
         expect "center: 49.04000,6.05000,10"
         expect "coverage-area: 1 rings, 4 points"
         expect "search: available"
         expect "points-of-interest: available"
         expect "integrity: ok"
-        grep -qx 'source: testland.osm.pbf sha256:[0-9a-f]\{64\}' info.txt
+        grep -qx 'source: testland.osm.pbf sha256:[0-9a-f]\{64\}; sea: testland-sea.geojson' info.txt
         grep -qx 'builder: resilience-mapmaker [0-9.]* (osmium-tool .*, tippecanoe .*)' info.txt
 
         q() { ${lib.getExe' sqlite "sqlite3"} -readonly -batch -noheader "file:pack.mbtiles?immutable=1" "$1"; }
@@ -116,6 +116,11 @@ in
         has 12 "\"Rue de l'Essai\""
         hasnt 11 "\"Rue de l'Essai\""
         has 14 '"category": ?"water"'
+        # The sea (water polygons cut to the region's rectangle) at every
+        # zoom; the square far away (50 N) is not in the pack.
+        has 5 '"class": ?"sea"'
+        has 14 '"class": ?"sea"'
+        q "SELECT value FROM metadata WHERE name = 'bounds'" | awk -F, '{ exit !($4 < 49.1 && $2 > 48.99) }'
 
         echo ok > "$out"
       '';

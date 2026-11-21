@@ -1813,3 +1813,36 @@ fn dump_viewer_screens() {
     println!("{}\n", none.screen(80, 24));
     println!("{}\n", h.screen(39, 11));
 }
+
+#[test]
+fn a_regional_pack_s_sea_is_blue_at_street_scale() {
+    // Testland with sea south of 49.55 (as the pack builder cuts
+    // OpenStreetMap's water polygons to a region), and without.
+    let sea = |t: &mut TileMaker| {
+        testland_features(t);
+        t.polygon(
+            "water",
+            &[("class", Attr::S("sea"))],
+            &[(49.50, 6.0), (49.50, 6.3), (49.55, 6.3), (49.55, 6.0)],
+        );
+    };
+    let mut with = PackSpec::detailed("Testland", TESTLAND);
+    with.center = Some((TESTVILLE.1, TESTVILLE.0, 12));
+    let with = spread(with, 0..=13, TESTLAND, sea);
+    let without = testland("Testland", "2026-01-01");
+    let blue_cells = |spec: &PackSpec, tag: &str| {
+        let mut h = Harness::new(
+            tag,
+            &[("w.mbtiles", &world()), ("t.mbtiles", spec)],
+            Some((49.525, 6.05)),
+            Some(50.0),
+        );
+        let s = h.coloured(80, 24);
+        let map: String = s.lines().take(18).collect();
+        (map.matches('b').count(), s)
+    };
+    let (b, s) = blue_cells(&with, "sea-with");
+    assert!(b > 18 * 80 / 2, "the sea is drawn ({b} blue cells)\n{s}");
+    let (b, s) = blue_cells(&without, "sea-without");
+    assert!(b < 18 * 80 / 10, "without sea polygons it stays land ({b})\n{s}");
+}
