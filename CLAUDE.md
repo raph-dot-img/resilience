@@ -721,6 +721,10 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
   point-of-interest names at city scales (style question open); an exact
   name ranks first only for towns or within 10 km (ADR 0016 §4,
   2026-11-20); osmium tags-filter needs ~2 GB RAM to build a pack.
+- Boot menu: on a ThinkPad Yoga 11e through a Ventoy stick (UEFI), the
+  ISO's GRUB menu is unreadable (white with blue streaks); it still boots
+  after 10 s or with Enter. Boot loader unchanged since 0.4.0; cause not
+  found (docs/TESTING.md, ISO boot, 2026-11-21).
 - Physical hardware: the live ISO booted on a ThinkPad L15 Gen 1 (owner,
   2026-11-16); release 0.5.0 on a ThinkPad L15 + ThinkPad Yoga 11e (owner,
   2026-11-20: cable, sharing + a pack, hotspot, mesh, messages, no errors;
