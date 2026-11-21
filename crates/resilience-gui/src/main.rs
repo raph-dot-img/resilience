@@ -14,6 +14,7 @@
 //! natively; every other screen is the terminal renderer's output shown as
 //! a text panel until it gets its own graphical view.
 
+mod logo;
 mod run;
 mod style;
 mod textpanel;
@@ -315,6 +316,9 @@ impl Gui {
                     .style(style::ghost_button),
             );
         }
+        if at_home {
+            r = r.push(logo::icon(p.accent, 58.0));
+        }
         r = r.push(text(self.title()).size(20).font(style::UI_FONT_BOLD));
         r = r.push(Space::new().width(Fill));
         let query = match self.app.view() {
@@ -329,7 +333,6 @@ impl Gui {
                 .width(Length::Fixed(380.0))
                 .style(style::search_box),
         );
-        let _ = p;
         container(r).padding([16, 28]).into()
     }
 

@@ -15,7 +15,7 @@ resilience-core.workspace = true
 resilience-shell.workspace = true
 resilience-tui = { path = "../resilience-tui" }
 ratatui.workspace = true
-iced = { version = "0.14", default-features = false, features = ["tiny-skia", "wayland", "smol", "crisp"] }
+iced = { version = "0.14", default-features = false, features = ["tiny-skia", "wayland", "smol", "crisp", "canvas"] }
 serde_json = "1"
 tracing.workspace = true
 tracing-subscriber.workspace = true
