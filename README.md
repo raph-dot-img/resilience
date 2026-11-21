@@ -30,8 +30,8 @@ works at 80×24, without colour, and on modest hardware.
 
 <sub>Real screens of the standard edition in QEMU (1024×768, the system's
 console font and its 8 colours), taken with `scripts/update-screenshots.sh`
-on 2026-11-20 from the development branch: map search and the Luxembourg
-pack come with 0.6.0, not yet released.</sub>
+on 2026-11-21 for release 0.6.0; the map is the Luxembourg pack of the
+catalog.</sub>
 
 > **Status: early prototype (v0.6.0).** It boots and is usable in a
 > virtual machine (x86_64). On physical hardware, the live ISO booted on a
