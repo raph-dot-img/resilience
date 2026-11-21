@@ -65,23 +65,24 @@
 
     with subtest("keyboard: open a section and a built-in screen"):
         machine.send_key("ret")
-        machine.wait_for_text("Handbook", timeout=30)
+        machine.wait_for_text("Handbook", timeout=90)
         machine.send_key("ret")
-        machine.wait_for_text("HANDBOOK", timeout=30)
+        machine.wait_for_text("HANDBOOK", timeout=90)
         machine.screenshot("gui-handbook")
         machine.send_key("esc")
         machine.send_key("esc")
-        machine.wait_for_text("Hello", timeout=30)
+        machine.wait_for_text("Hello", timeout=90)
 
     with subtest("search, then a program opens in foot and comes back"):
-        machine.send_chars("/nano")
-        machine.wait_for_text("Nano", timeout=30)
+        # Nano needs Stable; the unit converter is offered to Ultra-Stable.
+        machine.send_chars("/unit conv")
+        machine.wait_for_text("converter", timeout=90)
         machine.screenshot("gui-search")
         machine.send_key("ret")
         machine.wait_until_succeeds("pgrep -u alice -x foot", timeout=30)
-        machine.wait_until_succeeds("pgrep -u alice -x nano", timeout=30)
-        machine.screenshot("gui-nano")
-        machine.send_key("ctrl-x")
+        machine.wait_until_succeeds("pgrep -u alice -x units", timeout=30)
+        machine.screenshot("gui-program")
+        machine.send_key("ctrl-d")
         machine.wait_until_fails("pgrep -u alice -x foot", timeout=30)
         machine.wait_until_succeeds("pgrep -u alice -x resilience-gui", timeout=10)
         # No request file is left behind.

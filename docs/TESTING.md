@@ -109,6 +109,19 @@ which corrupts text next to box-drawing characters with our console font.
 | 14 | TUI crash (SIGABRT) → session wrapper shows diagnostics, restarts | PASS |
 | — | No listening TCP/UDP sockets | PASS |
 
+### VM: `vm-gui` — graphical edition (ADR 0026), driven with the keyboard, read by OCR (2026-11-21, `feat/gui`)
+
+| # | Scenario | Result |
+|---|---|---|
+| — | tty1 autologin starts cage + resilience-gui (no TUI on tty1); home tiles read by OCR | PASS |
+| — | Idle memory, cage + GUI: 43.6 MiB RSS (cage 18.2, GUI 25.3; target 150 MB) | PASS |
+| — | Enter opens a section, then the handbook (text panel inside the GUI); Esc twice back home | PASS |
+| — | `/` + typing searches natively; Enter starts the unit converter in foot; Ctrl-D returns to the GUI; no run request file left | PASS |
+| — | Ctrl+Alt+F2 reaches tty2 (text login), Ctrl+Alt+F1 back | PASS |
+| — | GUI killed three times → the TUI starts on tty1, cage gone | PASS |
+| — | Screenshots looked at (home, handbook panel, search, program in foot) | PASS |
+| — | Real hardware, touchpad/mouse clicks, ISO size | NOT TESTED |
+
 ### VM: `vm-modes` — isolated VLAN, three accounts
 
 | Check | Result |
