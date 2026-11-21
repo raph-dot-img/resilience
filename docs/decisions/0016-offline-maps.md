@@ -882,6 +882,39 @@ Decided while showing accented names (2026-11-19):
   viewer's screens) allows these 34 letters. The main TUI draws no map
   names, so its test `only_console_font_glyphs_are_drawn` is unchanged.
 
+Decided for the sea inside regional packs (2026-11-21, owner's go-ahead
+to settle the open finding before rebuilding the catalog packs):
+
+- **The finding**: at 500 m per pixel and finer, a detailed pack's layer
+  starts black (land) so that the overview's coarse coastline never shows
+  at street scale; a Geofabrik region's coverage polygon reaches into the
+  sea, and an extract has coastline lines but no sea areas, so the sea
+  inside Bretagne was black with blue coastline lines.
+- **Chosen**: OpenStreetMap's water polygons (`water-polygons-split-4326`,
+  osmdata.openstreetmap.de, made from the whole planet's coastline by
+  osmcoastline; ODbL like the packs), cut at build time to the rectangle
+  around the region with GDAL's `ogr2ogr -spat ... -clipsrc spat_extent`
+  and written by `resilience-mapmaker sea` as layer `water`, class `sea`
+  (style: filled blue at every scale, under every other area; the legend's
+  existing "Sea" line stands for it). The viewer already clips a pack to
+  its coverage polygon, so the rectangle is enough.
+- **Pinned on the project's mirror**: osmdata replaces the file daily and
+  keeps no old version, so one download (2026-11-20, 909 MB, SHA-256
+  `8c02ca8554882c7e99efeefa8f618e12395bced404a97c47a65a32d25fe39d05`) is
+  published unchanged under `packs/maps/sources/` and fetched from there
+  by hash. The pack's `resilience_source` names it next to the PBF. The
+  coastline in the water polygons can differ slightly from the extract's
+  (two days apart for Bretagne); the extract's coastline lines are still
+  drawn.
+- **Rejected**: letting the overview's sea show through (its coastline is
+  kilometres off at street scale); assembling the sea from the extract's
+  coastline (it is cut open at the extract's edge; closing it along the
+  boundary is osmcoastline's hard part, and osmcoastline is not in
+  nixpkgs and wants the whole planet).
+- **Compatible**: the class is new, the profile stays `resilience-1`, and
+  a viewer that does not know `sea` skips those features (the sea stays
+  black there, as before). Inland regions (Luxembourg) have no sea input.
+
 Decided by the project owner on 2026-11-15:
 
 - **Hosting**: built packs are published as GitHub Release assets of the

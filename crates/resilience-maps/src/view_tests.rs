@@ -1844,5 +1844,8 @@ fn a_regional_pack_s_sea_is_blue_at_street_scale() {
     let (b, s) = blue_cells(&with, "sea-with");
     assert!(b > 18 * 80 / 2, "the sea is drawn ({b} blue cells)\n{s}");
     let (b, s) = blue_cells(&without, "sea-without");
-    assert!(b < 18 * 80 / 10, "without sea polygons it stays land ({b})\n{s}");
+    assert!(
+        b < 18 * 80 / 10,
+        "without sea polygons it stays land ({b})\n{s}"
+    );
 }

@@ -182,19 +182,28 @@ let
 
   # Geofabrik's extract of 1 January 2026 and its boundary. The .poly has
   # no dated name; if Geofabrik changes it, this fetch fails and the hash
-  # (and the pack) must be updated together.
+  # (and the pack) must be updated together. Geofabrik moved every region
+  # into a folder of its own in November 2026 and drops old daily
+  # extracts, so the second URL is an unchanged copy on the project's
+  # mirror (the hash decides either way).
   luxembourg = {
     id = "luxembourg";
     name = "Luxembourg";
     description = "OpenStreetMap data for Luxembourg (Geofabrik extract of 2026-01-01)";
     coverage = "Luxembourg, whole country (Geofabrik extract boundary)";
     pbf = fetchurl {
-      url = "https://download.geofabrik.de/europe/luxembourg-260101.osm.pbf";
+      urls = [
+        "https://download.geofabrik.de/europe/luxembourg/luxembourg-260101.osm.pbf"
+        "https://mirror.canevet.eu/files/resilience/packs/maps/sources/luxembourg-260101.osm.pbf"
+      ];
       hash = "sha256-2PPh2rtNnVSJUAw1Qy6zkwicMiIs//jPUHBoUvBpaoA=";
     };
     sourceName = "luxembourg-260101.osm.pbf";
     poly = fetchurl {
-      url = "https://download.geofabrik.de/europe/luxembourg.poly";
+      urls = [
+        "https://download.geofabrik.de/europe/luxembourg/luxembourg.poly"
+        "https://mirror.canevet.eu/files/resilience/packs/maps/sources/luxembourg.poly"
+      ];
       hash = "sha256-1fcG5KPSXZ9Rc2ZZuWsBiIPn/Pj+d1LoTWxW2Kv7Uho=";
     };
     dataDate = "2026-01-01";
@@ -208,12 +217,21 @@ let
     description = "OpenStreetMap data for Bretagne, France (Geofabrik extract of 2026-11-18)";
     coverage = "Bretagne (France), the whole region: Côtes-d'Armor, Finistère, Ille-et-Vilaine, Morbihan (Geofabrik extract boundary)";
     pbf = fetchurl {
-      url = "https://download.geofabrik.de/europe/france/bretagne-261118.osm.pbf";
-      hash = "sha256-S+Cx7OTjFa/OL92mnRuy7rUWchAJyhGm2NQHvq86jPc=";
+      urls = [
+        "https://download.geofabrik.de/europe/france/bretagne/bretagne-261118.osm.pbf"
+        "https://mirror.canevet.eu/files/resilience/packs/maps/sources/bretagne-261118.osm.pbf"
+      ];
+      # Re-pinned 2026-11-21: after Geofabrik's move the file of this
+      # name has other bytes (same replication timestamp, 2026-11-18
+      # 21:21:02Z, sequence 4970); the earlier copy is no longer published.
+      hash = "sha256-hsPWzXI9AXtX3dlhSJ2Ywd/j/M1wGgXL2VmZOBNUu1w=";
     };
     sourceName = "bretagne-261118.osm.pbf";
     poly = fetchurl {
-      url = "https://download.geofabrik.de/europe/france/bretagne.poly";
+      urls = [
+        "https://download.geofabrik.de/europe/france/bretagne/bretagne.poly"
+        "https://mirror.canevet.eu/files/resilience/packs/maps/sources/bretagne.poly"
+      ];
       hash = "sha256-yVBSJ1ZNQbWrAN6BqTzMuFlxeiLQPDvPV4Iqv+r2PU0=";
     };
     dataDate = "2026-11-18";

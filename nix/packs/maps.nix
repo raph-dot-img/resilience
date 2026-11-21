@@ -16,7 +16,7 @@ in
     language = "lb";
     file = "map-osm-luxembourg_2026-01.mbtiles";
     size = 29315072;
-    sha256 = "79dc79e1c17e6083f60b843309381fa225c2a54e3d4302821aa441a28b0d8971";
+    sha256 = "2c07ad41ce6b01c187d9795b6391a7f770900a568d4038053c6bcf64bd6f7f60";
     urls = mirror "map-osm-luxembourg_2026-01.mbtiles";
     license = "ODbL-1.0";
     source = osm;
@@ -31,8 +31,8 @@ in
     category = "maps";
     language = "fr";
     file = "map-osm-bretagne_2026-11.mbtiles";
-    size = 173797376;
-    sha256 = "6e66b4e08d1605a284a6e830850d79c9133863f1da562a0f4bd179c9ba4502de";
+    size = 177532928;
+    sha256 = "ca72abfd5f05d4ee2cf24db38c01948dd8f846f37074ca4d6d5e7291149b5a43";
     urls = mirror "map-osm-bretagne_2026-11.mbtiles";
     license = "ODbL-1.0";
     source = osm;
