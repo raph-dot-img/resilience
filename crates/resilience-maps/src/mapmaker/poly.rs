@@ -157,6 +157,27 @@ pub fn contains(rings: &[PolyRing], p: Micro) -> bool {
     inside
 }
 
+/// West, south, east and north of every ring (holes included), in
+/// degrees; `None` without points. For cutting the sea to the region.
+pub fn bounds(rings: &[PolyRing]) -> Option<(f64, f64, f64, f64)> {
+    let mut it = rings.iter().flat_map(|r| r.points.iter());
+    let first = it.next()?;
+    let init = (
+        first.lon_degrees(),
+        first.lat_degrees(),
+        first.lon_degrees(),
+        first.lat_degrees(),
+    );
+    Some(it.fold(init, |(w, s, e, n), p| {
+        (
+            w.min(p.lon_degrees()),
+            s.min(p.lat_degrees()),
+            e.max(p.lon_degrees()),
+            n.max(p.lat_degrees()),
+        )
+    }))
+}
+
 /// The largest absolute latitude of the rings, in degrees.
 pub fn max_abs_lat(rings: &[PolyRing]) -> f64 {
     rings
@@ -169,6 +190,21 @@ pub fn max_abs_lat(rings: &[PolyRing]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounds_of_the_rings() {
+        let rings = parse(LUX_LIKE).expect("parse");
+        let (w, s, e, n) = bounds(&rings).expect("bounds");
+        assert!(
+            (w - 5.73).abs() < 1e-6 && (e - 6.53).abs() < 1e-6,
+            "{w} {e}"
+        );
+        assert!(
+            (s - 49.44).abs() < 1e-6 && (n - 50.17631).abs() < 1e-6,
+            "{s} {n}"
+        );
+        assert_eq!(bounds(&[]), None);
+    }
 
     const LUX_LIKE: &str = "luxembourg\n1\n   5.961753E+00   5.017631E+01\n   6.53E+00 4.95E+01\n\t5.73 49.44\n   5.961753E+00   5.017631E+01\nEND\nEND\n";
 

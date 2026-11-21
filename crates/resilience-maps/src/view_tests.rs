@@ -1813,3 +1813,112 @@ fn dump_viewer_screens() {
     println!("{}\n", none.screen(80, 24));
     println!("{}\n", h.screen(39, 11));
 }
+
+#[test]
+fn a_regional_pack_s_sea_is_blue_at_street_scale() {
+    // Testland with sea south of 49.55 (as the pack builder cuts
+    // OpenStreetMap's water polygons to a region), and without.
+    let sea = |t: &mut TileMaker| {
+        testland_features(t);
+        t.polygon(
+            "water",
+            &[("class", Attr::S("sea"))],
+            &[(49.50, 6.0), (49.50, 6.3), (49.55, 6.3), (49.55, 6.0)],
+        );
+    };
+    let mut with = PackSpec::detailed("Testland", TESTLAND);
+    with.center = Some((TESTVILLE.1, TESTVILLE.0, 12));
+    let with = spread(with, 0..=13, TESTLAND, sea);
+    let without = testland("Testland", "2026-01-01");
+    let blue_cells = |spec: &PackSpec, tag: &str| {
+        let mut h = Harness::new(
+            tag,
+            &[("w.mbtiles", &world()), ("t.mbtiles", spec)],
+            Some((49.525, 6.05)),
+            Some(50.0),
+        );
+        let s = h.coloured(80, 24);
+        let map: String = s.lines().take(18).collect();
+        (map.matches('b').count(), s)
+    };
+    let (b, s) = blue_cells(&with, "sea-with");
+    assert!(b > 18 * 80 / 2, "the sea is drawn ({b} blue cells)\n{s}");
+    let (b, s) = blue_cells(&without, "sea-without");
+    assert!(
+        b < 18 * 80 / 10,
+        "without sea polygons it stays land ({b})\n{s}"
+    );
+}
+
+/// Review finding (2026-11-21): a pack the viewer shows as damaged, or one
+/// still being checked, must not answer searches or "nearby"; neither must
+/// the reader keep a search waiting forever once it is gone.
+#[test]
+fn damaged_packs_are_not_searched_and_a_lost_reader_ends_a_search() {
+    let t = testland("Testland", "2026-01-01").place(
+        "settlement",
+        "town",
+        "Testville",
+        None,
+        TESTVILLE,
+        1,
+    );
+    let w = world().place("settlement", "city", "Bigcity", None, (48.5, 4.0), 1);
+    let mut h = Harness::new(
+        "damaged-search",
+        &[("w.mbtiles", &w), ("t.mbtiles", &t)],
+        Some(TESTVILLE),
+        Some(50.0),
+    );
+    // The detailed pack's check fails (as a damaged file on a stick would).
+    h.app.on_response(Response::Checked {
+        index: 1,
+        result: Err("the integrity check failed: page 3 is damaged".into()),
+    });
+    h.key(KeyCode::Char('/'));
+    type_text(&mut h, "testville");
+    h.key(KeyCode::Enter);
+    let reqs = h.app.take_requests();
+    let asked: Vec<&Vec<usize>> = reqs
+        .iter()
+        .filter_map(|r| match r {
+            Request::Search { packs, .. } => Some(packs),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked, [&vec![0usize]], "only the overview is asked");
+    for r in h.worker.handle_all(reqs) {
+        h.app.on_response(r);
+    }
+    assert!(
+        h.app.find.results.is_empty(),
+        "nothing from the damaged pack"
+    );
+    h.key(KeyCode::Esc);
+    h.key(KeyCode::Char('n'));
+    let near: Vec<Vec<usize>> = h
+        .app
+        .take_requests()
+        .into_iter()
+        .filter_map(|r| match r {
+            Request::Nearby { packs, .. } => Some(packs),
+            _ => None,
+        })
+        .collect();
+    assert!(near.iter().all(|p| !p.contains(&1)), "{near:?}");
+
+    // A search waiting when the reader thread dies ends with every map
+    // named as unreadable, not "Searching..." forever.
+    h.key(KeyCode::Esc);
+    h.key(KeyCode::Char('/'));
+    h.key(KeyCode::Enter);
+    let _ = h.app.take_requests();
+    assert!(matches!(
+        h.app.find.status,
+        crate::app::FindStatus::Searching { .. }
+    ));
+    h.app.on_reader_lost();
+    let s = flat(&h.screen(100, 30));
+    assert!(!s.contains("Searching..."), "{s}");
+    assert!(s.contains("Could not be searched: World overview"), "{s}");
+}

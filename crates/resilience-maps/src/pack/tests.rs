@@ -1175,3 +1175,103 @@ fn nearby_reads_the_rtree_through_the_hardened_connection() {
     let at = LatLon::new(49.6116, 6.1319).expect("at");
     assert!(pack.nearby(at).expect("no nearby").is_empty());
 }
+
+#[test]
+fn nearby_keeps_the_nearest_in_a_dense_box_and_search_measures_across_the_antimeridian() {
+    use resilience_core::maps::geo::LatLon;
+    // 20 benches within 300 m of the centre (fewer than WANT: the box
+    // widens to 2 km), then 1,500 cafes 1.5 km north, inserted FIRST so
+    // that R*Tree order alone would fill the 1,000-row limit with them.
+    let (_dir, r) = open_altered("dense", |c| {
+        c.execute_batch("BEGIN").expect("begin");
+        for i in 0..1500i64 {
+            let id = 1000 + i;
+            let (lon, lat) = (6_131_900 + (i % 50) * 100, 49_625_000 + (i / 50) * 10);
+            c.execute(
+                "INSERT INTO rs_place VALUES (?1, 'poi', 'cafe', 'Cafe', 'cafe', NULL, ?2, ?3, 9, NULL)",
+                rusqlite::params![id, lon, lat],
+            )
+            .expect("cafe");
+            c.execute(
+                "INSERT INTO rs_poi_rtree VALUES (?1, ?2, ?2, ?3, ?3)",
+                rusqlite::params![id, lon, lat],
+            )
+            .expect("rtree");
+        }
+        for i in 0..20i64 {
+            let id = 5000 + i;
+            let (lon, lat) = (6_131_900 + i * 50, 49_611_600 + i * 50);
+            c.execute(
+                "INSERT INTO rs_place VALUES (?1, 'poi', 'bench', 'Bench', 'bench', NULL, ?2, ?3, 9, NULL)",
+                rusqlite::params![id, lon, lat],
+            )
+            .expect("bench");
+            c.execute(
+                "INSERT INTO rs_poi_rtree VALUES (?1, ?2, ?2, ?3, ?3)",
+                rusqlite::params![id, lon, lat],
+            )
+            .expect("rtree");
+        }
+        // Just across the antimeridian from a centre at 179.99 E.
+        c.execute_batch(
+            "INSERT INTO rs_place VALUES (9000, 'poi', 'shelter', 'Hut', 'hut', NULL, -179995000, -17000000, 9, NULL);
+             INSERT INTO rs_poi_rtree VALUES (9000, -179995000, -179995000, -17000000, -17000000);
+             INSERT INTO rs_place VALUES (9001, 'poi', 'shelter', 'Hut', 'hut', NULL, 170000000, -17000000, 9, NULL);
+             INSERT INTO rs_place_fts (rowid, fold) VALUES (9000, 'hut'), (9001, 'hut');
+             COMMIT;",
+        )
+        .expect("hut");
+    });
+    let pack = r.expect("opens");
+    let at = LatLon::new(49.6116, 6.1319).expect("at");
+    let found = pack.nearby(at).expect("nearby");
+    let benches = found.iter().filter(|h| h.name == "Bench").count();
+    assert_eq!(
+        benches,
+        20,
+        "every nearest point kept ({} rows)",
+        found.len()
+    );
+    // The nearest first: every bench (and the fixture's pharmacy, 70 m
+    // away) comes before any cafe.
+    let first_cafe = found.iter().position(|h| h.name == "Cafe").expect("cafes");
+    let last_bench = found
+        .iter()
+        .rposition(|h| h.name == "Bench")
+        .expect("benches");
+    assert!(last_bench < first_cafe, "{last_bench} {first_cafe}");
+    // Nearby boxes are cut at the antimeridian (a known limit), but the
+    // search order measures across it: from 179.99 E, the hut 1.6 km
+    // away at 179.995 W comes before one 1,000 km away at 170 E.
+    use resilience_core::maps::search::{fts_query, tokens};
+    let fiji = LatLon::new(-17.0, 179.99).expect("fiji");
+    let fts = fts_query(&tokens("hut")).expect("query");
+    let got = pack.search(&fts, "", fiji).expect("search");
+    let lons: Vec<f64> = got.iter().map(|h| h.at.lon()).collect();
+    assert_eq!(lons.len(), 2, "{got:?}");
+    assert!(lons[0] < -179.0 && lons[1] > 169.0, "{lons:?}");
+}
+
+#[test]
+fn search_keeps_long_valid_names() {
+    use resilience_core::maps::search::{fts_query, tokens};
+    // 140 characters, most of 3 or 4 bytes: 415 bytes, more than the
+    // reader's old 400-byte bound but within what the builder accepts
+    // (rows::MAX_NAME_BYTES).
+    let name = format!("Lang {}", "語".repeat(130) + &"𝔸".repeat(5));
+    assert!(name.len() > 400 && name.len() <= crate::mapmaker::rows::MAX_NAME_BYTES);
+    let (_dir, r) = open_altered("longname", |c| {
+        c.execute(
+            "INSERT INTO rs_place VALUES (77, 'settlement', 'town', ?1, 'lang', NULL, 6130000, 49600000, 1, NULL)",
+            [&name],
+        )
+        .expect("insert");
+        c.execute_batch("INSERT INTO rs_place_fts (rowid, fold) VALUES (77, 'lang');")
+            .expect("fts");
+    });
+    let pack = r.expect("opens");
+    let here = LatLon::new(49.6, 6.13).expect("here");
+    let fts = fts_query(&tokens("lang")).expect("query");
+    let got = pack.search(&fts, "lang", here).expect("search");
+    assert!(got.iter().any(|h| h.name == name), "{got:?}");
+}

@@ -103,6 +103,9 @@ Resilience OS: offline-first terminal Linux distribution for x86_64 PCs.
 Source and documentation: https://github.com/raph-dot-img/resilience-os
 
 releases/VERSION/   one folder per version, never changed once published
+releases/torrents/  EDITION_VERSION.torrent: a whole release folder by
+                    BitTorrent (hybrid v1+v2; this mirror is its web seed;
+                    DHT, peer exchange and several trackers)
 LATEST              the newest version, as one line
 
 Each release folder holds:
@@ -111,13 +114,15 @@ Each release folder holds:
                                                 the root of a USB stick, then
                                                 Recovery > Update from a USB stick
   resilience-VERSION-source.tar.zst             source code of this version
-  resilience-EDITION-VERSION-x86_64-linux.torrent  the same ISO by BitTorrent
   SHA256SUMS, SHA256SUMS.minisig                checksums, signed
 
 Check a download before using it:
 
   minisign -V -p resilience-release.minisign.pub -m SHA256SUMS
   sha256sum -c --ignore-missing SHA256SUMS
+
+The same check applies to a release downloaded by BitTorrent, from any peer:
+the signed SHA256SUMS is part of the torrent.
 
 The public key resilience-release.minisign.pub is also published in the
 source repository (keys/). Compare the two copies: if they differ, do not

@@ -4,6 +4,9 @@
 #     -> osmium tags-filter (filter.txt)
 #     -> osmium export -f geojsonseq (osmium-export.json)
 #     -> resilience-mapmaker classify
+#   + the sea, for coastal regions: OpenStreetMap water polygons (pinned
+#     copy) -> ogr2ogr cut to the region's rectangle
+#     -> resilience-mapmaker sea
 #     -> tippecanoe
 #     -> resilience-mapmaker finish
 #     => $out/map-osm-ID_YYYY-MM.mbtiles (+ .sha256)
@@ -20,6 +23,7 @@
   writeText,
   osmium-tool,
   tippecanoe,
+  gdalMinimal,
   time,
   resilience,
 }:
@@ -44,6 +48,20 @@ let
   });
 
   tools = "osmium-tool ${osmium-tool.version}, tippecanoe ${tippecanoe.version}";
+  toolsWithSea = "${tools}, GDAL ${gdalMinimal.version}";
+
+  # OpenStreetMap's water polygons (the sea made from the whole planet's
+  # coastline by osmcoastline), as osmdata.openstreetmap.de published
+  # them on 2026-11-20. osmdata replaces the file every day and keeps no
+  # old ones, so the build pins a copy on the project's mirror, unchanged
+  # (same SHA-256 as the download). ODbL 1.0, (c) OpenStreetMap
+  # contributors, like the packs.
+  waterPolygons = fetchurl {
+    url = "https://mirror.canevet.eu/files/resilience/packs/maps/sources/water-polygons-split-4326_2026-11-20.zip";
+    hash = "sha256-jALKhVSILH6Z7+76j2GOEjlbztQEqXxHploy0l/jnQU=";
+  };
+  # The shapefile inside the zip, read in place by GDAL.
+  waterPolygonsShp = "/vsizip/${waterPolygons}/water-polygons-split-4326/water_polygons.shp";
 
   # One pack. `dataDate` must match the PBF header's replication
   # timestamp (the build fails otherwise). `singleThread` runs osmium and
@@ -59,6 +77,9 @@ let
       sourceName,
       poly,
       dataDate,
+      # An OGR data source of sea polygons (null: inland, no sea).
+      sea ? null,
+      seaSource ? null,
       singleThread ? false,
     }:
     let
@@ -71,7 +92,8 @@ let
           tippecanoe
           mapmaker
           time
-        ];
+        ]
+        ++ lib.optional (sea != null) gdalMinimal;
         passthru = { inherit file mapmaker; };
         meta = {
           description = "Map pack ${name} (resilience-1, OpenStreetMap ${dataDate})";
@@ -99,6 +121,15 @@ let
           | step classify resilience-mapmaker classify --poly ${poly} \
               --rows rows.jsonl --output features.geojsonseq -
         rm filtered.osm.pbf
+        ${lib.optionalString (sea != null) ''
+          # The sea polygons meeting the region's rectangle, cut to it.
+          read -r w s e n < <(resilience-mapmaker bounds --poly ${poly})
+          step sea-cut ogr2ogr -f GeoJSONSeq -spat "$w" "$s" "$e" "$n" \
+            -clipsrc spat_extent -lco COORDINATE_PRECISION=7 \
+            sea.geojsonseq ${sea}
+          step sea resilience-mapmaker sea --poly ${poly} sea.geojsonseq >> features.geojsonseq
+          rm sea.geojsonseq
+        ''}
         step tippecanoe tippecanoe --quiet --no-progress-indicator \
           --output=tiles.mbtiles --read-parallel \
           --minimum-zoom=0 --maximum-zoom=14 \
@@ -113,9 +144,9 @@ let
           --name ${lib.escapeShellArg name} \
           --description ${lib.escapeShellArg description} \
           --data-date ${dataDate} \
-          --source "${sourceName} sha256:$sha" \
+          --source "${sourceName} sha256:$sha${lib.optionalString (sea != null) "; sea: ${seaSource}"}" \
           --coverage ${lib.escapeShellArg coverage} \
-          --tools ${lib.escapeShellArg tools}
+          --tools ${lib.escapeShellArg (if sea != null then toolsWithSea else tools)}
 
         mkdir "$out"
         mv pack.mbtiles "$out/${file}"
@@ -145,23 +176,34 @@ let
     sourceName = "testland.osm.pbf";
     poly = test.poly;
     dataDate = "2026-01-01";
+    sea = test.sea;
+    seaSource = "testland-sea.geojson";
   };
 
   # Geofabrik's extract of 1 January 2026 and its boundary. The .poly has
   # no dated name; if Geofabrik changes it, this fetch fails and the hash
-  # (and the pack) must be updated together.
+  # (and the pack) must be updated together. Geofabrik moved every region
+  # into a folder of its own in November 2026 and drops old daily
+  # extracts, so the second URL is an unchanged copy on the project's
+  # mirror (the hash decides either way).
   luxembourg = {
     id = "luxembourg";
     name = "Luxembourg";
     description = "OpenStreetMap data for Luxembourg (Geofabrik extract of 2026-01-01)";
     coverage = "Luxembourg, whole country (Geofabrik extract boundary)";
     pbf = fetchurl {
-      url = "https://download.geofabrik.de/europe/luxembourg-260101.osm.pbf";
+      urls = [
+        "https://download.geofabrik.de/europe/luxembourg/luxembourg-260101.osm.pbf"
+        "https://mirror.canevet.eu/files/resilience/packs/maps/sources/luxembourg-260101.osm.pbf"
+      ];
       hash = "sha256-2PPh2rtNnVSJUAw1Qy6zkwicMiIs//jPUHBoUvBpaoA=";
     };
     sourceName = "luxembourg-260101.osm.pbf";
     poly = fetchurl {
-      url = "https://download.geofabrik.de/europe/luxembourg.poly";
+      urls = [
+        "https://download.geofabrik.de/europe/luxembourg/luxembourg.poly"
+        "https://mirror.canevet.eu/files/resilience/packs/maps/sources/luxembourg.poly"
+      ];
       hash = "sha256-1fcG5KPSXZ9Rc2ZZuWsBiIPn/Pj+d1LoTWxW2Kv7Uho=";
     };
     dataDate = "2026-01-01";
@@ -175,15 +217,26 @@ let
     description = "OpenStreetMap data for Bretagne, France (Geofabrik extract of 2026-11-18)";
     coverage = "Bretagne (France), the whole region: Côtes-d'Armor, Finistère, Ille-et-Vilaine, Morbihan (Geofabrik extract boundary)";
     pbf = fetchurl {
-      url = "https://download.geofabrik.de/europe/france/bretagne-261118.osm.pbf";
-      hash = "sha256-S+Cx7OTjFa/OL92mnRuy7rUWchAJyhGm2NQHvq86jPc=";
+      urls = [
+        "https://download.geofabrik.de/europe/france/bretagne/bretagne-261118.osm.pbf"
+        "https://mirror.canevet.eu/files/resilience/packs/maps/sources/bretagne-261118.osm.pbf"
+      ];
+      # Re-pinned 2026-11-21: after Geofabrik's move the file of this
+      # name has other bytes (same replication timestamp, 2026-11-18
+      # 21:21:02Z, sequence 4970); the earlier copy is no longer published.
+      hash = "sha256-hsPWzXI9AXtX3dlhSJ2Ywd/j/M1wGgXL2VmZOBNUu1w=";
     };
     sourceName = "bretagne-261118.osm.pbf";
     poly = fetchurl {
-      url = "https://download.geofabrik.de/europe/france/bretagne.poly";
+      urls = [
+        "https://download.geofabrik.de/europe/france/bretagne/bretagne.poly"
+        "https://mirror.canevet.eu/files/resilience/packs/maps/sources/bretagne.poly"
+      ];
       hash = "sha256-yVBSJ1ZNQbWrAN6BqTzMuFlxeiLQPDvPV4Iqv+r2PU0=";
     };
     dataDate = "2026-11-18";
+    sea = waterPolygonsShp;
+    seaSource = "OpenStreetMap water polygons of 2026-11-20 sha256:8c02ca8554882c7e99efeefa8f618e12395bced404a97c47a65a32d25fe39d05";
   };
 in
 {

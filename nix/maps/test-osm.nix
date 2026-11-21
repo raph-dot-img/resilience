@@ -166,6 +166,19 @@
     </osm>
   '';
 
+  # Sea, as OpenStreetMap's water polygons give it (ADR 0016, 2026-11-21):
+  # one square across the south edge, wider than the region's rectangle
+  # (cut to lon 6.00-6.10, lat 49.00-49.07 by ogr2ogr), and one far away
+  # (left out). Properties are dropped by the builder.
+  sea = writeText "testland-sea.geojson" ''
+    {"type": "FeatureCollection", "features": [
+      {"type": "Feature", "properties": {"FID": 1}, "geometry": {"type": "Polygon",
+        "coordinates": [[[5.9, 48.9], [6.2, 48.9], [6.2, 49.005], [5.9, 49.005], [5.9, 48.9]]]}},
+      {"type": "Feature", "properties": {"FID": 2}, "geometry": {"type": "Polygon",
+        "coordinates": [[[7.0, 50.0], [7.5, 50.0], [7.5, 50.5], [7.0, 50.5], [7.0, 50.0]]]}}
+    ]}
+  '';
+
   # Coverage: lon 6.00-6.10, lat 49.00-49.07 (Osmosis polygon format).
   poly = writeText "testland.poly" ''
     testland

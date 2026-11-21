@@ -82,7 +82,12 @@ in
                 "nmcli -t -g GENERAL.CONNECTION device show eth1 | grep -qx 'Wired without router'",
                 timeout=150,
             )
-            m.succeed("nmcli -g GENERAL.STATE device show eth1 | grep -q '100 (connected'")
+            # The profile is named while the device is still "connecting"
+            # (its addresses not yet configured): wait for "connected".
+            m.wait_until_succeeds(
+                "nmcli -g GENERAL.STATE device show eth1 | grep -q '100 (connected'",
+                timeout=60,
+            )
             m.wait_until_succeeds("ip -4 addr show dev eth1 | grep -q 'inet 169.254.'", timeout=30)
             m.succeed("ip -6 addr show dev eth1 scope link | grep -q fe80")
             m.wait_until_succeeds(

@@ -83,9 +83,12 @@ names! {
 }
 
 names! {
-    /// `class` of the `water` layer: polygons (lake, reservoir, riverbank)
-    /// and lines (the others).
+    /// `class` of the `water` layer: polygons (sea, lake, reservoir,
+    /// riverbank) and lines (the others). `sea` comes from OpenStreetMap's
+    /// water polygons, cut to a regional pack (the extract itself has only
+    /// coastline lines).
     WaterClass {
+        Sea = "sea",
         Lake = "lake",
         Reservoir = "reservoir",
         Riverbank = "riverbank",
@@ -366,6 +369,7 @@ impl Class {
     pub const fn description(self) -> &'static str {
         match self {
             Class::Water(c) => match c {
+                WaterClass::Sea => "sea",
                 WaterClass::Lake => "lake",
                 WaterClass::Reservoir => "reservoir",
                 WaterClass::Riverbank => "wide river",
@@ -669,6 +673,9 @@ use LinePattern::{Dashed, Dotted, Solid};
 pub static RULES: &[Rule] = &[
     // Areas.
     fill(Class::Land(LandClass::Landmass), ALWAYS, Black, 0),
+    // Under every other area: sand and wetland on the shore are drawn over
+    // it. The legend's "Sea" line (the background colour) stands for it.
+    fill(Class::Water(WaterClass::Sea), ALWAYS, SEA, 1),
     fill(Class::Land(LandClass::Sand), 50.0, Yellow, 2),
     fill(Class::Land(LandClass::Wetland), 50.0, Green, 3),
     fill(Class::Land(LandClass::Park), 50.0, Green, 4),
@@ -820,11 +827,19 @@ pub fn legend(scale: Option<f64>) -> Vec<LegendEntry> {
     let mut out = Vec::new();
     let mut sea = sample_canvas();
     sea.fill(SEA);
-    out.push(entry(&sea, "Sea", 0.0, ALWAYS));
+    let mut e = entry(&sea, "Sea", 0.0, ALWAYS);
+    // The background colour, and the sea areas of regional packs.
+    e.classes = vec![Class::Water(WaterClass::Sea)];
+    out.push(e);
 
     let mut i = 0;
     while i < RULES.len() {
         let first = &RULES[i];
+        if first.class == Class::Water(WaterClass::Sea) {
+            // On the "Sea" line above.
+            i += 1;
+            continue;
+        }
         let mut j = i + 1;
         while j < RULES.len() && same_look(first, &RULES[j]) {
             j += 1;

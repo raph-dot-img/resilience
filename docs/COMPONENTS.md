@@ -89,7 +89,8 @@ is to be run before each release (cargo-deny is in the dev shell).
 | signal-cli | 0.14.7 | GPL-3.0 | **unofficial** Signal client (Phase 6) | Java; unofficial; may break with server changes |
 | rtl-sdr / rtl_433 / soapysdr | 1.3.5 / 25.12 / 0.8.1-unstable | GPL-2.0+ / GPL-2.0+ / BSL-1.0 | receive-only SDR (Phase 7) | |
 | gpsd | 3.27.5 | BSD-2-Clause | GPS for maps (Phase 5) | |
-| osmium-tool, gdal | 1.19.1, 3.12.4 | GPL-3.0+…, MIT | map data processing (build side) | |
+| osmium-tool, gdal (`gdalMinimal`) | 1.19.1, 3.12.4 | GPL-3.0+…, MIT | map data processing (build side); GDAL's `ogr2ogr` cuts the sea polygons to a coastal region | |
+| OpenStreetMap water polygons (data) | `water-polygons-split-4326` of 2026-11-20 (909 MB zip, SHA-256 `8c02ca85…5fe39d05`) | ODbL-1.0, (c) OpenStreetMap contributors | the sea inside coastal map packs (Bretagne), cut to the region at build time (build side only) | from osmdata.openstreetmap.de (made with osmcoastline); it replaces the file daily, so the build fetches an unchanged copy from the project's mirror (`packs/maps/sources/`) |
 | Natural Earth (data) | 5.1.2 (tag `v5.1.2` of nvkelso/natural-earth-vector, six 10m GeoJSON files, each pinned by hash) | Public domain | built-in world overview map (`resilience-world-map`, ADR 0016); **shipped in the image** as an 11.7 MB map pack | fetched at build time from raw.githubusercontent.com; every boundary line is drawn alike, disputed or not |
 | tippecanoe | 2.79.0 | BSD-2-Clause | builds the tiles of map packs and of the world overview (build side only) | |
 | frotz, angband, chess-tui, gnuchess | 2.55, 4.2.6, 2.7.0, 6.3.0 | GPL-2.0+, GPL-2.0, MIT, GPL-3.0+ | entertainment (Phase 7) | |
