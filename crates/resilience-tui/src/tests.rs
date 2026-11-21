@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use resilience_core::admin;
 use resilience_core::catalog::{Catalog, Category};
 use resilience_core::clock;
 use resilience_core::config::{SystemConfig, ThemeName, ToolPaths, UserSettings};
 use resilience_core::mode::{Detected, Mode};
 use resilience_core::packs::PackKind;
+use resilience_shell::input::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{
     App, BACKUP_LABEL, Builtin, CHECK_LABEL, CRYPTO_LABEL, Effect, EncryptTarget, Entry,
@@ -1357,7 +1357,7 @@ fn restore_and_check_use_the_selected_backup() {
         volume,
         mount: stick.clone(),
         files: resilience_core::backup::list_backups(&stick),
-        list: ratatui::widgets::ListState::default().with_selected(Some(0)),
+        list: resilience_shell::list::ListState::default().with_selected(Some(0)),
     });
     let screen = render(&mut a, 80, 24);
     assert!(screen.contains("2026-11-14 10:30:00 UTC"), "{screen}");
@@ -4362,7 +4362,7 @@ fn push_updates(a: &mut App, stick: &Path) {
     a.stack.push(View::Updates {
         rows,
         error: None,
-        list: ratatui::widgets::ListState::default().with_selected(Some(0)),
+        list: resilience_shell::list::ListState::default().with_selected(Some(0)),
     });
 }
 

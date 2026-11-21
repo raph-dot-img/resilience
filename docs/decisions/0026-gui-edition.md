@@ -1,8 +1,6 @@
 # ADR 0026: Graphical edition (GUI)
 
-Status: proposed (2026-11-21). The owner chose the release (0.7.0) and the
-toolkit (iced). The rest of this ADR still needs the owner's acceptance.
-Nothing is implemented yet.
+Status: accepted (2026-11-21, by the owner).
 
 ## Context
 

@@ -150,8 +150,15 @@ crates/resilience-maps  binaries (ADR 0016, UNPRIVILEGED): `resilience-maps` (vi
                         writes OpenStreetMap water polygons cut by ogr2ogr as water/sea).
                         nix/packages/resilience-world-map: the built-in world overview
                         (Natural Earth, z0-7), a `[[builtin]]` maps entry of packs.toml
-crates/resilience-tui   binary `resilience`: app.rs (state machine, returns Effects),
-                        ui.rs (rendering), theme.rs, help.rs, tests.rs
+crates/resilience-shell library (ADR 0026): the front-end independent interface logic:
+                        app.rs (state machine, returns Effects) + its screen modules
+                        (*_ui.rs, library.rs), help.rs, input.rs (KeyEvent, crossterm
+                        names), list.rs (ListState: selection + offset), fmt.rs (local time).
+                        No ratatui/crossterm here: shared by the TUI and the GUI
+crates/resilience-tui   binary `resilience`: main.rs (re-exports shell's app/help as
+                        crate::app/help), keys.rs (crossterm -> shell keys), ui.rs
+                        (rendering; theme from app.theme: ThemeName), theme.rs, tests.rs
+                        (flow + screen tests; flow tests move to the shell later)
 nix/packages/resilience-session  login shell: runs TUI, restarts after crash, refuses -c
 handbook/*.md           offline user handbook shipped in the system
 tests/vm/*.nix          NixOS VM tests (QEMU/KVM via nix build .#checks...)
@@ -492,6 +499,8 @@ Commit trailers: `Co-Authored-By: Claude …` as instructed by the session.
 
 ## 11. Rust conventions
 
+- `resilience-shell` has no ratatui/crossterm/iced code (ADR 0026); screen logic goes
+  there, drawing in the front ends.
 - `resilience-core` has no UI code; every system reader has a pure parser
   with unit tests. `unsafe` only for libc calls, each with a `// SAFETY:` comment.
 - No `unwrap()` outside tests (clippy warns); `expect` only for invariants.
@@ -744,7 +753,7 @@ See ROADMAP.md. Current: 0.6.0 (maps) is published (2026-11-21). Before: 0.5.0 i
 (2026-11-20); maps (Phase 5, slices 10-13; the TUI stop after quitting a
 program, found 2026-11-20, is fixed on `feat/maps-search`) for 0.6.0
 (owner, 2026-11-19). Release
-0.7.0 (owner, 2026-11-21): GUI edition (ADR 0026 proposed, branch `feat/gui`). Release
+0.7.0 (owner, 2026-11-21): GUI edition (ADR 0026 accepted, branch `feat/gui`). Release
 0.8.0: Phase 11, offline assistant (local model via Ollama or
 llama.cpp, models as hash-pinned packs, answers grounded in the
 libraries and handbook with sources); ADR first; not started.
@@ -776,7 +785,7 @@ libraries and handbook with sources); ADR first; not started.
 - 0023 Offline updates: signed Nix binary cache on a USB stick (release key in nix/release-keys.nix, passed per import, never in nix.conf), helper `apply-update` (auth_admin, newer version of this edition and variant only, switch-to-configuration boot), `check-update` as the user, TUI Recovery → Update from a USB stick
 - 0024 Licence notice: before an account's first use of the TUI, Hippocratic License 2.1 summary + original text, "I certify that I have read" → helper `record-licence SHA256` (allow_active=yes) appends to /var/lib/resilience/licence-acceptances.log (root 0644); `resilience.licence.prompt` off only in VM tests (flake wrapper, mkDefault); live ISO asks at every start
 - 0025 Community network (accepted 2026-11-19, implemented, reviewed; 0.5.0): sharing packs/library/folder/pages over HTTP (one read-only nginx, TCP 80, one interface) only via helper `set-share` (auth_admin, not kept across reboots), discovery by Reticulum announces, joining as the user (peer packs hash-checked by the store, pages via a loopback relay + restricted lynx), hotspot via `set-hotspot` (auth_admin, WPA2, no forwarding), expert DNS in the hotspot's dnsmasq (`home.arpa`)
-- 0026 GUI edition (proposed 2026-11-21, 0.7.0): cage kiosk + iced app, shared `resilience-shell`, own polkit agent, `resilience.interface`
+- 0026 GUI edition (accepted 2026-11-21, 0.7.0): cage kiosk + iced app, shared `resilience-shell`, own polkit agent, `resilience.interface`
 
 ## 18. How to continue safely
 

@@ -7,8 +7,9 @@
 //! resilience --version  print the version
 //! ```
 
-mod app;
-mod help;
+pub use resilience_shell::app;
+pub use resilience_shell::help;
+mod keys;
 mod theme;
 mod ui;
 
@@ -245,7 +246,7 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
         terminal.draw(|f| ui::draw(f, app))?;
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
-                Event::Key(k) => match app.handle_key(k) {
+                Event::Key(k) => match app.handle_key(keys::from_crossterm(k)) {
                     Effect::None => {}
                     Effect::Quit => return Ok(()),
                     Effect::Run(req) => run_program(terminal, app, &req)?,

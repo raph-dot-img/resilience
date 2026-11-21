@@ -10,8 +10,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::widgets::ListState;
+use crate::input::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crate::list::ListState;
 use resilience_core::admin::{self, AccountRow, AdminConfig, ModeState};
 use resilience_core::backup::{self, BackupFile};
 use resilience_core::catalog::{Availability, Catalog, Category};
@@ -31,8 +31,6 @@ use resilience_core::recovery;
 use resilience_core::status::{self, Snapshot, SystemState};
 use resilience_core::wifi::{self, Network, Overview};
 
-use crate::theme::Theme;
-
 #[path = "chat_ui.rs"]
 mod chat_ui;
 #[path = "crypto_ui.rs"]
@@ -51,23 +49,18 @@ mod share_ui;
 mod update_ui;
 pub use chat_ui::now_secs as chat_now;
 pub use chat_ui::{ChatInput, ChatRow, NearbyRow};
-#[cfg(test)]
 pub use crypto_ui::CRYPTO_LABEL;
 pub use crypto_ui::{Choice, EncryptTarget, KeyRow, Pick, Recipient};
 pub use files_ui::Table;
-#[cfg(test)]
 pub use install_ui::INSTALL_LABEL;
 pub use install_ui::{InstallForm, InstallInput, InstallRow};
-#[cfg(test)]
 pub use library::{ItemPlace, stick_items};
 pub use library::{LibItem, PackRow, PacksScreen};
 pub use licence_ui::LicencePage;
-#[cfg(test)]
 pub use share_ui::SET_SHARE_LABEL as SET_SHARE_LABEL_FOR_TESTS;
 pub use share_ui::{
     CommunityRow, PeerAction, PeerPack, SHARE_ROWS, ShareForm, ShareInput, service_label,
 };
-#[cfg(test)]
 pub use update_ui::update_rows as update_ui_rows;
 pub use update_ui::{UPDATE_APPLY_LABEL, UPDATE_CHECK_LABEL, UpdateRow};
 
@@ -1032,7 +1025,7 @@ pub struct App {
     pub settings: UserSettings,
     pub settings_path: PathBuf,
     pub paths: Paths,
-    pub theme: Theme,
+    pub theme: ThemeName,
     pub snapshot: Snapshot,
     pub sys_state: SystemState,
     pub failed_units: Vec<String>,
@@ -1077,7 +1070,7 @@ impl App {
     pub fn new(s: Startup) -> App {
         let (probe_config, invalid) = s.sys.probe.to_probe_config();
         let mut app = App {
-            theme: Theme::new(s.settings.theme),
+            theme: s.settings.theme,
             snapshot: status::snapshot(&s.home),
             sys_state: SystemState::Unknown("not checked yet".into()),
             failed_units: Vec::new(),
@@ -2102,7 +2095,7 @@ impl App {
                         .map(|n| {
                             format!(
                                 "{} {} {}",
-                                crate::ui::clock(n.at),
+                                crate::fmt::clock(n.at),
                                 level_tag(n.level),
                                 n.text
                             )
@@ -2369,7 +2362,7 @@ impl App {
 
     fn set_theme(&mut self, t: ThemeName) {
         self.settings.theme = t;
-        self.theme = Theme::new(t);
+        self.theme = t;
         match self.settings.save(&self.settings_path) {
             Ok(()) => self.notify(Level::Info, format!("Theme set to {}.", t.label())),
             Err(e) => self.notify(Level::Error, format!("Theme applied but not saved: {e}")),
@@ -2971,7 +2964,7 @@ impl App {
             return;
         }
         self.modal = Some(Modal::SetTime {
-            value: crate::ui::date_time(SystemTime::now()),
+            value: crate::fmt::date_time(SystemTime::now()),
             zone: clock::system_zone(),
             error: None,
         });
@@ -2996,8 +2989,8 @@ impl App {
                 return;
             }
         };
-        let now = crate::ui::date_time(SystemTime::now());
-        let new = crate::ui::date_time(SystemTime::UNIX_EPOCH + Duration::from_secs(utc as u64));
+        let now = crate::fmt::date_time(SystemTime::now());
+        let new = crate::fmt::date_time(SystemTime::UNIX_EPOCH + Duration::from_secs(utc as u64));
         let body = format!(
             "Set the clock to {new} ({zone})?\n\n\
              The clock now shows {now}. In UTC the new time is {}.\n\n\
@@ -3783,7 +3776,7 @@ impl App {
             g.number,
             g.nixos_version.as_deref().unwrap_or("unknown version"),
             g.created
-                .map(crate::ui::date_time)
+                .map(crate::fmt::date_time)
                 .unwrap_or_else(|| "?".into()),
         );
         if g.number < newest {
@@ -3881,7 +3874,7 @@ impl App {
                     "{:>4}  {:<16}  {:<24}  {}\n",
                     g.number,
                     g.created
-                        .map(crate::ui::date_time)
+                        .map(crate::fmt::date_time)
                         .unwrap_or_else(|| "?".into()),
                     g.nixos_version.as_deref().unwrap_or("?"),
                     marks.join(", ")

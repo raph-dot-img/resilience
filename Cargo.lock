@@ -690,12 +690,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "resilience-shell"
+version = "0.6.0"
+dependencies = [
+ "libc",
+ "resilience-core",
+ "tracing",
+]
+
+[[package]]
 name = "resilience-tui"
 version = "0.6.0"
 dependencies = [
  "libc",
  "ratatui",
  "resilience-core",
+ "resilience-shell",
  "tracing",
  "tracing-subscriber",
 ]
