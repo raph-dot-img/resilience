@@ -83,6 +83,10 @@ and offline updates (ADR 0023) gain the GUI variants.
 - Has to work without a GPU (QEMU `-vga std`, virtio-gpu) and on the
   owner's laptops (ThinkPad L15, Yoga 11e: integrated Intel graphics).
 
+Measured (2026-11-21, vm-gui and the installed UEFI systems): idle RSS
+43.4 MiB (cage 18.2, GUI 25.2); system closure +58.6 MiB over the TUI
+edition (cage without Xwayland, fonts copied: 4 files).
+
 ## Consequences
 
 - CLAUDE.md §1 now says "terminal-first, with an optional graphical edition".

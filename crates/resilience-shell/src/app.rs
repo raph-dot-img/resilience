@@ -1355,6 +1355,7 @@ impl App {
             View::Home { list }
             | View::Category { list, .. }
             | View::Search { list, .. }
+            | View::Handbook { list, .. }
             | View::Settings { list } => Some(list),
             _ => None,
         }
@@ -1366,7 +1367,19 @@ impl App {
             View::Home { list }
             | View::Category { list, .. }
             | View::Search { list, .. }
+            | View::Handbook { list, .. }
             | View::Settings { list } => list.selected(),
+            _ => None,
+        }
+    }
+
+    /// The scroll position of a text page (the renderer clamps it to the
+    /// lines it can show, as the TUI's does).
+    pub fn scroll_mut(&mut self) -> Option<&mut usize> {
+        match self.stack.last_mut()? {
+            View::Pager { scroll, .. } | View::Status { scroll } | View::Help { scroll, .. } => {
+                Some(scroll)
+            }
             _ => None,
         }
     }

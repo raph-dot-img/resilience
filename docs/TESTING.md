@@ -120,7 +120,9 @@ which corrupts text next to box-drawing characters with our console font.
 | — | Ctrl+Alt+F2 reaches tty2 (text login), Ctrl+Alt+F1 back | PASS |
 | — | GUI killed three times → the TUI starts on tty1, cage gone | PASS |
 | — | Screenshots looked at (home, handbook panel, search, program in foot) | PASS |
-| — | Real hardware, touchpad/mouse clicks, ISO size | NOT TESTED |
+| — | Native handbook: list, then a guide in the reading view (OCR), Esc back home | PASS |
+| — | Size: installed-standard-gui-uefi-plain closure 2485.7 MiB vs installed-standard-uefi-plain 2427.1 MiB: +58.6 MiB (target 60; was +79.7 before the fonts were copied instead of linked) | PASS |
+| — | Real hardware, touchpad/mouse clicks, ISO boot | NOT TESTED |
 
 ### VM: `vm-modes` — isolated VLAN, three accounts
 

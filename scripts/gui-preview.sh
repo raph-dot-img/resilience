@@ -19,10 +19,13 @@ done
 cargo build -q -p resilience-gui
 gui=$PWD/target/debug/resilience-gui
 run=$(mktemp -d); chmod 700 "$run"
+# The handbook from this checkout (a system has it under /run/current-system).
+printf 'handbook_dir = "%s"\n' "$PWD/handbook" > "$run/system.toml"
+export RESILIENCE_SYSTEM_CONFIG="$run/system.toml"
 export XDG_RUNTIME_DIR="$run" WLR_BACKENDS=headless WLR_RENDERER=pixman \
   WLR_HEADLESS_OUTPUTS=1 WLR_LIBINPUT_NO_DEVICES=1 \
   LD_LIBRARY_PATH="$wl/lib:$xkb/lib" RESILIENCE_GUI_FONTS="$fonts" \
-  RESILIENCE_TERMINAL="$foot/bin/foot"
+  RESILIENCE_TERMINAL="$foot/bin/foot" RESILIENCE_DEBUG=1
 unset WAYLAND_DISPLAY DISPLAY
 "$cage/bin/cage" -- "$gui" >"$run/cage.log" 2>&1 &
 pid=$!
@@ -41,5 +44,6 @@ done
 WAYLAND_DISPLAY=$sock "$grim/bin/grim" "$out" || { cat "$run/cage.log"; }
 kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
+cp "$run/cage.log" "$out.log" 2>/dev/null || true
 rm -rf "$fonts" "$run"
 echo "$out ($size)"

@@ -93,6 +93,8 @@ enum Message {
     Home,
     Search(String),
     Resized(iced::Size),
+    /// Mouse wheel over a text page: lines (positive = towards the end).
+    Wheel(i32),
     RunDone(String, Result<i32, String>),
 }
 
@@ -131,7 +133,15 @@ impl Gui {
     }
 
     fn update(&mut self, m: Message) -> Task<Message> {
+        let dbg = std::env::var_os("RESILIENCE_DEBUG").is_some() && !matches!(m, Message::Tick);
+        if dbg {
+            eprintln!("msg {m:?} before: depth {}", self.app.stack.len());
+        }
         let task = self.step(m);
+        if dbg {
+            eprintln!("  after: depth {}", self.app.stack.len());
+        }
+        self.clamp_scroll();
         if self.wants_text_panel() {
             // Bars: ~72 px on top, ~40 px below, 28 px side padding.
             let (cols, rows) =
@@ -179,6 +189,9 @@ impl Gui {
                         | View::Category { .. }
                         | View::Search { .. }
                         | View::Settings { .. }
+                        | View::Handbook { .. }
+                        | View::Pager { .. }
+                        | View::Help { .. }
                 ))
     }
 
@@ -192,11 +205,25 @@ impl Gui {
                 self.size = s;
                 Effect::None
             }
+            Message::Wheel(n) => {
+                if let Some(sc) = self.app.scroll_mut() {
+                    *sc = if n < 0 {
+                        sc.saturating_sub(n.unsigned_abs() as usize)
+                    } else {
+                        sc.saturating_add(n as usize)
+                    };
+                }
+                Effect::None
+            }
             Message::Key(ev) => {
                 if self.running.is_some() {
                     return Task::none();
                 }
-                match style::key_from_iced(&ev) {
+                let k = style::key_from_iced(&ev);
+                if std::env::var_os("RESILIENCE_DEBUG").is_some() {
+                    eprintln!("key {ev:?} -> {k:?}");
+                }
+                match k {
                     Some(k) if self.grid_move(k) => Effect::None,
                     Some(k) => self.app.handle_key(k),
                     None => Effect::None,
@@ -255,6 +282,11 @@ impl Gui {
                 View::Category { cat, .. } => self.category_view(*cat, &p),
                 View::Search { query, hits, .. } => self.search_view(query, hits, &p),
                 View::Settings { .. } => self.settings_view(&p),
+                View::Handbook { pages, error, .. } => self.handbook_view(pages, error.as_deref()),
+                View::Pager { text, scroll, .. } => self.pager_view(text.clone(), *scroll, &p),
+                View::Help { topic, scroll } => {
+                    self.pager_view(help_text(*topic, self.app.mode()), *scroll, &p)
+                }
                 _ => self.text_view(&p),
             }
         };
@@ -307,6 +339,9 @@ impl Gui {
             View::Category { cat, .. } => section_name(*cat),
             View::Search { .. } => "Search".into(),
             View::Settings { .. } => "Settings".into(),
+            View::Handbook { .. } => "Handbook".into(),
+            View::Pager { title, .. } => sentence_case(title),
+            View::Help { .. } => "Help".into(),
             _ => String::new(),
         }
     }
@@ -464,6 +499,117 @@ impl Gui {
             .into()
     }
 
+    fn handbook_view<'a>(
+        &self,
+        pages: &'a [resilience_core::handbook::Page],
+        error: Option<&str>,
+    ) -> Element<'a, Message> {
+        if let Some(e) = error {
+            return centered_note(&format!("The handbook could not be opened: {e}"));
+        }
+        let sel = self.app.selected_row();
+        let rows: Vec<Element<'a, Message>> = pages
+            .iter()
+            .enumerate()
+            .map(|(i, pg)| {
+                button(text(pg.title.as_str()).size(17))
+                    .on_press(Message::Choose(i))
+                    .width(Fill)
+                    .padding([14, 20])
+                    .style(move |t, st| style::row_button(t, st, sel == Some(i)))
+                    .into()
+            })
+            .collect();
+        scrollable(
+            container(column(rows).spacing(6).max_width(760.0))
+                .center_x(Fill)
+                .padding([8, 28]),
+        )
+        .height(Fill)
+        .into()
+    }
+
+    /// Lines of a text page that fit the window.
+    fn pager_rows(&self) -> usize {
+        ((self.size.height - 180.0) / READ_LINE).floor().max(5.0) as usize
+    }
+
+    fn clamp_scroll(&mut self) {
+        let rows = self.pager_rows();
+        let total = match self.app.view() {
+            View::Pager { text, .. } => text.lines().count(),
+            View::Help { topic, .. } => help_text(*topic, self.app.mode()).lines().count(),
+            _ => return,
+        };
+        if let Some(sc) = self.app.scroll_mut() {
+            *sc = (*sc).min(total.saturating_sub(rows));
+        }
+    }
+
+    /// A guide or report: the lines from the shell's scroll position, in a
+    /// centred reading column; headings (lines in capitals) stand out.
+    fn pager_view<'a>(&self, body: String, scroll: usize, p: &Palette) -> Element<'a, Message> {
+        let rows = self.pager_rows();
+        let total = body.lines().count();
+        let lines: Vec<Element<'a, Message>> = body
+            .lines()
+            .skip(scroll)
+            .take(rows)
+            .map(|l| {
+                if let Some(title) = l.strip_prefix("# ") {
+                    return text(title.to_string())
+                        .size(26)
+                        .font(style::UI_FONT_BOLD)
+                        .line_height(iced::widget::text::LineHeight::Absolute(
+                            (READ_LINE * 2.0).into(),
+                        ))
+                        .into();
+                }
+                let heading = is_heading(l);
+                let mut t = text(if l.is_empty() {
+                    " ".to_string()
+                } else {
+                    l.to_string()
+                })
+                .size(READ_SIZE)
+                .line_height(iced::widget::text::LineHeight::Absolute(READ_LINE.into()))
+                .font(style::MONO_FONT);
+                if heading {
+                    t = t.color(p.accent).font(iced::Font {
+                        weight: iced::font::Weight::Bold,
+                        ..style::MONO_FONT
+                    });
+                }
+                t.into()
+            })
+            .collect();
+        let pos = if total > rows {
+            format!(
+                "{}\u{2013}{} of {} lines  \u{00b7}  wheel, arrows or PgUp/PgDn to scroll",
+                scroll + 1,
+                (scroll + rows).min(total),
+                total
+            )
+        } else {
+            String::new()
+        };
+        let page = column![
+            column(lines),
+            Space::new().height(Fill),
+            text(pos).size(13).style(style::dim_text)
+        ]
+        .max_width(880.0);
+        iced::widget::mouse_area(container(page).center_x(Fill).padding([8, 28]).height(Fill))
+            .on_scroll(|d| {
+                let dy = match d {
+                    iced::mouse::ScrollDelta::Lines { y, .. } => y * 3.0,
+                    iced::mouse::ScrollDelta::Pixels { y, .. } => y / READ_LINE,
+                };
+                Message::Wheel(-(dy.round() as i32))
+            })
+            .into()
+    }
+
     fn entry_description(&self, e: Entry) -> String {
         match e {
             Entry::App(i) => self.app.catalog.apps[i].description.clone(),
@@ -568,14 +714,49 @@ fn mode_name(m: resilience_core::mode::Mode) -> &'static str {
     }
 }
 
-/// "KNOWLEDGE & DOCUMENTATION" -> "Knowledge & documentation".
-fn section_name(c: Category) -> String {
-    let t = c.title().to_lowercase();
+/// The shell's help for the screen, after a note on the pointer (the keys
+/// it lists work the same here).
+fn help_text(topic: resilience_shell::app::HelpTopic, mode: resilience_core::mode::Mode) -> String {
+    let mut out = String::from(
+        "== IN THE GRAPHICAL INTERFACE ==\n  \
+         Click a tile or a row to open it. Back and Home are at the top left;\n  \
+         the search box is at the top right. Every key below works too.\n\n",
+    );
+    out.push_str(&resilience_shell::help::lines(topic, mode).join("\n"));
+    out
+}
+
+/// Reading view: mono (guides are laid out in columns), comfortable size.
+const READ_SIZE: f32 = 15.0;
+const READ_LINE: f32 = 24.0;
+
+/// A handbook heading: a line in capitals, not indented ("MOVING AROUND").
+fn is_heading(l: &str) -> bool {
+    (l.starts_with("== ") && l.ends_with(" ==")) || is_caps_line(l)
+}
+
+fn is_caps_line(l: &str) -> bool {
+    !l.starts_with(' ')
+        && l.chars().any(|c| c.is_alphabetic())
+        && !l.chars().any(|c| c.is_lowercase())
+}
+
+/// "KNOWLEDGE & DOCUMENTATION" -> "Knowledge & documentation"; a title
+/// with lower-case letters is kept as it is.
+fn sentence_case(s: &str) -> String {
+    if s.chars().any(|c| c.is_lowercase()) {
+        return s.to_string();
+    }
+    let t = s.to_lowercase();
     let mut ch = t.chars();
     match ch.next() {
         Some(f) => f.to_uppercase().chain(ch).collect(),
         None => t,
     }
+}
+
+fn section_name(c: Category) -> String {
+    sentence_case(c.title())
 }
 
 /// One plain glyph per section (the bundled font has them; no icon font).
@@ -590,5 +771,20 @@ fn icon(c: Category) -> &'static str {
         Category::Productivity => "\u{25a7}",
         Category::Entertainment => "\u{25c6}",
         Category::System => "\u{25a6}",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn titles_and_headings() {
+        assert_eq!(sentence_case("SYSTEM MANAGEMENT"), "System management");
+        assert_eq!(sentence_case("First steps"), "First steps");
+        assert!(is_heading("MOVING AROUND"));
+        assert!(!is_heading("  F1   help"));
+        assert!(!is_heading("Welcome to Resilience"));
+        assert!(!is_heading(""));
     }
 }

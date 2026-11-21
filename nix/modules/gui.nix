@@ -20,12 +20,13 @@ let
     xwayland = null;
     wlroots_0_20 = pkgs.wlroots_0_20.override { enableXWayland = false; };
   };
-  # Exactly the fonts the GUI and its terminal use (no system font set).
+  # Exactly the fonts the GUI and its terminal use, copied (not linked, so
+  # the 23 MiB font packages stay out of the system: ~3 MiB instead).
   fonts = pkgs.runCommand "resilience-gui-fonts" { } ''
     mkdir -p $out
-    ln -s ${pkgs.inter}/share/fonts/truetype/InterVariable.ttf $out/
+    cp ${pkgs.inter}/share/fonts/truetype/InterVariable.ttf $out/
     for f in DejaVuSans DejaVuSansMono DejaVuSansMono-Bold; do
-      ln -s ${pkgs.dejavu_fonts}/share/fonts/truetype/$f.ttf $out/
+      cp -L ${pkgs.dejavu_fonts}/share/fonts/truetype/$f.ttf $out/
     done
   '';
   # foot in the GUI's colours; no shell of its own (it runs one program).
