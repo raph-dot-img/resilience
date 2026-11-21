@@ -620,7 +620,13 @@ folded index (Bretagne with its sea) and republished with their inputs
 (`packs/maps/sources/`), and the independent review of the maps crate
 (code-review skill, high) with its 10 findings fixed; full run: all 26
 checks PASS (2026-11-21, after a race in `vm-cable`'s test was fixed);
-merged into `develop`. Left for 0.6.0: version bump, ISO, release.
+merged into `develop`. **Release 0.6.0 (offline maps)**: tag `v0.6.0`
+on `1f7069b` (local until the owner says), release folder signed by the
+owner, checked, published on the mirror with `LATEST` = 0.6.0 and its
+torrent (2026-11-21); ISO boot BIOS/UEFI and update 0.5.0 → 0.6.0 →
+back PASS in QEMU; installed on an MSI GL73 8SE (PASS); the Yoga 11e does
+not start the installed system (open). Left: merge into `main`, push
+`main` and the tag when the owner says so.
 History before slice 10:
 
 Phases 0 to 4 are done (see ROADMAP.md). Phase 5 (offline maps, ADR 0016):
@@ -732,7 +738,7 @@ the end-of-Phase-4 ISO booted once on a ThinkPad L15 Gen 1.
 
 ## 16. Roadmap
 
-See ROADMAP.md. Current: 0.5.0 is released and validated on two laptops
+See ROADMAP.md. Current: 0.6.0 (maps) is published (2026-11-21). Before: 0.5.0 is released and validated on two laptops
 (2026-11-20); maps (Phase 5, slices 10-13; the TUI stop after quitting a
 program, found 2026-11-20, is fixed on `feat/maps-search`) for 0.6.0
 (owner, 2026-11-19). Release
