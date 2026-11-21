@@ -621,12 +621,12 @@ folded index (Bretagne with its sea) and republished with their inputs
 (code-review skill, high) with its 10 findings fixed; full run: all 26
 checks PASS (2026-11-21, after a race in `vm-cable`'s test was fixed);
 merged into `develop`. **Release 0.6.0 (offline maps)**: tag `v0.6.0`
-on `1f7069b` (local until the owner says), release folder signed by the
+on `1f7069b` pushed, `main` merged and pushed (`67fef9e`), GitHub
+release with its files, release folder signed by the
 owner, checked, published on the mirror with `LATEST` = 0.6.0 and its
 torrent (2026-11-21); ISO boot BIOS/UEFI and update 0.5.0 → 0.6.0 →
 back PASS in QEMU; installed on an MSI GL73 8SE (PASS); the Yoga 11e does
-not start the installed system (open). Left: merge into `main`, push
-`main` and the tag when the owner says so.
+not start the installed system (open). 0.6.0 is complete.
 History before slice 10:
 
 Phases 0 to 4 are done (see ROADMAP.md). Phase 5 (offline maps, ADR 0016):

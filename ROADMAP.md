@@ -70,7 +70,7 @@ secrets never in argv or logs (ADR 0015).
 - [ ] Unlock encrypted (LUKS) USB sticks in the media screens (later)
 - [ ] OpenPGP signing in the interface (minisign signs; gpg on the command line)
 
-## Phase 5 — Offline maps 🟡 (parked on 2026-11-16, resumed on 2026-11-19; release 0.6.0)
+## Phase 5 — Offline maps ✅ (release 0.6.0, 2026-11-21; open items below)
 Design: ADR 0016 (MBTiles with vector tiles, block-character viewer, search
 inside the pack, reproducible pack builder, routing deferred to its own ADR).
 Slices 1 to 9 are in `develop`.
