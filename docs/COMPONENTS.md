@@ -60,6 +60,7 @@ activity as known on 2026-11-14; re-check before each release.
 | foot | 1.27.0 | MIT | https://codeberg.org/dnkl/foot | yes | GUI edition: terminal window for programs started from the GUI (same argv, banner, pkttyagent as on the console) |
 | Inter | 4.1 | OFL-1.1 | https://rsms.me/inter | yes | GUI edition: interface font (InterVariable.ttf only, bundled) |
 | DejaVu fonts | 2.37 | Bitstream Vera / public domain | https://dejavu-fonts.github.io | yes | GUI edition: DejaVu Sans (glyph fallback), Sans Mono (text panel, foot) |
+| Resilience OS logos (`assets/logo/`) | 2026-11-21 | all rights reserved, unmodified use to refer to Resilience OS (`assets/logo/LICENSE`) | made by the project's owner | yes | GUI top bar (icon, drawn as vector), README, release pages |
 
 ## Rust crates (Cargo.lock, hash-pinned)
 
