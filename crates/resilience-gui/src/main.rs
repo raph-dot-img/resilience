@@ -158,6 +158,7 @@ impl Gui {
         let n = match self.app.view() {
             View::Home { .. } => self.app.home_categories().len(),
             View::Category { cat, .. } => self.app.entries(*cat).len(),
+            View::Library { items, .. } => items.len(),
             _ => return false,
         };
         if self.app.modal.is_some() || n == 0 || !k.modifiers.is_empty() {
@@ -194,6 +195,7 @@ impl Gui {
                         | View::Pager { .. }
                         | View::Help { .. }
                         | View::Files { .. }
+                        | View::Library { .. }
                 ))
     }
 
@@ -289,6 +291,7 @@ impl Gui {
                 View::Files {
                     idx, query, pick, ..
                 } => self.files_view(idx, query, pick.is_some(), &p),
+                View::Library { kind, items, .. } => self.library_view(*kind, items, &p),
                 View::Help { topic, scroll } => {
                     self.pager_view(help_text(*topic, self.app.mode()), *scroll, &p)
                 }
@@ -354,6 +357,10 @@ impl Gui {
             View::Help { .. } => "Help".into(),
             View::Files { pick: Some(pk), .. } => sentence_case(pk.title()),
             View::Files { .. } => "Find files".into(),
+            View::Library { kind, .. } if *kind == resilience_core::packs::PackKind::Map => {
+                "Maps on this computer & USB sticks".into()
+            }
+            View::Library { .. } => "Offline library".into(),
             _ => String::new(),
         }
     }
@@ -719,6 +726,61 @@ impl Gui {
         ]
         .spacing(10)
         .padding([8, 28])
+        .into()
+    }
+
+    fn library_view<'a>(
+        &self,
+        kind: resilience_core::packs::PackKind,
+        items: &'a [resilience_shell::app::LibItem],
+        p: &Palette,
+    ) -> Element<'a, Message> {
+        let map = kind == resilience_core::packs::PackKind::Map;
+        let hint = if map {
+            "Enter or click: open the map   \u{00b7}   c: check   \u{00b7}   u: USB stick"
+        } else {
+            "Enter or click: read   \u{00b7}   s: search   \u{00b7}   c: check   \u{00b7}   u: USB stick   \u{00b7}   p: get packs"
+        };
+        if items.is_empty() {
+            return column![
+                centered_note(if map {
+                    "No map yet. Maps come as packs: see Resource packs, or a USB stick (u)."
+                } else {
+                    "No library yet. Press p to get packs, or u to read one from a USB stick."
+                }),
+                text(hint).size(13).style(style::dim_text)
+            ]
+            .padding([8, 28])
+            .into();
+        }
+        let tiles: Vec<Element<'_, Message>> = items
+            .iter()
+            .enumerate()
+            .map(|(i, it)| {
+                let desc = format!(
+                    "{}\n{} \u{00b7} {}",
+                    it.description,
+                    it.tag(),
+                    resilience_core::human_bytes(it.size)
+                );
+                self.tile(
+                    i,
+                    &it.title,
+                    &desc,
+                    if map { "\u{25ce}" } else { "\u{25a4}" },
+                    p,
+                )
+            })
+            .collect();
+        column![
+            row![
+                Space::new().width(Fill),
+                text(hint).size(13).style(style::dim_text)
+            ]
+            .padding([0, 28]),
+            grid(tiles, self.columns())
+        ]
+        .spacing(6)
         .into()
     }
 

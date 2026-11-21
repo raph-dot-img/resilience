@@ -76,6 +76,27 @@
         machine.send_key("esc")
         machine.wait_for_text("Hello", timeout=90)
 
+    with subtest("native offline library and Find files"):
+        machine.send_key("ret")
+        machine.wait_for_text("Handbook", timeout=90)
+        machine.send_key("right")
+        machine.send_key("right")
+        machine.send_key("ret")
+        machine.wait_for_text("System documentation", timeout=90)
+        machine.screenshot("gui-library")
+        machine.send_key("esc")
+        machine.send_key("esc")
+        machine.succeed("runuser -u alice -- sh -c 'mkdir -p ~/Documents && echo hello > ~/Documents/field-notes.txt'")
+        machine.send_chars("/view files")
+        machine.wait_for_text("view files", timeout=90)
+        machine.send_key("ret")
+        machine.send_chars("field")
+        machine.wait_for_text("field-notes", timeout=90)
+        machine.screenshot("gui-files")
+        machine.send_key("esc")
+        machine.send_key("esc")
+        machine.wait_for_text("Hello", timeout=90)
+
     with subtest("search, then a program opens in foot and comes back"):
         # Nano needs Stable; the unit converter is offered to Ultra-Stable.
         machine.send_chars("/unit conv")

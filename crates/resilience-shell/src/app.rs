@@ -1357,6 +1357,7 @@ impl App {
             | View::Search { list, .. }
             | View::Handbook { list, .. }
             | View::Files { list, .. }
+            | View::Library { list, .. }
             | View::Settings { list } => Some(list),
             _ => None,
         }
@@ -1370,6 +1371,7 @@ impl App {
             | View::Search { list, .. }
             | View::Handbook { list, .. }
             | View::Files { list, .. }
+            | View::Library { list, .. }
             | View::Settings { list } => list.selected(),
             _ => None,
         }
