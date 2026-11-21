@@ -103,7 +103,7 @@ Resilience OS: offline-first terminal Linux distribution for x86_64 PCs.
 Source and documentation: https://github.com/raph-dot-img/resilience-os
 
 releases/VERSION/   one folder per version, never changed once published
-releases/torrents/  EDITION_VERSION.torrent: a whole release folder by
+releases/torrents/  resilience_EDITION_VERSION.torrent: a whole release folder by
                     BitTorrent (hybrid v1+v2; this mirror is its web seed;
                     DHT, peer exchange and several trackers)
 LATEST              the newest version, as one line

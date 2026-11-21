@@ -113,7 +113,7 @@ never changed. Check from outside that **every file answers HTTP 200**
 (a file left 0600 gets 403 from nginx).
 
 Then the torrent (since 2026-11-21): `~/Torrents/make-torrent.sh VERSION
-[EDITION]` makes `releases/torrents/EDITION_VERSION.torrent` from the
+[EDITION]` makes `releases/torrents/resilience_EDITION_VERSION.torrent` from the
 published folder (qBittorrent's creator: hybrid v1+v2, the mirror as web
 seed, the trackers of `~/Torrents/trackers.txt`), starts seeding it and
 updates `releases/torrents/SHA256SUMS`. The torrent's name is the folder's
