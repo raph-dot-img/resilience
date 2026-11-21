@@ -193,6 +193,7 @@ impl Gui {
                         | View::Handbook { .. }
                         | View::Pager { .. }
                         | View::Help { .. }
+                        | View::Files { .. }
                 ))
     }
 
@@ -285,6 +286,9 @@ impl Gui {
                 View::Settings { .. } => self.settings_view(&p),
                 View::Handbook { pages, error, .. } => self.handbook_view(pages, error.as_deref()),
                 View::Pager { text, scroll, .. } => self.pager_view(text.clone(), *scroll, &p),
+                View::Files {
+                    idx, query, pick, ..
+                } => self.files_view(idx, query, pick.is_some(), &p),
                 View::Help { topic, scroll } => {
                     self.pager_view(help_text(*topic, self.app.mode()), *scroll, &p)
                 }
@@ -321,6 +325,9 @@ impl Gui {
         }
         r = r.push(text(self.title()).size(20).font(style::UI_FONT_BOLD));
         r = r.push(Space::new().width(Fill));
+        if matches!(self.app.view(), View::Files { .. }) {
+            return container(r).padding([16, 28]).height(BAR_H).into();
+        }
         let query = match self.app.view() {
             View::Search { query, .. } => query.clone(),
             _ => String::new(),
@@ -333,7 +340,7 @@ impl Gui {
                 .width(Length::Fixed(380.0))
                 .style(style::search_box),
         );
-        container(r).padding([16, 28]).into()
+        container(r).padding([16, 28]).height(BAR_H).into()
     }
 
     fn title(&self) -> String {
@@ -345,6 +352,8 @@ impl Gui {
             View::Handbook { .. } => "Handbook".into(),
             View::Pager { title, .. } => sentence_case(title),
             View::Help { .. } => "Help".into(),
+            View::Files { pick: Some(pk), .. } => sentence_case(pk.title()),
+            View::Files { .. } => "Find files".into(),
             _ => String::new(),
         }
     }
@@ -613,6 +622,106 @@ impl Gui {
             .into()
     }
 
+    /// Find files: what is typed goes to the shell (as in the TUI) and shows
+    /// in the big field; results are rows (name, folder, size, date).
+    fn files_view<'a>(
+        &self,
+        idx: &'a resilience_core::files::Index,
+        query: &str,
+        picking: bool,
+        p: &Palette,
+    ) -> Element<'a, Message> {
+        let p = *p;
+        let cursor = if (self.app.tick / 2).is_multiple_of(2) {
+            "\u{258f}"
+        } else {
+            " "
+        };
+        let shown = if query.is_empty() {
+            text(format!("Type part of a file name\u{2026}{cursor}"))
+                .size(18)
+                .style(style::dim_text)
+        } else {
+            text(format!("{query}{cursor}")).size(18)
+        };
+        let field = container(shown)
+            .padding([12, 18])
+            .width(Fill)
+            .style(move |_| style::field(&p));
+        let hits = resilience_core::files::search(idx, query);
+        let sel = self.app.selected_row();
+        let note = if query.trim().is_empty() {
+            format!(
+                "{} files in your home folder and open USB sticks can be searched.",
+                idx.entries.len()
+            )
+        } else if hits.is_empty() {
+            "No file name matches.".to_string()
+        } else {
+            format!("{} found", hits.len())
+        };
+        let rows: Vec<Element<'a, Message>> = hits
+            .iter()
+            .take(200)
+            .enumerate()
+            .map(|(i, e)| {
+                let (folder, name) = match e.shown.rsplit_once('/') {
+                    Some((d, n)) => (d.to_string(), n.to_string()),
+                    None => (String::new(), e.shown.clone()),
+                };
+                let date = e
+                    .modified
+                    .map(resilience_shell::fmt::date_time)
+                    .unwrap_or_default();
+                button(
+                    row![
+                        text(file_glyph(&name))
+                            .size(20)
+                            .color(p.accent)
+                            .width(Length::Fixed(28.0)),
+                        column![
+                            text(name).size(16),
+                            text(folder).size(13).style(style::dim_text)
+                        ]
+                        .width(Fill),
+                        text(resilience_core::human_bytes(e.size))
+                            .size(14)
+                            .style(style::dim_text)
+                            .width(Length::Fixed(90.0)),
+                        text(date)
+                            .size(14)
+                            .style(style::dim_text)
+                            .width(Length::Fixed(140.0)),
+                    ]
+                    .spacing(12)
+                    .align_y(iced::Center),
+                )
+                .on_press(Message::Choose(i))
+                .width(Fill)
+                .padding([10, 18])
+                .style(move |t, st| style::row_button(t, st, sel == Some(i)))
+                .into()
+            })
+            .collect();
+        let hint = if picking {
+            "Enter or click: choose this file   \u{00b7}   Esc: cancel"
+        } else {
+            "Enter or click: view   \u{00b7}   F3: details & checksum   \u{00b7}   F2: search again"
+        };
+        column![
+            field,
+            row![
+                text(note).size(13).style(style::dim_text),
+                Space::new().width(Fill),
+                text(hint).size(13).style(style::dim_text)
+            ],
+            scrollable(column(rows).spacing(4)).height(Fill),
+        ]
+        .spacing(10)
+        .padding([8, 28])
+        .into()
+    }
+
     fn entry_description(&self, e: Entry) -> String {
         match e {
             Entry::App(i) => self.app.catalog.apps[i].description.clone(),
@@ -727,6 +836,26 @@ fn help_text(topic: resilience_shell::app::HelpTopic, mode: resilience_core::mod
     );
     out.push_str(&resilience_shell::help::lines(topic, mode).join("\n"));
     out
+}
+
+/// Height of the top bar, the same on every screen.
+const BAR_H: f32 = 76.0;
+
+/// A plain glyph by file type (no icon font).
+fn file_glyph(name: &str) -> &'static str {
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "txt" | "md" | "csv" | "tsv" | "log" | "toml" | "json" => "\u{2261}",
+        "pdf" | "epub" | "zim" => "\u{25a4}",
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => "\u{25a3}",
+        "zip" | "tar" | "gz" | "zst" | "xz" | "7z" => "\u{25a6}",
+        "age" | "gpg" | "asc" | "minisig" | "sig" => "\u{25c8}",
+        "mbtiles" => "\u{25ce}",
+        _ => "\u{25a1}",
+    }
 }
 
 /// Reading view: mono (guides are laid out in columns), comfortable size.

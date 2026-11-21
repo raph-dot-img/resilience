@@ -22,6 +22,12 @@ run=$(mktemp -d); chmod 700 "$run"
 # The handbook from this checkout (a system has it under /run/current-system).
 printf 'handbook_dir = "%s"\n' "$PWD/handbook" > "$run/system.toml"
 export RESILIENCE_SYSTEM_CONFIG="$run/system.toml"
+# A small home folder (Find files indexes it): a few sample files.
+mkdir -p "$run/home/Documents" "$run/home/Notes"
+cp LICENSE README.md "$run/home/Documents/" 2>/dev/null || true
+cp handbook/*.md "$run/home/Notes/"
+cp assets/logo/resilience-logo.png "$run/home/Documents/" 2>/dev/null || true
+export HOME="$run/home"
 export XDG_RUNTIME_DIR="$run" WLR_BACKENDS=headless WLR_RENDERER=pixman \
   WLR_HEADLESS_OUTPUTS=1 WLR_LIBINPUT_NO_DEVICES=1 \
   LD_LIBRARY_PATH="$wl/lib:$xkb/lib" RESILIENCE_GUI_FONTS="$fonts" \

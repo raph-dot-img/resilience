@@ -130,6 +130,20 @@ pub fn card(p: &Palette) -> container::Style {
     }
 }
 
+/// A read-only input field look (the shell holds the text).
+pub fn field(p: &Palette) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(p.surface)),
+        text_color: Some(p.text),
+        border: Border {
+            color: p.accent,
+            width: 1.5,
+            radius: 12.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
 pub fn dim_text(t: &Theme) -> text::Style {
     text::Style {
         color: Some(pal(t).dim),
