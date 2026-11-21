@@ -70,7 +70,7 @@ secrets never in argv or logs (ADR 0015).
 - [ ] Unlock encrypted (LUKS) USB sticks in the media screens (later)
 - [ ] OpenPGP signing in the interface (minisign signs; gpg on the command line)
 
-## Phase 5 — Offline maps 🟡 (parked on 2026-11-16, resumed for 0.6.0 on 2026-11-19)
+## Phase 5 — Offline maps 🟡 (parked on 2026-11-16, resumed on 2026-11-19; release 0.6.0)
 Design: ADR 0016 (MBTiles with vector tiles, block-character viewer, search
 inside the pack, reproducible pack builder, routing deferred to its own ADR).
 Slices 1 to 9 are in `develop`.
@@ -82,8 +82,9 @@ Slices 1 to 9 are in `develop`.
 - ✅ Built-in world overview (`resilience-world-map`: Natural Earth 5.1.2, zooms 0-7, 11.7 MB, in every image as a `[[builtin]]` map; check `map-world`); without elevation points (they come with spot heights)
 - ✅ TUI "Maps & navigation": Map (the viewer on the built-in and installed maps) and the list of maps on this computer and on USB sticks; handbook page; first part of `vm-maps` (the overview opened from the menu)
 - ✅ Search (`/`), nearby (`n`), go-to (`g`), spot heights on the world overview, accented names, `vm-maps` driving them (slices 10-12, on `feat/maps-search`)
-- 🟡 Catalog: Luxembourg and Bretagne on the mirror (slice 13); to rebuild with the folded search index before 0.6.0
-- ⬜ Sea polygons inside regional packs (the sea is black at fine scales); independent review of the pack builder and viewer; a pack from a stick and hostile files in `vm-maps`
+- ✅ Catalog: Luxembourg and Bretagne on the mirror, rebuilt with the folded search index, inputs published beside them (slice 13)
+- ✅ The sea inside regional packs (OpenStreetMap water polygons); independent review of the maps crate, its 10 findings fixed
+- ⬜ A pack from a stick and hostile files in `vm-maps`; fewer point-of-interest names at city scales; routing (its own ADR)
 
 ## Phase 6 — Networking and communications 🟡
 - ✅ Passive diagnostics + on-demand probe; LOCAL LINK detection tested

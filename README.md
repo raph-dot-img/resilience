@@ -33,14 +33,14 @@ console font and its 8 colours), taken with `scripts/update-screenshots.sh`
 on 2026-11-20 from the development branch: map search and the Luxembourg
 pack come with 0.6.0, not yet released.</sub>
 
-> **Status: early prototype (v0.5.0).** It boots and is usable in a
-> virtual machine (x86_64). It has booted once on physical hardware (a ThinkPad
-> L15 Gen 1) and has otherwise run only in virtual machines. It runs as a live
-> system and has a text installer (whole disk, optional encryption) and
-> signed offline updates from a USB stick, both tested in virtual machines
-> only. Maps cover the world overview and
-> packs you build; local messaging, the mesh and the community network
-> have been tested between virtual machines only; radio tools do not exist yet.
+> **Status: early prototype (v0.6.0).** It boots and is usable in a
+> virtual machine (x86_64). On physical hardware, the live ISO booted on a
+> ThinkPad L15 Gen 1, and release 0.5.0 ran on two laptops (a ThinkPad L15
+> and a ThinkPad Yoga 11e: cable, sharing, hotspot, mesh, messages). The
+> text installer (whole disk, optional encryption) and signed offline
+> updates from a USB stick are tested in virtual machines only. Maps:
+> the world overview, two regional packs in the catalog and packs you
+> build, with search; radio tools do not exist yet.
 > See [ROADMAP.md](ROADMAP.md) and [docs/TESTING.md](docs/TESTING.md) for
 > exactly what works.
 
@@ -77,6 +77,9 @@ pack come with 0.6.0, not yet released.</sub>
   folder and pages; packs from them are checked against the catalog. An
   administrator can share, or turn the computer into a Wi-Fi hotspot.
   Nothing is shared until an administrator turns it on.
+- Offline maps: a built-in world overview, regional map packs down to the
+  street (Luxembourg and Bretagne in the catalog, others built from
+  OpenStreetMap), search by name, places nearby, go to coordinates.
 
 ## Downloads
 
