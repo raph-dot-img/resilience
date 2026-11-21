@@ -1066,6 +1066,50 @@ pub struct Startup {
     pub warnings: Vec<String>,
 }
 
+/// Gather configuration. Problems become warnings shown inside the
+/// interface: a broken catalog must not prevent the interface from starting.
+impl Startup {
+    pub fn load() -> Startup {
+        let mut warnings = Vec::new();
+        let sys = match SystemConfig::load() {
+            Ok((c, path, found)) => {
+                if !found {
+                    warnings.push(format!(
+                        "{} not found; using built-in defaults",
+                        path.display()
+                    ));
+                }
+                c
+            }
+            Err(e) => {
+                warnings.push(format!("{e}; using built-in defaults"));
+                SystemConfig::default()
+            }
+        };
+        let catalog = match Catalog::load(&sys.catalog) {
+            Ok(c) => c,
+            Err(e) => {
+                warnings.push(format!("application catalog unavailable: {e}"));
+                Catalog::default()
+            }
+        };
+        let home = resilience_core::config::home_dir();
+        let settings_path = UserSettings::path(&resilience_core::config::config_home(&home));
+        let (settings, warn) = UserSettings::load(&settings_path);
+        warnings.extend(warn);
+        Startup {
+            sys,
+            catalog,
+            who: resilience_core::mode::detect(),
+            home,
+            settings,
+            settings_path,
+            paths: Paths::default(),
+            warnings,
+        }
+    }
+}
+
 impl App {
     pub fn new(s: Startup) -> App {
         let (probe_config, invalid) = s.sys.probe.to_probe_config();
