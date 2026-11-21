@@ -112,6 +112,22 @@ there, `chmod 644` every file and `755` the folder, then one `mv -n` into
 never changed. Check from outside that **every file answers HTTP 200**
 (a file left 0600 gets 403 from nginx).
 
+Then the torrent (since 2026-11-21): `~/Torrents/make-torrent.sh VERSION
+[EDITION]` makes `releases/torrents/EDITION_VERSION.torrent` from the
+published folder (qBittorrent's creator: hybrid v1+v2, the mirror as web
+seed, the trackers of `~/Torrents/trackers.txt`), starts seeding it and
+updates `releases/torrents/SHA256SUMS`. The torrent's name is the folder's
+name (a multi-file web seed is fetched at `<url>/<name>/<file>`). The trust
+chain is unchanged: the signed `SHA256SUMS` is inside the torrent.
+
+The seed (`~/Torrents`, Docker): qBittorrent-nox shares the network of
+gluetun, which holds a ProtonVPN WireGuard tunnel (P2P servers in Germany,
+NAT-PMP port forwarding pushed into qBittorrent; gluetun's firewall drops
+everything outside the tunnel). The private key is in `~/Torrents/.env`
+(0600), the Web UI password in `~/Torrents/webui-password` (0600); the Web
+UI listens on `127.0.0.1:8080` only. The release folders are mounted
+read-only. See `~/Torrents/README.md`.
+
 Until 0.4.0 the upload went to the owner's server through Tor (rsync over
 SSH with an `rrsync`-restricted key, resumed transfers into `.staging/`);
 that path is retired.

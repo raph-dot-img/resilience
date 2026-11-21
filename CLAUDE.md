@@ -549,6 +549,12 @@ first, `LATEST` last (docs/BUILDING.md). Mirrors: GitHub and
 https://mirror.canevet.eu/files/resilience/ = local `~/Mirror/files/resilience/`
 on the development machine (hidden `.staging/` then one rename; the
 former rsync over Tor is retired, 2026-11-20).
+Torrents (owner, 2026-11-21): one per release folder, hybrid v1+v2,
+the mirror as web seed, published as
+`releases/torrents/EDITION_VERSION.torrent` + SHA256SUMS; seeded from
+this machine by qBittorrent behind ProtonVPN (gluetun, port forwarding)
+in `~/Torrents` (its README; secrets 0600 there, never in Git). After
+publishing a release folder: `~/Torrents/make-torrent.sh V`.
 Systems installed from 0.3.0 have no release key: reinstall once.
 Offline updates were tested end to end with the real key in QEMU
 (install 0.3.0-with-key, update to 0.3.1, roll back; TESTING.md).
@@ -612,8 +618,9 @@ a program quits; merged into `develop` 2026-11-21. Then on
 class water/sea; ADR 0016), the two catalog packs rebuilt with the
 folded index (Bretagne with its sea) and republished with their inputs
 (`packs/maps/sources/`), and the independent review of the maps crate
-(code-review skill, high) with its 10 findings fixed. Left for 0.6.0:
-full test run, merge into `develop`, version bump, ISO, release.
+(code-review skill, high) with its 10 findings fixed; full run: all 26
+checks PASS (2026-11-21, after a race in `vm-cable`'s test was fixed);
+merged into `develop`. Left for 0.6.0: version bump, ISO, release.
 History before slice 10:
 
 Phases 0 to 4 are done (see ROADMAP.md). Phase 5 (offline maps, ADR 0016):
